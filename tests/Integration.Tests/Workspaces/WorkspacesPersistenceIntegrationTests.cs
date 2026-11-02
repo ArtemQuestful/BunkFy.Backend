@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using BunkFy.Host.Migrations;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Contracts;
@@ -11,7 +12,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -50,7 +53,7 @@ public sealed class WorkspacesPersistenceIntegrationTests
     private const string WorkspaceStaffWithdrawalMigration =
         "20260809155756_AddWorkspaceStaffOnboardingWithdrawal";
     private const string WorkspaceStaffDeferredWithdrawalMigration =
-        "20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals";
+        "20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals";
     private const string TenantA = "tenant-a";
     private const string TenantB = "tenant-b";
 
@@ -71,19 +74,11 @@ public sealed class WorkspacesPersistenceIntegrationTests
         IMigrator migrator = context.Database.GetService<IMigrator>();
         string[] allMigrations = context.Database.GetMigrations().ToArray();
 
-        // Execute the real, unchanged published migration bodies, omitting only
-        // this unmerged PR's earlier-dated migration. No model/history guard is
-        // disabled and no applied-history row is manufactured or deleted.
-        foreach (string migrationId in PublishedWorkspacesMigrationIds)
-        {
-            int index = Array.IndexOf(allMigrations, migrationId);
-            Assert.InRange(index, 0, allMigrations.Length - 1);
-            string previousId = index == 0
-                ? Migration.InitialDatabase
-                : allMigrations[index - 1];
-            string script = migrator.GenerateScript(previousId, migrationId);
-            await context.Database.ExecuteSqlRawAsync(script);
-        }
+        // Establish the actual published prefix using EF's real migrator.
+        // No history entry is manufactured, removed or reordered.
+        Assert.Equal(PublishedWorkspacesMigrationIds,
+            allMigrations[..PublishedWorkspacesMigrationIds.Length]);
+        await migrator.MigrateAsync(PublishedWorkspacesMigrationIds[^1]);
 
         string[] previousHistory = (await context.Database
             .GetAppliedMigrationsAsync()).ToArray();
@@ -104,8 +99,26 @@ public sealed class WorkspacesPersistenceIntegrationTests
             .SqlQueryRaw<string>(applicationRowsSql).ToArrayAsync();
         Assert.Equal(2, before.Length);
 
-        await context.Database.MigrateAsync();
-        await context.Database.MigrateAsync();
+        IConfiguration configuration = new ConfigurationBuilder().Build();
+        MigrationsHostOptions runtime =
+            MigrationsHostOptions.FromConfiguration(configuration);
+        MigrationsProductionAdmissionOptions admission =
+            MigrationsProductionAdmissionOptions.FromConfiguration(configuration);
+        BunkFyMigrationModule[] modules = [new("Workspaces", context)];
+        BunkFyMigrationCoordinator Coordinator(MigrationExecutionMode mode) => new(
+            NullLogger.Instance,
+            runtime with { Mode = mode },
+            admission,
+            isProduction: false);
+        BunkFyMigrationPlan pending = await Coordinator(MigrationExecutionMode.Plan)
+            .RunAsync(modules, CancellationToken.None);
+        Assert.Equal(1, pending.PendingMigrationCount);
+        BunkFyMigrationPlan applied = await Coordinator(MigrationExecutionMode.Apply)
+            .RunAsync(modules, CancellationToken.None);
+        BunkFyMigrationPlan replayed = await Coordinator(MigrationExecutionMode.Apply)
+            .RunAsync(modules, CancellationToken.None);
+        Assert.Equal(0, applied.PendingMigrationCount);
+        Assert.Equal(applied.CurrentStateSha256, replayed.CurrentStateSha256);
 
         Assert.Equal(
             before,
@@ -161,7 +174,7 @@ public sealed class WorkspacesPersistenceIntegrationTests
             string downScript = upgraded.Database.GetService<IMigrator>()
                 .GenerateScript(
                     WorkspaceStaffDeferredWithdrawalMigration,
-                    WorkspaceStaffWithdrawalMigration);
+                    PublishedWorkspacesMigrationIds[^1]);
             int lockOrdinal = downScript.IndexOf(
                 "LOCK TABLE workspaces.staff_deferred_claim_withdrawals",
                 StringComparison.Ordinal);
@@ -251,7 +264,7 @@ public sealed class WorkspacesPersistenceIntegrationTests
         {
             PostgresException refusal = await Assert.ThrowsAsync<PostgresException>(
                 () => refusedDown.Database.GetService<IMigrator>().MigrateAsync(
-                    WorkspaceStaffWithdrawalMigration));
+                    PublishedWorkspacesMigrationIds[^1]));
             Assert.Equal("P0001", refusal.SqlState);
             Assert.Contains(
                 "Cannot remove durable Staff claim withdrawals",
@@ -272,7 +285,7 @@ public sealed class WorkspacesPersistenceIntegrationTests
                         SELECT COUNT(*)::int AS "Value"
                         FROM workspaces.__ef_migrations_history
                         WHERE "MigrationId" =
-                            '20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals'
+                            '20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals'
                         """)
                     .SingleAsync());
         }
@@ -284,7 +297,7 @@ public sealed class WorkspacesPersistenceIntegrationTests
                 await retained.StaffDeferredClaimWithdrawals.SingleAsync());
             await retained.SaveChangesAsync();
             await retained.Database.GetService<IMigrator>().MigrateAsync(
-                WorkspaceStaffWithdrawalMigration);
+                PublishedWorkspacesMigrationIds[^1]);
             await retained.Database.MigrateAsync();
         }
 

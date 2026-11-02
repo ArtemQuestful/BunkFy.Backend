@@ -220,6 +220,18 @@ BunkFy's current composition uses global Auth identities and no workspace-id log
 
 The migration and the steady-state schema must be covered against PostgreSQL. Provider-specific migration code remains outside Auth domain/application behavior.
 
+The deferred Staff claim withdrawal migration is appended as
+`20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals`, after the published
+Workspaces recovery migration. Its earlier, unpublished PR identifier
+`20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals` was never part of the
+canonical dev history. The application migration host requires the applied
+history to be an exact prefix of its loaded catalogue. Keep that guard intact:
+both fresh databases and the nonempty published history use the appended
+migration; a database that applied the unpublished identifier requires a
+separately inspected recovery path and is refused automatically. Do not rename,
+insert or delete applied history rows to make admission pass. The new migration's
+`Down` also refuses to discard nonempty durable withdrawal observations.
+
 ## Rejected Shapes
 
 - Put workspace lifecycle in Tenancy: mixes domain registry behavior into scope plumbing.
