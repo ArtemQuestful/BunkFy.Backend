@@ -72,8 +72,17 @@ public sealed class
             (await context.Database.GetAppliedMigrationsAsync()
                 .ConfigureAwait(false)).Count(migration =>
                     migration == CurrentMigration));
-        Assert.Empty(await context.Database.GetPendingMigrationsAsync()
-            .ConfigureAwait(false));
+        string[] catalog = context.Database.GetMigrations().ToArray();
+        int currentIndex = Array.IndexOf(catalog, CurrentMigration);
+        Assert.InRange(currentIndex, 0, catalog.Length - 1);
+        Assert.Equal(
+            catalog[..(currentIndex + 1)],
+            await context.Database.GetAppliedMigrationsAsync()
+                .ConfigureAwait(false));
+        Assert.Equal(
+            catalog[(currentIndex + 1)..],
+            await context.Database.GetPendingMigrationsAsync()
+                .ConfigureAwait(false));
 
         await migrator.MigrateAsync(PreviousMigration).ConfigureAwait(false);
 
