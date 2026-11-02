@@ -24,8 +24,250 @@ public sealed class WorkspacesPersistenceIntegrationTests
         "20260721203218_ScopeWorkspaceStaffAccessSnapshots";
     private const string StaffOnboardingCorrectionsMigration =
         "20260730104955_AddWorkspaceStaffOnboardingDataRightsCorrections";
+    private const string WorkspaceStaffWithdrawalMigration =
+        "20260809155756_AddWorkspaceStaffOnboardingWithdrawal";
+    private const string WorkspaceStaffDeferredWithdrawalMigration =
+        "20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals";
     private const string TenantA = "tenant-a";
     private const string TenantB = "tenant-b";
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Deferred_withdrawal_migration_upgrades_roundtrips_and_refuses_lossy_down()
+    {
+        await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder(
+            "postgres:16-alpine")
+            .WithDatabase("bunkfy_workspaces_deferred_migration_tests")
+            .Build();
+        await postgreSql.StartAsync();
+        string tenantA = Guid.NewGuid().ToString("D");
+        string tenantB = Guid.NewGuid().ToString("D");
+        Guid organizationId = Guid.Parse(tenantA);
+        Guid linkId = Guid.NewGuid();
+        Guid claimId = Guid.NewGuid();
+        Guid eventId = Guid.NewGuid();
+        DateTimeOffset occurredAtUtc = new DateTimeOffset(
+            2026,
+            8,
+            11,
+            10,
+            0,
+            0,
+            TimeSpan.Zero).AddTicks(1);
+
+        await using (WorkspacesDbContext previous = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            await previous.Database.GetService<IMigrator>().MigrateAsync(
+                WorkspaceStaffWithdrawalMigration);
+        }
+
+        await using (WorkspacesDbContext upgraded = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            await upgraded.Database.MigrateAsync();
+            await upgraded.Database.MigrateAsync();
+            string downScript = upgraded.Database.GetService<IMigrator>()
+                .GenerateScript(
+                    WorkspaceStaffDeferredWithdrawalMigration,
+                    WorkspaceStaffWithdrawalMigration);
+            int lockOrdinal = downScript.IndexOf(
+                "LOCK TABLE workspaces.staff_deferred_claim_withdrawals",
+                StringComparison.Ordinal);
+            int dropOrdinal = downScript.IndexOf(
+                "DROP TABLE workspaces.staff_deferred_claim_withdrawals",
+                StringComparison.Ordinal);
+            Assert.True(lockOrdinal >= 0);
+            Assert.True(dropOrdinal > lockOrdinal);
+            string[] indexes = await upgraded.Database.SqlQueryRaw<string>(
+                    """
+                    SELECT indexname AS "Value"
+                    FROM pg_indexes
+                    WHERE schemaname = 'workspaces'
+                      AND tablename = 'staff_deferred_claim_withdrawals'
+                    ORDER BY indexname
+                    """)
+                .ToArrayAsync();
+            Assert.Contains(
+                "IX_staff_deferred_claim_withdrawals_ScopeId_ClaimId",
+                indexes);
+            Assert.Contains(
+                "IX_staff_deferred_claim_withdrawals_ScopeId_EnrollmentLinkId_C~",
+                indexes);
+
+            PostgresException mismatchedScope =
+                await Assert.ThrowsAsync<PostgresException>(() =>
+                    upgraded.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO workspaces.staff_deferred_claim_withdrawals (
+                            "ClaimId", "OrganizationId", "EnrollmentLinkId",
+                            "ClaimVersion", "EventId", "OccurredAtUtc", "ScopeId")
+                        VALUES ({Guid.NewGuid()}, {organizationId}, {linkId},
+                            {2L}, {Guid.NewGuid()}, {occurredAtUtc}, {tenantB})
+                        """));
+            Assert.Equal("23514", mismatchedScope.SqlState);
+            PostgresException emptyCoordinate =
+                await Assert.ThrowsAsync<PostgresException>(() =>
+                    upgraded.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO workspaces.staff_deferred_claim_withdrawals (
+                            "ClaimId", "OrganizationId", "EnrollmentLinkId",
+                            "ClaimVersion", "EventId", "OccurredAtUtc", "ScopeId")
+                        VALUES ({Guid.NewGuid()}, {organizationId}, {linkId},
+                            {2L}, {Guid.Empty}, {occurredAtUtc}, {tenantA})
+                        """));
+            Assert.Equal("23514", emptyCoordinate.SqlState);
+
+            upgraded.StaffDeferredClaimWithdrawals.Add(
+                WorkspaceStaffDeferredClaimWithdrawal.Create(
+                    organizationId.ToString("N").ToUpperInvariant(),
+                    organizationId,
+                    linkId,
+                    claimId,
+                    2,
+                    eventId,
+                    occurredAtUtc).Value);
+            await upgraded.SaveChangesAsync();
+        }
+
+        await using (WorkspacesDbContext tenantAContext = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            WorkspaceStaffDeferredClaimWithdrawal roundTripped =
+                await tenantAContext.StaffDeferredClaimWithdrawals.SingleAsync();
+            Assert.Equal(tenantA, roundTripped.ScopeId);
+            Assert.Equal(occurredAtUtc.AddTicks(-1), roundTripped.OccurredAtUtc);
+            Assert.True(roundTripped.Matches(
+                organizationId.ToString("N").ToUpperInvariant(),
+                organizationId,
+                linkId,
+                claimId,
+                2,
+                eventId,
+                occurredAtUtc));
+        }
+
+        await using (WorkspacesDbContext tenantBContext = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantB))
+        {
+            Assert.Empty(await tenantBContext.StaffDeferredClaimWithdrawals
+                .ToArrayAsync());
+            Assert.Single(await tenantBContext.StaffDeferredClaimWithdrawals
+                .IgnoreQueryFilters()
+                .ToArrayAsync());
+        }
+
+        await using (WorkspacesDbContext refusedDown = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            PostgresException refusal = await Assert.ThrowsAsync<PostgresException>(
+                () => refusedDown.Database.GetService<IMigrator>().MigrateAsync(
+                    WorkspaceStaffWithdrawalMigration));
+            Assert.Equal("P0001", refusal.SqlState);
+            Assert.Contains(
+                "Cannot remove durable Staff claim withdrawals",
+                refusal.MessageText,
+                StringComparison.Ordinal);
+        }
+
+        await using (WorkspacesDbContext afterRefusal = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            Assert.Equal(
+                claimId,
+                (await afterRefusal.StaffDeferredClaimWithdrawals.SingleAsync()).Id);
+            Assert.Equal(
+                1,
+                await afterRefusal.Database.SqlQueryRaw<int>(
+                        """
+                        SELECT COUNT(*)::int AS "Value"
+                        FROM workspaces.__ef_migrations_history
+                        WHERE "MigrationId" =
+                            '20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals'
+                        """)
+                    .SingleAsync());
+        }
+
+        await using (WorkspacesDbContext retained = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            retained.StaffDeferredClaimWithdrawals.Remove(
+                await retained.StaffDeferredClaimWithdrawals.SingleAsync());
+            await retained.SaveChangesAsync();
+            await retained.Database.GetService<IMigrator>().MigrateAsync(
+                WorkspaceStaffWithdrawalMigration);
+            await retained.Database.MigrateAsync();
+        }
+
+        await using WorkspacesDbContext lockContext = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA);
+        await using var lockTransaction = await lockContext.Database
+            .BeginTransactionAsync();
+        await lockContext.Database.ExecuteSqlRawAsync(
+            "LOCK TABLE workspaces.staff_deferred_claim_withdrawals " +
+            "IN ACCESS EXCLUSIVE MODE");
+        TaskCompletionSource<int> insertBackend = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int> concurrentInsert = Task.Run(async () =>
+        {
+            await using NpgsqlConnection connection = new(
+                postgreSql.GetConnectionString());
+            await connection.OpenAsync();
+            await using (NpgsqlCommand backend = new(
+                "SELECT pg_backend_pid()",
+                connection))
+            {
+                insertBackend.SetResult((int)(await backend.ExecuteScalarAsync())!);
+            }
+
+            await using NpgsqlCommand insert = new(
+                """
+                INSERT INTO workspaces.staff_deferred_claim_withdrawals (
+                    "ClaimId", "OrganizationId", "EnrollmentLinkId",
+                    "ClaimVersion", "EventId", "OccurredAtUtc", "ScopeId")
+                VALUES (@claimId, @organizationId, @linkId, 2, @eventId,
+                    @occurredAtUtc, @scopeId)
+                """,
+                connection);
+            insert.Parameters.AddWithValue("claimId", Guid.NewGuid());
+            insert.Parameters.AddWithValue("organizationId", organizationId);
+            insert.Parameters.AddWithValue("linkId", linkId);
+            insert.Parameters.AddWithValue("eventId", Guid.NewGuid());
+            insert.Parameters.AddWithValue("occurredAtUtc", occurredAtUtc);
+            insert.Parameters.AddWithValue("scopeId", tenantA);
+            return await insert.ExecuteNonQueryAsync();
+        });
+        int backendPid = await insertBackend.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        bool insertIsWaiting = false;
+        for (int attempt = 0; attempt < 100 && !insertIsWaiting; attempt++)
+        {
+            insertIsWaiting = await lockContext.Database.SqlQueryRaw<bool>(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity " +
+                    "WHERE pid = {0} AND wait_event_type = 'Lock') AS \"Value\"",
+                    backendPid)
+                .SingleAsync();
+            if (!insertIsWaiting)
+            {
+                await Task.Delay(25);
+            }
+        }
+
+        if (!insertIsWaiting)
+        {
+            await lockTransaction.RollbackAsync();
+            await concurrentInsert.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Fail(
+                "The concurrent deferred insert never reached the migration table lock.");
+        }
+
+        await lockContext.Database.ExecuteSqlRawAsync(
+            "DROP TABLE workspaces.staff_deferred_claim_withdrawals");
+        await lockTransaction.CommitAsync();
+        PostgresException insertFailure = await Assert.ThrowsAsync<PostgresException>(
+            async () => { await concurrentInsert; });
+        Assert.True(
+            insertFailure.SqlState is "42P01" or "XX000",
+            $"Unexpected concurrent-insert SQLSTATE: {insertFailure.SqlState}");
+    }
 
     [DockerFact]
     [Trait("Category", "Docker")]

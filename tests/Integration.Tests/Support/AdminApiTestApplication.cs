@@ -15,9 +15,12 @@ using Gma.Modules.AccessControl.Application.Commands;
 using Gma.Modules.AccessControl.Persistence;
 using Gma.Modules.Administration.Persistence;
 using Gma.Modules.Administration.Persistence.Entities;
+using Gma.Modules.Auth.Application.Ports;
+using Gma.Modules.Auth.Domain.Aggregates;
+using Gma.Modules.Auth.Domain.Enums;
+using Gma.Modules.Auth.Domain.Repositories;
 using Gma.Modules.Auth.Domain.Services;
 using Gma.Modules.Auth.Domain.ValueObjects;
-using Gma.Modules.Auth.Application.Ports;
 using Gma.Modules.Auth.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -40,7 +43,8 @@ internal sealed class AdminApiTestApplication(
     bool allowGeneratedPasswordResponses = false,
     ISystemClock? systemClock = null,
     bool disableDatabaseBackgroundServices = false,
-    Action<IServiceCollection>? configureServices = null)
+    Action<IServiceCollection>? configureServices = null,
+    bool useActiveSessionAdmission = false)
     : WebApplicationFactory<AdminApiAssemblyReference>
 {
     private const string JwtIssuer = "BunkFy";
@@ -75,7 +79,9 @@ internal sealed class AdminApiTestApplication(
         builder.UseSetting("Auth:Jwt:Audience", JwtAudience);
         builder.UseSetting("Auth:Jwt:SigningKey", JwtSigningKey);
         builder.UseSetting("Auth:Jwt:AccessTokenLifetimeMinutes", "15");
-        builder.UseSetting("Auth:BearerAdmission:Mode", "TokenLifetime");
+        builder.UseSetting(
+            "Auth:BearerAdmission:Mode",
+            useActiveSessionAdmission ? "ActiveSession" : "TokenLifetime");
         builder.UseSetting(
             "Administration:Api:AllowGeneratedPasswordResponses",
             allowGeneratedPasswordResponses.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -118,7 +124,9 @@ internal sealed class AdminApiTestApplication(
                 ["Auth:Jwt:Audience"] = JwtAudience,
                 ["Auth:Jwt:SigningKey"] = JwtSigningKey,
                 ["Auth:Jwt:AccessTokenLifetimeMinutes"] = "15",
-                ["Auth:BearerAdmission:Mode"] = "TokenLifetime",
+                ["Auth:BearerAdmission:Mode"] = useActiveSessionAdmission
+                    ? "ActiveSession"
+                    : "TokenLifetime",
                 ["Administration:Api:AllowGeneratedPasswordResponses"] = allowGeneratedPasswordResponses.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["Caching:Enabled"] = "false",
                 ["FileManagement:Enabled"] = "true",
@@ -260,6 +268,67 @@ internal sealed class AdminApiTestApplication(
         {
             throw new InvalidOperationException(result.Error.Message);
         }
+    }
+
+    public async Task<string> CreatePersistedGlobalAccessTokenAsync(Guid actorId)
+    {
+        const string globalScopeId = "default";
+        DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
+        SessionAuthenticationEvidence authenticationEvidence =
+            SessionAuthenticationEvidence.CompleteWithTotp(
+                SessionAuthenticationEvidence.Password(nowUtc),
+                nowUtc);
+
+        using IServiceScope scope = this.Services.CreateScope();
+        IPasswordHashingService passwordHashingService =
+            scope.ServiceProvider.GetRequiredService<IPasswordHashingService>();
+        IRefreshTokenHashingService refreshTokenHashingService =
+            scope.ServiceProvider.GetRequiredService<IRefreshTokenHashingService>();
+        IMemberRepository memberRepository =
+            scope.ServiceProvider.GetRequiredService<IMemberRepository>();
+        AuthDbContext dbContext =
+            scope.ServiceProvider.GetRequiredService<AuthDbContext>();
+        ITokenService tokenService =
+            scope.ServiceProvider.GetRequiredService<ITokenService>();
+
+        var memberResult = Member.Create(
+            new MemberId(actorId),
+            globalScopeId,
+            $"admin-{actorId:N}@example.com",
+            MemberUsernameType.Email,
+            passwordHashingService.HashPassword("Passw0rd!admin-session"),
+            new MemberUsernameId(Guid.NewGuid()),
+            Guid.NewGuid(),
+            nowUtc);
+        if (memberResult.IsFailure)
+        {
+            throw new InvalidOperationException(memberResult.Error.Message);
+        }
+
+        Member member = memberResult.Value;
+        MemberSessionId sessionId = new(Guid.NewGuid());
+        var sessionResult = member.StartSession(
+            sessionId,
+            refreshTokenHashingService.HashRefreshToken(Guid.NewGuid().ToString("N")),
+            nowUtc.AddDays(30),
+            nowUtc,
+            authenticationEvidence: authenticationEvidence,
+            maximumActiveSessions: 1,
+            absoluteExpiresAtUtc: nowUtc.AddDays(90));
+        if (sessionResult.IsFailure)
+        {
+            throw new InvalidOperationException(sessionResult.Error.Message);
+        }
+
+        await memberRepository.AddAsync(member, CancellationToken.None)
+            .ConfigureAwait(false);
+        await dbContext.SaveChangesAsync().ConfigureAwait(false);
+
+        return tokenService.GenerateAccessToken(new AccessTokenClaims(
+            member.Id,
+            globalScopeId,
+            sessionId,
+            authenticationEvidence));
     }
 
     public async Task<int> CountAuditEntriesAsync(string operation, string? errorCode = null)

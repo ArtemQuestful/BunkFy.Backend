@@ -5,6 +5,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Messaging;
 using Gma.Framework.Results;
+using Gma.Framework.Runtime.Time;
 using Microsoft.Extensions.Logging;
 
 [IntegrationEventHandler(
@@ -12,7 +13,10 @@ using Microsoft.Extensions.Logging;
 internal sealed class
     WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler(
         IWorkspaceStaffOnboardingRepository applications,
+        IWorkspaceStaffAccessPlanRepository plans,
+        IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
         WorkspaceStaffOnboardingProcessor processor,
+        ISystemClock clock,
         ILogger<
             WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler>
             logger)
@@ -42,11 +46,24 @@ internal sealed class
             return;
         }
 
-        Result recovered = await processor.ProcessAsync(
+        Result recovered = await processor.ProcessForSourceFinalizationAsync(
             application,
             cancellationToken).ConfigureAwait(false);
         if (recovered.IsSuccess)
         {
+            if (application.SourceKind ==
+                WorkspaceStaffOnboardingSource.EnrollmentLink)
+            {
+                await OrganizationEnrollmentClaimExpiredStaffOnboardingHandler
+                    .ExpirePlanWhenUnusedUnderSourceLockAsync(
+                        applications,
+                        plans,
+                        deferredWithdrawals,
+                        application.SourceId,
+                        clock.UtcNow,
+                        cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 

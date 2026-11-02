@@ -95,6 +95,7 @@ internal sealed class OrganizationInvitationStaffOnboardingHandler(
 internal sealed class OrganizationEnrollmentClaimStaffOnboardingHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
     WorkspaceStaffOnboardingProcessor processor,
     ISystemClock clock,
@@ -105,21 +106,41 @@ internal sealed class OrganizationEnrollmentClaimStaffOnboardingHandler(
         OrganizationEnrollmentClaimChangedIntegrationEvent integrationEvent,
         CancellationToken cancellationToken)
     {
-        WorkspaceStaffOnboardingSourceLockMode sourceLockMode =
-            integrationEvent.Change == OrganizationEnrollmentClaimChange.Requested
-                ? WorkspaceStaffOnboardingSourceLockMode.Read
-                : WorkspaceStaffOnboardingSourceLockMode.Write;
         WorkspaceStaffOnboardingMutationLease lease =
             await mutations.AcquireApplicantAsync(
                 WorkspaceStaffOnboardingSource.EnrollmentLink,
                 integrationEvent.EnrollmentLinkId,
                 integrationEvent.SubjectId,
-                sourceLockMode,
+                WorkspaceStaffOnboardingSourceLockMode.Write,
                 requireOperational: false,
                 cancellationToken).ConfigureAwait(false);
         WorkspaceStaffOnboarding? application = lease.Application;
         if (application is null)
         {
+            WorkspaceStaffAccessPlan? plan = await plans.GetAsync(
+                integrationEvent.EnrollmentLinkId,
+                cancellationToken).ConfigureAwait(false);
+            WorkspaceStaffDeferredClaimWithdrawal? deferred =
+                await deferredWithdrawals.GetAsync(
+                    integrationEvent.ClaimId,
+                    cancellationToken).ConfigureAwait(false);
+            if (plan is not null)
+            {
+                OrganizationEnrollmentClaimExpiredStaffOnboardingHandler
+                    .EnsurePlanMatches(
+                        plan,
+                        integrationEvent.ScopeId,
+                        integrationEvent.OrganizationId,
+                        integrationEvent.EnrollmentLinkId,
+                        "changed organization enrollment claim");
+            }
+
+            if (plan is not null || deferred is not null)
+            {
+                throw new InvalidOperationException(
+                    "A product-owned organization enrollment claim had no BunkFy Staff onboarding application.");
+            }
+
             logger.LogWarning("An organization enrollment claim had no BunkFy Staff onboarding application.");
             return;
         }
@@ -132,6 +153,32 @@ internal sealed class OrganizationEnrollmentClaimStaffOnboardingHandler(
                 integrationEvent.ClaimVersion,
                 nowUtc);
             EnsureObserved(requested, "claim request");
+
+            if (await this.ObserveDeferredWithdrawalAsync(
+                    application,
+                    integrationEvent,
+                    nowUtc,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                await this.FinalizePlanAsync(
+                    application.SourceId,
+                    nowUtc,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        if (await this.ObserveDeferredWithdrawalAsync(
+                application,
+                integrationEvent,
+                nowUtc,
+                cancellationToken).ConfigureAwait(false))
+        {
+            await this.FinalizePlanAsync(
+                application.SourceId,
+                nowUtc,
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -146,6 +193,7 @@ internal sealed class OrganizationEnrollmentClaimStaffOnboardingHandler(
                 .ExpirePlanWhenUnusedUnderSourceLockAsync(
                     applications,
                     plans,
+                    deferredWithdrawals,
                     application.SourceId,
                     nowUtc,
                     cancellationToken)
@@ -173,6 +221,7 @@ internal sealed class OrganizationEnrollmentClaimStaffOnboardingHandler(
                 .ExpirePlanWhenUnusedUnderSourceLockAsync(
                     applications,
                     plans,
+                    deferredWithdrawals,
                     application.SourceId,
                     nowUtc,
                     cancellationToken)
@@ -188,12 +237,63 @@ internal sealed class OrganizationEnrollmentClaimStaffOnboardingHandler(
                 $"Staff onboarding could not observe {observation}: '{result.Error.Code}'.");
         }
     }
+
+    private async Task<bool> ObserveDeferredWithdrawalAsync(
+        WorkspaceStaffOnboarding application,
+        OrganizationEnrollmentClaimChangedIntegrationEvent integrationEvent,
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken)
+    {
+        WorkspaceStaffDeferredClaimWithdrawal? deferred =
+            await deferredWithdrawals.GetAsync(
+                integrationEvent.ClaimId,
+                cancellationToken).ConfigureAwait(false);
+        if (deferred is null)
+        {
+            return false;
+        }
+
+        if (deferred.Id != integrationEvent.ClaimId ||
+            deferred.OrganizationId != integrationEvent.OrganizationId ||
+            deferred.EnrollmentLinkId != integrationEvent.EnrollmentLinkId ||
+            !string.Equals(
+                deferred.ScopeId,
+                integrationEvent.ScopeId,
+                StringComparison.Ordinal) ||
+            deferred.ClaimVersion <= integrationEvent.ClaimVersion)
+        {
+            throw new InvalidOperationException(
+                "A deferred organization enrollment claim withdrawal did not follow its changed claim coordinate.");
+        }
+
+        Result withdrawn = application.ObserveClaimWithdrawn(
+            deferred.Id,
+            deferred.ClaimVersion,
+            nowUtc);
+        EnsureObserved(withdrawn, "deferred claim withdrawal");
+        deferredWithdrawals.Remove(deferred);
+        return true;
+    }
+
+    private Task FinalizePlanAsync(
+        Guid enrollmentLinkId,
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken) =>
+        OrganizationEnrollmentClaimExpiredStaffOnboardingHandler
+            .ExpirePlanWhenUnusedUnderSourceLockAsync(
+                applications,
+                plans,
+                deferredWithdrawals,
+                enrollmentLinkId,
+                nowUtc,
+                cancellationToken);
 }
 
 [IntegrationEventHandler(WorkspacesModuleMetadata.EnrollmentLinkChangedHandlerName)]
 internal sealed class OrganizationEnrollmentLinkStaffOnboardingHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
     ISystemClock clock)
     : IIntegrationEventHandler<OrganizationEnrollmentLinkChangedIntegrationEvent>
@@ -225,6 +325,29 @@ internal sealed class OrganizationEnrollmentLinkStaffOnboardingHandler(
         WorkspaceStaffAccessPlan? plan = await plans.GetAsync(
             integrationEvent.EnrollmentLinkId,
             cancellationToken).ConfigureAwait(false);
-        plan?.Supersede(clock.UtcNow);
+        bool hasDeferred = await deferredWithdrawals.AnyBySourceAsync(
+            integrationEvent.EnrollmentLinkId,
+            cancellationToken).ConfigureAwait(false);
+        if (plan is null)
+        {
+            if (active.Count > 0 || hasDeferred)
+            {
+                throw new InvalidOperationException(
+                    "A terminal organization enrollment link retained BunkFy Staff onboarding state without its access plan.");
+            }
+
+            return;
+        }
+
+        OrganizationEnrollmentClaimExpiredStaffOnboardingHandler.EnsurePlanMatches(
+            plan,
+            integrationEvent.ScopeId,
+            integrationEvent.OrganizationId,
+            integrationEvent.EnrollmentLinkId,
+            "terminal organization enrollment link");
+        plan.Supersede(clock.UtcNow);
+        await deferredWithdrawals.RemoveBySourceAsync(
+            integrationEvent.EnrollmentLinkId,
+            cancellationToken).ConfigureAwait(false);
     }
 }

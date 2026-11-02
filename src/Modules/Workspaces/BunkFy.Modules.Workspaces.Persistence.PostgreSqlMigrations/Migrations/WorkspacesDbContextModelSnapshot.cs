@@ -920,6 +920,47 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
                         });
                 });
 
+            modelBuilder.Entity("BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("ClaimId");
+
+                    b.Property<long>("ClaimVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("EnrollmentLinkId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScopeId", "EnrollmentLinkId", "ClaimVersion");
+
+                    b.HasIndex("ScopeId", "Id");
+
+                    b.ToTable("staff_deferred_claim_withdrawals", "workspaces", t =>
+                        {
+                            t.HasCheckConstraint("CK_staff_deferred_claim_withdrawal_coordinates", "\"ClaimId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"OrganizationId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"EnrollmentLinkId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"EventId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ScopeId\" = \"OrganizationId\"::text");
+
+                            t.HasCheckConstraint("CK_staff_deferred_claim_withdrawal_version", "\"ClaimVersion\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding", b =>
                 {
                     b.Property<Guid>("Id")

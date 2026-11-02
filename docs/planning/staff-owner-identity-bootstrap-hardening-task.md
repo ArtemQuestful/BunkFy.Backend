@@ -49,9 +49,11 @@ independent from Organizations membership lifecycle.
 - Any existing Staff identity whose Auth-subject binding remains available,
   including suspended, departed, or restricted data, makes bootstrap a
   successful no-op.
-- Anonymisation erases the Auth-subject binding. Staff cannot correlate a later
-  operation by that erased value; current Organizations access admission is the
-  stale-event fence before the bootstrap capability is invoked.
+- Anonymisation erases the Auth-subject binding. Current Organizations access
+  admission blocks stale events after organization or membership access is
+  removed, but it cannot correlate a later, different event while that subject
+  is still authorized. Durable source correlation across erased bindings remains
+  a release follow-up before this bootstrap is production-admitted.
 - Bootstrap never updates profile fields and never advances an existing Staff
   version.
 
@@ -88,14 +90,18 @@ independent from Organizations membership lifecycle.
 - Bootstrap serializes the source operation, uses safety-visible identity lookup,
   and creates a Staff member only when neither the operation id nor Auth subject
   already exists. Existing, suspended, departed, and restricted identities with
-  an available Auth binding remain untouched; Organizations admission protects
-  the erased-binding anonymisation boundary from stale membership events.
+  an available Auth binding remain untouched. Organizations admission protects
+  the erased-binding boundary from removed or inactive membership events, but
+  does not prevent a later still-authorized event from reaching Staff after the
+  Auth-subject binding was erased.
 - Exact replay and competing source operations converge through the existing
   transaction lock, scoped Auth-subject uniqueness, and persistence retry
   pipeline. No new receipt table or migration was required.
-- The Staff personal-data catalog, generated inventory, data-rights export, and
-  tenant-termination manifest now agree on catalog version 16, with a regression
-  assertion preventing future version drift.
+- At this slice boundary, the Staff personal-data catalog, generated inventory,
+  data-rights export, and tenant-termination manifest agreed on catalog version
+  16. That evidence is historical: subsequent Staff onboarding and self-service
+  profile contract work advanced the current personal-data catalog to version
+  18, which is the version current admission evidence must use.
 - GMA required no change because Organizations already owns the authoritative
   access reader and the framework already supplies the required transactional
   lock and retry primitives.
@@ -114,5 +120,8 @@ independent from Organizations membership lifecycle.
 
 ## Deferred
 
+- Durable bootstrap source correlation across Staff Auth-subject anonymisation
+  remains a release follow-up; current access admission alone cannot identify a
+  later still-authorized source event as referring to the erased identity.
 - Public multi-account invitation, QR/link, provider redirect, broker delivery,
   and process-restart evidence remains the workspace-onboarding deployment gate.

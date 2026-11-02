@@ -44,6 +44,9 @@ public static class WorkspaceStaffOnboardingApplicationErrors
     public static readonly Error AccessPlanUnavailable = new(
         "Workspaces.StaffAccessPlanUnavailable",
         "The workspace Staff access plan is unavailable.");
+    public static readonly Error ProfileMutationAuthorityUnavailable = new(
+        "Workspaces.StaffOnboardingProfileMutationAuthorityUnavailable",
+        "The Staff onboarding profile is no longer editable under the authoritative join state.");
     public static readonly Error RetentionCoordinateInvalid = new(
         "Workspaces.StaffOnboardingRetentionCoordinateInvalid",
         "The Staff onboarding retention coordinate is invalid.");

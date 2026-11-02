@@ -6,6 +6,7 @@ using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Pagination;
+using Gma.Modules.Organizations.Contracts;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -173,6 +174,17 @@ public sealed class WorkspaceStaffOnboardingMutationCoordinatorTests
         AssertDependency(
             writerType,
             typeof(WorkspaceStaffOnboardingMutationCoordinator));
+    }
+
+    [Theory]
+    [InlineData(typeof(SubmitWorkspaceStaffOnboardingCommandHandler))]
+    [InlineData(typeof(ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler))]
+    public void Enrollment_profile_mutations_require_organizations_claim_authority(
+        Type writerType)
+    {
+        AssertDependency(
+            writerType,
+            typeof(IOrganizationEnrollmentClaimInspector));
     }
 
     [Theory]

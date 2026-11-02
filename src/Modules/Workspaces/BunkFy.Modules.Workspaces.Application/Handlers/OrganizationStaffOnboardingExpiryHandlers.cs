@@ -58,6 +58,7 @@ internal sealed class OrganizationInvitationExpiredStaffOnboardingHandler(
 internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
     ISystemClock clock)
     : IIntegrationEventHandler<OrganizationEnrollmentClaimExpiredIntegrationEvent>
@@ -75,8 +76,24 @@ internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
             cancellationToken).ConfigureAwait(false);
         if (application is null)
         {
+            IReadOnlyList<WorkspaceStaffOnboarding> active =
+                await applications.ListActiveBySourceAsync(
+                    WorkspaceStaffOnboardingSource.EnrollmentLink,
+                    integrationEvent.EnrollmentLinkId,
+                    cancellationToken).ConfigureAwait(false);
+            WorkspaceStaffAccessPlan? unboundPlan = await plans.GetAsync(
+                integrationEvent.EnrollmentLinkId,
+                cancellationToken).ConfigureAwait(false);
+            bool hasDeferred = await deferredWithdrawals.AnyBySourceAsync(
+                integrationEvent.EnrollmentLinkId,
+                cancellationToken).ConfigureAwait(false);
+            if (unboundPlan is null && active.Count == 0 && !hasDeferred)
+            {
+                return;
+            }
+
             throw new InvalidOperationException(
-                "An expired organization enrollment claim had no BunkFy Staff onboarding application.");
+                "An expired product-owned organization enrollment claim had no BunkFy Staff onboarding application.");
         }
 
         if (!await mutations.AcquireTrackedUnderSourceAsync(
@@ -88,10 +105,31 @@ internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
         }
 
         if (application.SourceKind != WorkspaceStaffOnboardingSource.EnrollmentLink ||
-            application.SourceId != integrationEvent.EnrollmentLinkId)
+            application.SourceId != integrationEvent.EnrollmentLinkId ||
+            !string.Equals(
+                application.ScopeId,
+                integrationEvent.ScopeId,
+                StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "An expired organization enrollment claim did not match its BunkFy Staff onboarding source.");
+        }
+
+        WorkspaceStaffAccessPlan? applicationPlan = await plans.GetAsync(
+            integrationEvent.EnrollmentLinkId,
+            cancellationToken).ConfigureAwait(false);
+        EnsurePlanMatches(
+            applicationPlan,
+            integrationEvent.ScopeId,
+            integrationEvent.OrganizationId,
+            integrationEvent.EnrollmentLinkId,
+            "expired organization enrollment claim");
+        if (await deferredWithdrawals.GetAsync(
+                integrationEvent.ClaimId,
+                cancellationToken).ConfigureAwait(false) is not null)
+        {
+            throw new InvalidOperationException(
+                "An expired organization enrollment claim conflicted with a durable withdrawal observation.");
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
@@ -104,6 +142,7 @@ internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
         await ExpirePlanWhenUnusedUnderSourceLockAsync(
             applications,
             plans,
+            deferredWithdrawals,
             application.SourceId,
             nowUtc,
             cancellationToken).ConfigureAwait(false);
@@ -121,6 +160,7 @@ internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
     internal static async Task ExpirePlanWhenUnusedUnderSourceLockAsync(
         IWorkspaceStaffOnboardingRepository applications,
         IWorkspaceStaffAccessPlanRepository plans,
+        IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
         Guid enrollmentLinkId,
         DateTimeOffset nowUtc,
         CancellationToken cancellationToken)
@@ -142,7 +182,29 @@ internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
             return;
         }
 
-        EnsureObserved(plan?.Expire(nowUtc) ?? Result.Success(), "enrollment access-plan expiry");
+        EnsureObserved(plan.Expire(nowUtc), "enrollment access-plan expiry");
+        await deferredWithdrawals.RemoveBySourceAsync(
+            enrollmentLinkId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static void EnsurePlanMatches(
+        WorkspaceStaffAccessPlan? plan,
+        string scopeId,
+        Guid organizationId,
+        Guid enrollmentLinkId,
+        string observation)
+    {
+        if (plan is null ||
+            plan.Id != enrollmentLinkId ||
+            plan.SourceKind != WorkspaceStaffOnboardingSource.EnrollmentLink ||
+            !string.Equals(plan.ScopeId, scopeId, StringComparison.Ordinal) ||
+            !Guid.TryParse(scopeId, out Guid scopedOrganizationId) ||
+            scopedOrganizationId != organizationId)
+        {
+            throw new InvalidOperationException(
+                $"A product-owned {observation} did not match its BunkFy Staff access plan.");
+        }
     }
 }
 
@@ -150,6 +212,7 @@ internal sealed class OrganizationEnrollmentClaimExpiredStaffOnboardingHandler(
 internal sealed class OrganizationEnrollmentLinkExpiredStaffOnboardingHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
     ISystemClock clock)
     : IIntegrationEventHandler<OrganizationEnrollmentLinkExpiredIntegrationEvent>
@@ -166,15 +229,40 @@ internal sealed class OrganizationEnrollmentLinkExpiredStaffOnboardingHandler(
         WorkspaceStaffAccessPlan? plan = await plans.GetAsync(
             integrationEvent.EnrollmentLinkId,
             cancellationToken).ConfigureAwait(false);
+        if (plan is null)
+        {
+            IReadOnlyList<WorkspaceStaffOnboarding> active =
+                await applications.ListActiveBySourceAsync(
+                    WorkspaceStaffOnboardingSource.EnrollmentLink,
+                    integrationEvent.EnrollmentLinkId,
+                    cancellationToken).ConfigureAwait(false);
+            bool hasDeferred = await deferredWithdrawals.AnyBySourceAsync(
+                integrationEvent.EnrollmentLinkId,
+                cancellationToken).ConfigureAwait(false);
+            if (active.Count > 0 || hasDeferred)
+            {
+                throw new InvalidOperationException(
+                    "An expired organization enrollment link retained BunkFy Staff onboarding state without its access plan.");
+            }
+
+            return;
+        }
+
+        OrganizationEnrollmentClaimExpiredStaffOnboardingHandler.EnsurePlanMatches(
+            plan,
+            integrationEvent.ScopeId,
+            integrationEvent.OrganizationId,
+            integrationEvent.EnrollmentLinkId,
+            "expired organization enrollment link");
         EnsureObserved(
-            plan?.ObserveSourceExpired(integrationEvent.ExpiresAtUtc, nowUtc) ??
-                Result.Success(),
+            plan.ObserveSourceExpired(integrationEvent.ExpiresAtUtc, nowUtc),
             "enrollment access-plan source expiry");
 
         await OrganizationEnrollmentClaimExpiredStaffOnboardingHandler
             .ExpirePlanWhenUnusedUnderSourceLockAsync(
             applications,
             plans,
+            deferredWithdrawals,
             integrationEvent.EnrollmentLinkId,
             nowUtc,
             cancellationToken).ConfigureAwait(false);

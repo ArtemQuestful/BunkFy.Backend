@@ -22,6 +22,8 @@ internal sealed class WorkspacesDataRightsExportContributor(
     public const string StaffOnboardingRecoveryReceiptRecordType =
         WorkspacesDataRightsCoordinates
             .StaffOnboardingRecoveryReceiptRecordType;
+    public const string StaffDeferredClaimWithdrawalRecordType =
+        "staff-deferred-claim-withdrawal";
     public const string StaffOnboardingProcessingRestrictionRecordType =
         "staff-onboarding-processing-restriction";
     public const string

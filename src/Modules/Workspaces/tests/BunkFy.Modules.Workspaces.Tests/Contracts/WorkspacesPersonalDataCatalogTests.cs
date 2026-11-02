@@ -156,6 +156,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
     [
         typeof(WorkspaceStaffOnboarding),
         typeof(WorkspaceStaffOnboardingRecoveryReceipt),
+        typeof(WorkspaceStaffDeferredClaimWithdrawal),
         typeof(WorkspaceStaffOnboardingCorrectionReceipt),
         typeof(WorkspaceStaffOnboardingProcessingRestriction),
         typeof(WorkspaceStaffOnboardingProcessingRestrictionProjection),
@@ -298,6 +299,8 @@ public sealed class WorkspacesPersonalDataCatalogTests
         foreach (Type type in new[]
                  {
                      typeof(WorkspaceStaffOnboardingDataRightsExport),
+                     typeof(
+                         WorkspaceStaffDeferredClaimWithdrawalDataRightsExport),
                      typeof(WorkspaceStaffAccessProcessDataRightsExport),
                      typeof(WorkspaceStaffAccessProfileDataRightsExport),
                      typeof(WorkspaceStaffAccessPlanDataRightsExport),

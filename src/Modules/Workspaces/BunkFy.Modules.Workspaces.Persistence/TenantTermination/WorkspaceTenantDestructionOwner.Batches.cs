@@ -115,12 +115,9 @@ internal sealed partial class WorkspaceTenantDestructionOwner
                     process => process.Id,
                     cancellationToken),
             WorkspaceTenantDestroyStage.OnboardingApplications =>
-                this.RemoveGuidBatchAsync(
+                this.RemoveOnboardingStageBatchAsync(
                     operation,
-                    dbContext.StaffOnboardingApplications
-                        .IgnoreQueryFilters()
-                        .Where(application => application.ScopeId == tenantId),
-                    application => application.Id,
+                    tenantId,
                     cancellationToken),
             WorkspaceTenantDestroyStage.RetentionCorrelationReceipts =>
                 this.RemoveGuidBatchAsync(
@@ -197,6 +194,44 @@ internal sealed partial class WorkspaceTenantDestructionOwner
             source.OrderBy(idSelector),
             entity => getId(entity).ToString("N"),
             cancellationToken);
+    }
+
+    private async Task<bool> RemoveOnboardingStageBatchAsync(
+        WorkspaceTenantDestroyOperation operation,
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        WorkspaceStaffDeferredClaimWithdrawal[] loaded = await dbContext
+            .StaffDeferredClaimWithdrawals
+            .IgnoreQueryFilters()
+            .Where(withdrawal => withdrawal.ScopeId == tenantId)
+            .OrderBy(withdrawal => withdrawal.Id)
+            .Take(operation.BatchSize + 1)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (loaded.Length > 0)
+        {
+            WorkspaceStaffDeferredClaimWithdrawal[] selected = loaded
+                .Take(operation.BatchSize)
+                .ToArray();
+            dbContext.RemoveRange(selected);
+            EnsureBatchRecorded(
+                operation,
+                selected
+                    .Select(withdrawal => $"deferred:{withdrawal.Id:N}")
+                    .ToArray(),
+                stageCompleted: false,
+                clock.UtcNow);
+            return true;
+        }
+
+        return await this.RemoveGuidBatchAsync(
+            operation,
+            dbContext.StaffOnboardingApplications
+                .IgnoreQueryFilters()
+                .Where(application => application.ScopeId == tenantId),
+            application => application.Id,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> RemoveOnboardingReceiptBatchAsync(
@@ -414,6 +449,10 @@ internal sealed partial class WorkspaceTenantDestructionOwner
             await dbContext.StaffOnboardingApplications
                 .IgnoreQueryFilters()
                 .AnyAsync(application => application.ScopeId == tenantId, cancellationToken)
+                .ConfigureAwait(false) ||
+            await dbContext.StaffDeferredClaimWithdrawals
+                .IgnoreQueryFilters()
+                .AnyAsync(withdrawal => withdrawal.ScopeId == tenantId, cancellationToken)
                 .ConfigureAwait(false) ||
             await dbContext.StaffRetentionCorrelationReceipts
                 .IgnoreQueryFilters()

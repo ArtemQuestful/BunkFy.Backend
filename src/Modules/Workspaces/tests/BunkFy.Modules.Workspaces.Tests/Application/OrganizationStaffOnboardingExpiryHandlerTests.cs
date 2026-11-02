@@ -56,9 +56,19 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
             application.SourceId);
         FakeOnboardingRepository applications = new(application);
         FakeAccessPlanRepository plans = new(plan);
+        FakeWorkspaceStaffDeferredClaimWithdrawalRepository deferred = new(
+            WorkspaceStaffDeferredClaimWithdrawal.Create(
+                ScopeId,
+                OrganizationId,
+                application.SourceId,
+                Guid.NewGuid(),
+                2,
+                Guid.NewGuid(),
+                Now).Value);
         OrganizationEnrollmentLinkExpiredStaffOnboardingHandler linkHandler = new(
             applications,
             plans,
+            deferred,
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
         await linkHandler.HandleAsync(
@@ -71,10 +81,12 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
                 Now,
                 2),
             CancellationToken.None);
+        Assert.Single(deferred.Items);
 
         OrganizationEnrollmentClaimExpiredStaffOnboardingHandler handler = new(
             applications,
             plans,
+            deferred,
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
         OrganizationEnrollmentClaimExpiredIntegrationEvent integrationEvent = new(
@@ -97,6 +109,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
         Assert.Equal(Now, plan.SourceExpiredAtUtc);
         Assert.Equal(applicationVersion, application.Version);
         Assert.Equal(planVersion, plan.Version);
+        Assert.Empty(deferred.Items);
         Assert.Null(application.VerifiedAccountEmail);
         Assert.Null(application.DisplayName);
     }
@@ -114,6 +127,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
         OrganizationEnrollmentClaimExpiredStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(plan),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
 
@@ -147,6 +161,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
         OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(plan),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
         OrganizationEnrollmentClaimWithdrawnIntegrationEvent integrationEvent = new(
@@ -171,12 +186,235 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
     }
 
     [Fact]
-    public async Task Claim_withdrawal_without_its_application_is_retried_by_the_inbox()
+    public async Task Unowned_claim_withdrawal_without_product_state_is_acknowledged()
     {
         FakeOnboardingRepository applications = new();
         OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
+            WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
+            new FakeClock());
+
+        await handler.HandleAsync(
+            new OrganizationEnrollmentClaimWithdrawnIntegrationEvent(
+                Guid.NewGuid(),
+                Now.AddMinutes(1),
+                ScopeId,
+                OrganizationId,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                2),
+            CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Withdrawal_before_requested_is_durable_exactly_replayable_and_timestamp_stable()
+    {
+        WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
+        WorkspaceStaffAccessPlan plan = CreateActivePlan(
+            WorkspaceStaffOnboardingSource.EnrollmentLink,
+            application.SourceId);
+        FakeOnboardingRepository applications = new(application);
+        FakeWorkspaceStaffDeferredClaimWithdrawalRepository deferred = new();
+        OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
+            applications,
+            new FakeAccessPlanRepository(plan),
+            deferred,
+            WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
+            new FakeClock());
+        Guid claimId = Guid.NewGuid();
+        Guid eventId = Guid.NewGuid();
+        DateTimeOffset occurredAtUtc = Now.AddMinutes(1).AddTicks(1);
+        OrganizationEnrollmentClaimWithdrawnIntegrationEvent integrationEvent = new(
+            eventId,
+            occurredAtUtc,
+            ScopeId,
+            OrganizationId,
+            application.SourceId,
+            claimId,
+            2);
+
+        await handler.HandleAsync(integrationEvent, CancellationToken.None);
+        await handler.HandleAsync(integrationEvent, CancellationToken.None);
+
+        WorkspaceStaffDeferredClaimWithdrawal persisted = Assert.Single(deferred.Items);
+        Assert.Equal(Now.AddMinutes(1), persisted.OccurredAtUtc);
+        Assert.True(persisted.Matches(
+            ScopeId,
+            OrganizationId,
+            application.SourceId,
+            claimId,
+            2,
+            eventId,
+            occurredAtUtc));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => handler.HandleAsync(
+            new OrganizationEnrollmentClaimWithdrawnIntegrationEvent(
+                Guid.NewGuid(),
+                occurredAtUtc,
+                ScopeId,
+                OrganizationId,
+                application.SourceId,
+                claimId,
+                2),
+            CancellationToken.None));
+        Assert.Single(deferred.Items);
+    }
+
+    [Fact]
+    public async Task Late_withdrawal_does_not_recreate_state_for_a_terminal_plan()
+    {
+        Guid sourceId = Guid.NewGuid();
+        WorkspaceStaffAccessPlan plan = CreateActivePlan(
+            WorkspaceStaffOnboardingSource.EnrollmentLink,
+            sourceId);
+        Assert.True(plan.Supersede(Now.AddMinutes(1)).IsSuccess);
+        FakeOnboardingRepository applications = new();
+        FakeWorkspaceStaffDeferredClaimWithdrawalRepository deferred = new();
+        OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
+            applications,
+            new FakeAccessPlanRepository(plan),
+            deferred,
+            WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
+            new FakeClock());
+
+        await handler.HandleAsync(
+            new OrganizationEnrollmentClaimWithdrawnIntegrationEvent(
+                Guid.NewGuid(),
+                Now.AddMinutes(2),
+                ScopeId,
+                OrganizationId,
+                sourceId,
+                Guid.NewGuid(),
+                2),
+            CancellationToken.None);
+
+        Assert.Empty(deferred.Items);
+    }
+
+    [Fact]
+    public async Task Terminal_plan_with_an_active_application_is_retried_as_an_invariant_breach()
+    {
+        WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
+        WorkspaceStaffAccessPlan plan = CreateActivePlan(
+            WorkspaceStaffOnboardingSource.EnrollmentLink,
+            application.SourceId);
+        Assert.True(plan.Supersede(Now.AddMinutes(1)).IsSuccess);
+        FakeOnboardingRepository applications = new(application);
+        OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
+            applications,
+            new FakeAccessPlanRepository(plan),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
+            WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
+            new FakeClock());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => handler.HandleAsync(
+            new OrganizationEnrollmentClaimWithdrawnIntegrationEvent(
+                Guid.NewGuid(),
+                Now.AddMinutes(2),
+                ScopeId,
+                OrganizationId,
+                application.SourceId,
+                Guid.NewGuid(),
+                2),
+            CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Delayed_withdrawal_cleans_its_exact_fact_without_regressing_a_newer_terminal_state(
+        bool expire)
+    {
+        WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
+        Guid claimId = Guid.NewGuid();
+        Assert.True(application.ObserveClaimRequested(claimId, 1, Now).IsSuccess);
+        if (expire)
+        {
+            Assert.True(application.ObserveClaimExpired(
+                claimId,
+                2,
+                Now.AddMinutes(1)).IsSuccess);
+        }
+        else
+        {
+            Assert.True(application.Supersede(Now.AddMinutes(1)).IsSuccess);
+        }
+
+        WorkspaceStaffOnboardingState expected = application.Status;
+        long expectedVersion = application.Version;
+        WorkspaceStaffAccessPlan plan = CreateActivePlan(
+            WorkspaceStaffOnboardingSource.EnrollmentLink,
+            application.SourceId);
+        Guid eventId = Guid.NewGuid();
+        DateTimeOffset occurredAtUtc = Now.AddMinutes(2);
+        WorkspaceStaffDeferredClaimWithdrawal observed =
+            WorkspaceStaffDeferredClaimWithdrawal.Create(
+                ScopeId,
+                OrganizationId,
+                application.SourceId,
+                claimId,
+                3,
+                eventId,
+                occurredAtUtc).Value;
+        FakeWorkspaceStaffDeferredClaimWithdrawalRepository deferred = new(observed);
+        FakeOnboardingRepository applications = new(application);
+        OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
+            applications,
+            new FakeAccessPlanRepository(plan),
+            deferred,
+            WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
+            new FakeClock());
+
+        await handler.HandleAsync(
+            new OrganizationEnrollmentClaimWithdrawnIntegrationEvent(
+                eventId,
+                occurredAtUtc,
+                ScopeId,
+                OrganizationId,
+                application.SourceId,
+                claimId,
+                3),
+            CancellationToken.None);
+
+        Assert.Equal(expected, application.Status);
+        Assert.Equal(expectedVersion, application.Version);
+        Assert.Empty(deferred.Items);
+    }
+
+    [Fact]
+    public async Task Unowned_claim_expiry_without_product_state_is_acknowledged()
+    {
+        FakeOnboardingRepository applications = new();
+        OrganizationEnrollmentClaimExpiredStaffOnboardingHandler handler = new(
+            applications,
+            new FakeAccessPlanRepository(),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
+            WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
+            new FakeClock());
+
+        await handler.HandleAsync(
+            new OrganizationEnrollmentClaimExpiredIntegrationEvent(
+                Guid.NewGuid(),
+                Now.AddMinutes(1),
+                ScopeId,
+                OrganizationId,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Now,
+                1),
+            CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Claim_withdrawal_with_unbound_application_and_missing_plan_is_retried()
+    {
+        WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
+        FakeOnboardingRepository applications = new(application);
+        OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler handler = new(
+            applications,
+            new FakeAccessPlanRepository(),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
 
@@ -186,19 +424,21 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
                 Now.AddMinutes(1),
                 ScopeId,
                 OrganizationId,
-                Guid.NewGuid(),
+                application.SourceId,
                 Guid.NewGuid(),
                 2),
             CancellationToken.None));
     }
 
     [Fact]
-    public async Task Claim_expiry_without_its_application_is_retried_by_the_inbox()
+    public async Task Claim_expiry_with_unbound_application_and_missing_plan_is_retried()
     {
-        FakeOnboardingRepository applications = new();
+        WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
+        FakeOnboardingRepository applications = new(application);
         OrganizationEnrollmentClaimExpiredStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
 
@@ -208,7 +448,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
                 Now.AddMinutes(1),
                 ScopeId,
                 OrganizationId,
-                Guid.NewGuid(),
+                application.SourceId,
                 Guid.NewGuid(),
                 Now,
                 1),
@@ -227,6 +467,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
         OrganizationEnrollmentLinkExpiredStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(plan),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
 
@@ -257,6 +498,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
         OrganizationEnrollmentLinkExpiredStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(plan),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
 
@@ -291,6 +533,7 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
         OrganizationEnrollmentLinkExpiredStaffOnboardingHandler handler = new(
             applications,
             new FakeAccessPlanRepository(plan),
+            new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
             WorkspaceStaffOnboardingMutationTestSupport.Create(applications),
             new FakeClock());
 

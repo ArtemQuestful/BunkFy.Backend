@@ -215,7 +215,10 @@ public sealed class
         WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler handler =
             new(
                 applications,
+                new RecordingPlanRepository(),
+                new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
                 processor,
+                new TestClock(),
                 NullLogger<
                     WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler>
                     .Instance);
@@ -244,7 +247,7 @@ public sealed class
 
         Assert.Equal(1, applications.GetCount);
         Assert.Equal(
-            ["get", "source", "lock", "reload", "projection"],
+            ["get", "source-write", "lock", "reload", "projection"],
             calls);
         Assert.Equal(1, operationLock.CallCount);
         Assert.Equal(0, staff.CallCount);
@@ -279,7 +282,10 @@ public sealed class
         WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler handler =
             new(
                 applications,
+                new RecordingPlanRepository(),
+                new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
                 processor,
+                new TestClock(),
                 NullLogger<
                     WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler>
                     .Instance);
@@ -325,6 +331,7 @@ public sealed class
             new WorkspaceStaffJoinTokenAuthorityResolver(
                 new EnrollmentTokenInspector(OrganizationId, sourceId)),
             admissions,
+            new FakeOrganizationEnrollmentClaimInspector(),
             Options.Create(new WorkspaceStaffOnboardingOptions
             {
                 GlobalAuthScopeId = "global"

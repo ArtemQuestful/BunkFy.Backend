@@ -26,6 +26,74 @@ public sealed class AdminApiIntegrationTests
     [DockerFact]
     [Trait("Category", "Docker")]
     [Trait("Category", "Integration")]
+    public async Task Global_auth_session_uses_rbac_for_a_non_default_tenant_until_revoked()
+    {
+        await using IContainer nats = AuthTestContainers.CreateNatsContainer();
+        await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder(
+            "postgres:16-alpine")
+            .WithDatabase("bunkfy_admin_global_auth_session_tests")
+            .Build();
+        await nats.StartAsync();
+        await postgreSql.StartAsync();
+
+        await using AdminApiTestApplication application = new(
+            "PostgreSql",
+            postgreSql.GetConnectionString(),
+            AuthTestContainers.GetNatsConnectionString(nats),
+            useActiveSessionAdmission: true);
+        await application.MigrateAsync().ConfigureAwait(false);
+
+        Guid nonOwnerId = Guid.NewGuid();
+        string nonOwnerToken = await application
+            .CreatePersistedGlobalAccessTokenAsync(nonOwnerId)
+            .ConfigureAwait(false);
+        using HttpClient nonOwnerClient = application.CreateClient();
+        nonOwnerClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", nonOwnerToken);
+        nonOwnerClient.DefaultRequestHeaders.Add(
+            "X-Tenant-Id",
+            "tenant-not-auth-scope");
+        using HttpResponseMessage forbidden = await nonOwnerClient
+            .GetAsync("/api/admin/workspaces/access-bootstrap")
+            .ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+
+        Guid ownerId = Guid.NewGuid();
+        string ownerToken = await application
+            .CreatePersistedGlobalAccessTokenAsync(ownerId)
+            .ConfigureAwait(false);
+        await application.SeedOwnerAsync(ownerId).ConfigureAwait(false);
+
+        using HttpClient ownerClient = application.CreateClient();
+        ownerClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", ownerToken);
+        ownerClient.DefaultRequestHeaders.Add(
+            "X-Tenant-Id",
+            "tenant-not-auth-scope");
+        using HttpResponseMessage admitted = await ownerClient
+            .GetAsync("/api/admin/workspaces/access-bootstrap")
+            .ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.OK, admitted.StatusCode);
+
+        using HttpResponseMessage revoke = await ownerClient.PostAsJsonAsync(
+            $"/api/admin/auth/members/{ownerId:D}/revoke-sessions",
+            new { confirmed = true }).ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.OK, revoke.StatusCode);
+        AdminRevokeSessionsResponse? revokeResult = await revoke.Content
+            .ReadFromJsonAsync<AdminRevokeSessionsResponse>()
+            .ConfigureAwait(false);
+        Assert.NotNull(revokeResult);
+        Assert.Equal(1, revokeResult.RevokedSessionCount);
+
+        using HttpResponseMessage deniedAfterRevocation = await ownerClient
+            .GetAsync("/api/admin/workspaces/access-bootstrap")
+            .ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.Unauthorized, deniedAfterRevocation.StatusCode);
+    }
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
     public async Task Admin_api_is_optional_and_manages_auth_members_against_sql_server_and_postgre_sql()
     {
         await RunAsync(

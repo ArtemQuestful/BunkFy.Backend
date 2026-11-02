@@ -12,6 +12,7 @@ using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Gma.Modules.Auth.Contracts;
+using Gma.Modules.Organizations.Contracts;
 using Microsoft.Extensions.Options;
 
 internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
@@ -22,6 +23,7 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
     IWorkspaceStaffAccessPlanRepository plans,
     WorkspaceStaffJoinTokenAuthorityResolver authorityResolver,
     IAuthMemberAdmissionReader admissions,
+    IOrganizationEnrollmentClaimInspector claims,
     IOptions<WorkspaceStaffOnboardingOptions> options,
     WorkspaceOperationalAdmissionEvaluator operationalAdmission,
     IScopeContext scopeContext,
@@ -120,6 +122,21 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
+        if (await WorkspaceStaffOnboardingProfileMutationAuthority
+            .IsFencedAsync(
+                claims,
+                sourceKind,
+                authority.Value.OrganizationId,
+                authority.Value.SourceId,
+                memberId.ToString("D"),
+                nowUtc,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<WorkspaceStaffOnboardingDto>(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .ProfileMutationAuthorityUnavailable);
+        }
+
         if (application is null)
         {
             Result<WorkspaceStaffOnboarding> created = WorkspaceStaffOnboarding.Create(

@@ -8,6 +8,35 @@ using Xunit;
 public sealed class WorkspaceStaffOnboardingTests
 {
     [Fact]
+    public void Deferred_withdrawal_canonicalizes_equivalent_organization_scope_text()
+    {
+        Guid claimId = Guid.NewGuid();
+        Guid enrollmentLinkId = Guid.NewGuid();
+        Guid eventId = Guid.NewGuid();
+        string equivalentScope = OrganizationId.ToString("N").ToUpperInvariant();
+
+        WorkspaceStaffDeferredClaimWithdrawal withdrawal =
+            WorkspaceStaffDeferredClaimWithdrawal.Create(
+                equivalentScope,
+                OrganizationId,
+                enrollmentLinkId,
+                claimId,
+                2,
+                eventId,
+                Now).Value;
+
+        Assert.Equal(OrganizationId.ToString("D"), withdrawal.ScopeId);
+        Assert.True(withdrawal.Matches(
+            equivalentScope,
+            OrganizationId,
+            enrollmentLinkId,
+            claimId,
+            2,
+            eventId,
+            Now));
+    }
+
+    [Fact]
     public void Completion_requires_staff_and_redacts_applicant_data()
     {
         WorkspaceStaffOnboarding application = CreateApplication();

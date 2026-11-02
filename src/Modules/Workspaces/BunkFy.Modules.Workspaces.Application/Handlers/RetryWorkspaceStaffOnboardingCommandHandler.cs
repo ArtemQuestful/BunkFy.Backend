@@ -12,6 +12,7 @@ using Gma.Framework.Runtime.Time;
 internal sealed class RetryWorkspaceStaffOnboardingCommandHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingProcessor processor,
     ISystemClock clock)
     : ICommandHandler<RetryWorkspaceStaffOnboardingCommand, WorkspaceStaffOnboardingDto>
@@ -47,6 +48,7 @@ internal sealed class RetryWorkspaceStaffOnboardingCommandHandler(
                 .ExpirePlanWhenUnusedUnderSourceLockAsync(
                     applications,
                     plans,
+                    deferredWithdrawals,
                     application.SourceId,
                     clock.UtcNow,
                     cancellationToken)

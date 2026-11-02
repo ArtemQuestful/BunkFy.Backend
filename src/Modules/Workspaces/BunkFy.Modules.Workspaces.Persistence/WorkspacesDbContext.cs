@@ -23,6 +23,9 @@ public sealed class WorkspacesDbContext(
     public DbSet<WorkspaceStaffOnboardingRetentionExecution>
         StaffOnboardingRetentionExecutions =>
         this.Set<WorkspaceStaffOnboardingRetentionExecution>();
+    public DbSet<WorkspaceStaffDeferredClaimWithdrawal>
+        StaffDeferredClaimWithdrawals =>
+        this.Set<WorkspaceStaffDeferredClaimWithdrawal>();
     public DbSet<WorkspaceStaffOnboardingCorrectionReceipt>
         StaffOnboardingCorrectionReceipts =>
         this.Set<WorkspaceStaffOnboardingCorrectionReceipt>();

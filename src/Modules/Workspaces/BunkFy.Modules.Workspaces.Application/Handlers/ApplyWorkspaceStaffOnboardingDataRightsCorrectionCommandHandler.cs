@@ -12,12 +12,14 @@ using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
+using Gma.Modules.Organizations.Contracts;
 
 internal sealed class
     ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler(
         IWorkspaceStaffOnboardingCorrectionReceiptRepository receipts,
         WorkspaceStaffOnboardingMutationCoordinator mutations,
         WorkspaceStaffOnboardingDataRightsCorrectionAuthorizer authorizer,
+        IOrganizationEnrollmentClaimInspector claims,
         IScopeContext scopeContext,
         ISystemClock clock,
         IIdGenerator ids)
@@ -112,7 +114,42 @@ internal sealed class
                     .ApplicationNotFound);
         }
 
+        if (command.ExpectedVersion != application.Version)
+        {
+            return Result.Failure<
+                WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
+                WorkspaceStaffOnboardingErrors.CorrectionVersionConflict);
+        }
+
+        if (application.Status != WorkspaceStaffOnboardingState.Submitted)
+        {
+            return Result.Failure<
+                WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
+                WorkspaceStaffOnboardingErrors.CorrectionUnavailable);
+        }
+
         DateTimeOffset nowUtc = ToPersistencePrecision(clock.UtcNow);
+        Guid organizationId = Guid.TryParse(
+            application.ScopeId,
+            out Guid parsedOrganizationId)
+                ? parsedOrganizationId
+                : Guid.Empty;
+        if (await WorkspaceStaffOnboardingProfileMutationAuthority
+            .IsFencedAsync(
+                claims,
+                application.SourceKind,
+                organizationId,
+                application.SourceId,
+                application.SubjectId,
+                nowUtc,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<
+                WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .CorrectionTargetUnavailable);
+        }
+
         Result<WorkspaceStaffOnboardingCorrectionOutcome> updated =
             application.ApplyDataRightsCorrection(
                 requested.Value,

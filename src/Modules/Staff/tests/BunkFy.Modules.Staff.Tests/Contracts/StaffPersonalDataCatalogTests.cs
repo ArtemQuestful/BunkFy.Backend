@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Staff.Tests;
 
 using System.Reflection;
+using System.Security.Cryptography;
 using BunkFy.DataGovernance;
 using BunkFy.Modules.Staff.AdminApi;
 using BunkFy.Modules.Staff.Api;
@@ -106,6 +107,32 @@ public sealed class StaffPersonalDataCatalogTests
             Assert.Contains(field.Bindings, b => b.Type == typeof(StaffStationLabel).FullName &&
                 b.Surface == PersonalDataSurface.ProjectionExport && b.RetentionPolicy == "transient-response");
         }
+    }
+
+    [Fact]
+    public void V20_catalogue_and_owner_manifest_have_immutable_digests()
+    {
+        string dataGovernanceDirectory = Path.Combine(
+            AppContext.BaseDirectory,
+            "DataGovernance");
+
+        Assert.Equal(4, StaffTenantTerminationMetadata.CatalogVersion);
+        Assert.Equal(20, StaffTenantTerminationMetadata.PersonalDataCatalogVersion);
+        Assert.Equal(3, StaffTenantTerminationMetadata.ExportSchemaVersion);
+        Assert.Equal(20, Catalogue.CatalogVersion);
+        Assert.Equal(
+            "a2677b0ea21efa57f9c4720caf30a65e703af48f8c42ba7310d7a3db7579ef35",
+            ComputeSha256(Path.Combine(
+                dataGovernanceDirectory,
+                "personal-data-catalog.v1.json")));
+        Assert.Equal(
+            "f97e58eabea1944d7f2b2ca6b8f9d972bb80a58d7267f6d621bc4896a7c7588a",
+            StaffTenantTerminationMetadata.CatalogSha256);
+        Assert.Equal(
+            "a6fcfded670edf18bc70e8e824a63b298e57f9868a961aefecbe905bad4f3123",
+            ComputeSha256(Path.Combine(
+                dataGovernanceDirectory,
+                "personal-data-inventory.v1.md")));
     }
 
     [Fact]
@@ -443,6 +470,9 @@ public sealed class StaffPersonalDataCatalogTests
             AppContext.BaseDirectory,
             "DataGovernance",
             "personal-data-catalog.v1.json")));
+
+    private static string ComputeSha256(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 
     private static StaffDbContext CreateDbContext()
     {

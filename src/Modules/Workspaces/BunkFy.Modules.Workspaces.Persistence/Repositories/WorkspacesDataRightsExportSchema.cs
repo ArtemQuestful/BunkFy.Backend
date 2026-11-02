@@ -11,7 +11,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 internal static class WorkspacesDataRightsExportSchema
 {
     public const string ExportSchemaId = "workspaces.subject-export";
-    public const int ExportSchemaVersion = 3;
+    public const int ExportSchemaVersion = 4;
 
     private const string CatalogResourceName =
         "BunkFy.Modules.Workspaces.Persistence.DataGovernance." +
@@ -29,6 +29,7 @@ internal static class WorkspacesDataRightsExportSchema
     [
         "access-control",
         "auth",
+        "messaging",
         "organizations",
         "properties",
         "staff",
@@ -38,6 +39,7 @@ internal static class WorkspacesDataRightsExportSchema
     private static readonly Type[] SourceTypes =
     [
         typeof(WorkspaceStaffOnboardingDataRightsExport),
+        typeof(WorkspaceStaffDeferredClaimWithdrawalDataRightsExport),
         typeof(
             WorkspaceStaffOnboardingCorrectionReceiptDataRightsExport),
         typeof(
@@ -161,7 +163,9 @@ internal static class WorkspacesDataRightsExportSchema
         stream.CopyTo(buffer);
         PersonalDataCatalogDocument catalog =
             PersonalDataCatalogJson.Parse(buffer.ToArray());
-        if (!string.Equals(
+        if (catalog.CatalogVersion !=
+                WorkspacesTenantTerminationMetadata.PersonalDataCatalogVersion ||
+            !string.Equals(
                 catalog.CatalogId,
                 "workspaces.personal-data",
                 StringComparison.Ordinal) ||

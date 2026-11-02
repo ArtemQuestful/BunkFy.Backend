@@ -24,6 +24,21 @@ public sealed class WorkspaceTenantTerminationContributorTests
         new(2026, 7, 31, 7, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Catalog_v12_has_one_immutable_manifest_identity()
+    {
+        Assert.Equal(12, WorkspacesTenantTerminationMetadata.CatalogVersion);
+        Assert.Equal(
+            12,
+            WorkspacesTenantTerminationMetadata.PersonalDataCatalogVersion);
+        Assert.Equal(
+            "fc26fc9027bff3e5c859a261ac589ff7a576da29a9c3ea10ad30886789a74022",
+            WorkspacesTenantTerminationMetadata.CatalogSha256);
+        Assert.NotEqual(
+            "29475cb08300f9bbee923231b2059dc0de55b64875bfb21d32be64c18728b301",
+            WorkspacesTenantTerminationMetadata.CatalogSha256);
+    }
+
+    [Fact]
     public async Task Freeze_returns_exact_pii_free_owner_proof()
     {
         StubDispatcher dispatcher = new();

@@ -26,6 +26,14 @@ internal sealed record WorkspaceStaffOnboardingDataRightsExport(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset LastChangedAtUtc);
 
+internal sealed record WorkspaceStaffDeferredClaimWithdrawalDataRightsExport(
+    Guid ClaimId,
+    string ScopeId,
+    Guid EnrollmentLinkId,
+    long ClaimVersion,
+    Guid EventId,
+    DateTimeOffset OccurredAtUtc);
+
 internal sealed record
     WorkspaceStaffOnboardingCorrectionReceiptDataRightsExport(
         int ContractVersion,

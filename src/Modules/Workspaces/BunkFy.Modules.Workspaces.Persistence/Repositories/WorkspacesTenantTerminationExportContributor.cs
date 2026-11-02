@@ -12,7 +12,7 @@ using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using DomainFenceState =
-    BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFenceState;
+    Domain.Termination.WorkspaceTerminationFenceState;
 
 internal sealed class WorkspacesTenantTerminationExportContributor(
     WorkspacesDbContext dbContext,
@@ -178,6 +178,35 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                 WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
                 record.Id,
                 record.Version,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        await foreach (
+            WorkspaceStaffDeferredClaimWithdrawalDataRightsExport record in
+            dbContext.StaffDeferredClaimWithdrawals
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.Id)
+                .Select(item =>
+                    new WorkspaceStaffDeferredClaimWithdrawalDataRightsExport(
+                        item.Id,
+                        item.ScopeId,
+                        item.EnrollmentLinkId,
+                        item.ClaimVersion,
+                        item.EventId,
+                        item.OccurredAtUtc))
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            await WriteAsync(
+                WorkspacesDataRightsExportContributor
+                    .StaffDeferredClaimWithdrawalRecordType,
+                record.ClaimId,
+                record.ClaimVersion,
                 record,
                 sink,
                 cancellationToken).ConfigureAwait(false);
