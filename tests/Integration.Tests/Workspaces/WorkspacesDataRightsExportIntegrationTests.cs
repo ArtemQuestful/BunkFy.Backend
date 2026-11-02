@@ -489,7 +489,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("workspace.termination.exported", result.ResultCode);
-        Assert.Equal(9, result.AffectedCount);
+        Assert.Equal(10, result.AffectedCount);
         Assert.Equal(fence.Version, result.SelectedProofRevision);
         Assert.Equal(fence.Version, result.ResultingProofRevision);
         Assert.Equal(
@@ -524,7 +524,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                     "workspaces.onboarding-recovery.recovery-actor-id")
                 .GetString());
         DataRightsExportRecord deferred = Assert.Single(first.Records, record =>
-            record.RecordType == WorkspacesDataRightsExportContributor.StaffDeferredClaimWithdrawalRecordType);
+            record.RecordType == "staff-deferred-claim-withdrawal");
         Assert.Equal(
             Guid.Parse("50000000-0000-0000-0000-000000000096"),
             deferred.RecordId);

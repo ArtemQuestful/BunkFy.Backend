@@ -287,7 +287,7 @@ public sealed class WorkspaceStaffOnboardingRetentionTests
 
         Result<WorkspaceStaffOnboardingRetentionReconciliation> result =
             await handler.HandleAsync(
-                new(application.Id, application.Version),
+                Command(application.Id, application.Version),
                 CancellationToken.None);
 
         Assert.True(result.IsFailure);
@@ -435,6 +435,7 @@ public sealed class WorkspaceStaffOnboardingRetentionTests
                 applications,
                 new FakeAccessPlanRepository(plan),
                 coordinator,
+                new FakeWorkspaceStaffDeferredClaimWithdrawalRepository(),
                 WorkspaceStaffOnboardingMutationTestSupport.Create(
                     applications,
                     new FakeOperationLock()),

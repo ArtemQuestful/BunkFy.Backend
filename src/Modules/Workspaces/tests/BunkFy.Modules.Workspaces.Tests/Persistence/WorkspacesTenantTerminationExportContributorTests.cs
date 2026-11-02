@@ -72,6 +72,7 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
                 WorkspacesDataRightsExportContributor
                     .StaffOnboardingRecoveryReceiptRecordType,
+                WorkspacesDataRightsExportContributor
                     .StaffDeferredClaimWithdrawalRecordType,
                 WorkspacesDataRightsExportContributor
                     .StaffOnboardingCorrectionReceiptRecordType,

@@ -18,6 +18,29 @@ using Xunit;
 
 public sealed class WorkspacesPersistenceIntegrationTests
 {
+    // Published dev f1f08694: later canonical migrations must stay applied.
+    private static readonly string[] PublishedWorkspacesMigrationIds =
+    [
+        "20260721053834_InitialWorkspaceStaffOnboarding",
+        "20260721174651_AddWorkspaceStaffAccessLifecycle",
+        "20260721203218_ScopeWorkspaceStaffAccessSnapshots",
+        "20260721213248_AddWorkspaceStaffAccessPlansAndPropertyProjection",
+        "20260728203233_AddWorkspaceStaffExpiryStates",
+        "20260728215109_ObserveWorkspaceStaffAccessPlanSourceExpiry",
+        "20260729001033_AddWorkspaceStaffOnboardingRetentionIndex",
+        "20260730070545_AddWorkspaceStaffRetentionCorrelationScrub",
+        "20260730093337_AddWorkspaceDataRightsOwnerDiscovery",
+        "20260730104955_AddWorkspaceStaffOnboardingDataRightsCorrections",
+        "20260730133835_AddWorkspaceStaffOnboardingProcessingRestrictions",
+        "20260730165414_AddWorkspaceStaffCorrelationAnonymisationProof",
+        "20260731063610_AddWorkspaceTerminationFence",
+        "20260804130902_AddWorkspaceTenantDestructionLifecycle",
+        "20260809155756_AddWorkspaceStaffOnboardingWithdrawal",
+        "20260821184307_AddWorkspacePropertyAuthorityTenantIntegrity",
+        "20260822023503_AddWorkspaceStaffOnboardingRetentionExecution",
+        "20260825181559_AddWorkspaceStaffOnboardingRecoveryAudit"
+    ];
+
     private const string StaffAccessLifecycleMigration =
         "20260721174651_AddWorkspaceStaffAccessLifecycle";
     private const string ScopedStaffAccessSnapshotsMigration =
@@ -30,6 +53,73 @@ public sealed class WorkspacesPersistenceIntegrationTests
         "20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals";
     private const string TenantA = "tenant-a";
     private const string TenantB = "tenant-b";
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Deferred_withdrawal_migration_preserves_the_nonempty_current_history()
+    {
+        await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder(
+            "postgres:16-alpine")
+            .WithDatabase("bunkfy_workspaces_current_history_tests")
+            .Build();
+        await postgreSql.StartAsync();
+        string tenantA = Guid.NewGuid().ToString("D");
+        string tenantB = Guid.NewGuid().ToString("D");
+        await using WorkspacesDbContext context = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA);
+        IMigrator migrator = context.Database.GetService<IMigrator>();
+        string[] allMigrations = context.Database.GetMigrations().ToArray();
+
+        // Execute the real, unchanged published migration bodies, omitting only
+        // this unmerged PR's earlier-dated migration. No model/history guard is
+        // disabled and no applied-history row is manufactured or deleted.
+        foreach (string migrationId in PublishedWorkspacesMigrationIds)
+        {
+            int index = Array.IndexOf(allMigrations, migrationId);
+            Assert.InRange(index, 0, allMigrations.Length - 1);
+            string previousId = index == 0
+                ? Migration.InitialDatabase
+                : allMigrations[index - 1];
+            string script = migrator.GenerateScript(previousId, migrationId);
+            await context.Database.ExecuteSqlRawAsync(script);
+        }
+
+        string[] previousHistory = (await context.Database
+            .GetAppliedMigrationsAsync()).ToArray();
+        Assert.Equal(PublishedWorkspacesMigrationIds, previousHistory);
+        Assert.Equal(
+            WorkspaceStaffDeferredWithdrawalMigration,
+            Assert.Single(await context.Database.GetPendingMigrationsAsync()));
+        await SeedLegacyApplicationAsync(
+            context, CreateApplication(tenantA, Guid.NewGuid(), "current-subject-a"));
+        await SeedLegacyApplicationAsync(
+            context, CreateApplication(tenantB, Guid.NewGuid(), "current-subject-b"));
+        const string applicationRowsSql = """
+            SELECT to_jsonb(application)::text AS "Value"
+            FROM workspaces.staff_onboarding_applications application
+            ORDER BY "Id"
+            """;
+        string[] before = await context.Database
+            .SqlQueryRaw<string>(applicationRowsSql).ToArrayAsync();
+        Assert.Equal(2, before.Length);
+
+        await context.Database.MigrateAsync();
+        await context.Database.MigrateAsync();
+
+        Assert.Equal(
+            before,
+            await context.Database.SqlQueryRaw<string>(applicationRowsSql)
+                .ToArrayAsync());
+        string[] history = (await context.Database.GetAppliedMigrationsAsync())
+            .ToArray();
+        Assert.Equal(previousHistory.Length + 1, history.Length);
+        Assert.Equal(
+            previousHistory,
+            history.Where(id => id != WorkspaceStaffDeferredWithdrawalMigration));
+        Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+        Assert.Empty(await context.StaffDeferredClaimWithdrawals.ToArrayAsync());
+    }
 
     [DockerFact]
     [Trait("Category", "Docker")]
