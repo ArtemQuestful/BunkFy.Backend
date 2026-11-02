@@ -237,7 +237,7 @@ public sealed class InventoryTopologyModelTests
     }
 
     [Fact]
-    public void Manual_block_has_version_concurrency_and_scope_aware_unit_foreign_key()
+    public void Manual_block_has_version_concurrency_and_property_owned_unit_foreign_key()
     {
         using InventoryDbContext dbContext = CreateDbContext();
 
@@ -249,8 +249,25 @@ public sealed class InventoryTopologyModelTests
 
         Assert.True(blockEntity.FindProperty(nameof(ManualInventoryBlock.Version))!.IsConcurrencyToken);
         Assert.True(unitEntity.FindProperty(nameof(InventoryUnit.AvailabilityMutationVersion))!.IsConcurrencyToken);
-        Assert.Equal(["ScopeId", "InventoryUnitId"], foreignKey.Properties.Select(property => property.Name));
-        Assert.Equal(["ScopeId", "Id"], foreignKey.PrincipalKey.Properties.Select(property => property.Name));
+        Assert.Equal(
+            ["ScopeId", "PropertyId", "InventoryUnitId"],
+            foreignKey.Properties.Select(property => property.Name));
+        Assert.Equal(
+            ["ScopeId", "PropertyId", "Id"],
+            foreignKey.PrincipalKey.Properties.Select(property => property.Name));
+        Assert.Equal(
+            "FK_inventory_manual_blocks_inventory_unit",
+            foreignKey.GetConstraintName());
+        Assert.Contains(
+            unitEntity.GetKeys(),
+            key => !key.IsPrimaryKey() &&
+                key.Properties.Select(property => property.Name)
+                    .SequenceEqual(["ScopeId", "PropertyId", "Id"]));
+        Assert.DoesNotContain(
+            unitEntity.GetKeys(),
+            key => !key.IsPrimaryKey() &&
+                key.Properties.Select(property => property.Name)
+                    .SequenceEqual(["ScopeId", "Id"]));
         Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior);
     }
 
@@ -267,6 +284,24 @@ public sealed class InventoryTopologyModelTests
             propertyEntity.GetIndexes(),
             index => index.IsUnique && index.Properties.Select(property => property.Name)
                 .SequenceEqual([nameof(InventoryPropertyTopology.ProjectionOrdinal)]));
+    }
+
+    [Fact]
+    public void Property_selection_version_is_durable_concurrency_and_advances_exactly_once()
+    {
+        using InventoryDbContext dbContext = CreateDbContext();
+        IEntityType propertyEntity = dbContext.Model.FindEntityType(
+            typeof(InventoryPropertyTopology))!;
+        IProperty selectionVersion = propertyEntity.FindProperty(
+            nameof(InventoryPropertyTopology.AvailabilitySelectionVersion))!;
+        InventoryPropertyTopology property = InventoryPropertyTopology.Create(
+            Guid.NewGuid(),
+            "tenant-a");
+
+        property.AdvanceAvailabilitySelection();
+
+        Assert.True(selectionVersion.IsConcurrencyToken);
+        Assert.Equal(2, property.AvailabilitySelectionVersion);
     }
 
     [Fact]
@@ -346,6 +381,20 @@ public sealed class InventoryTopologyModelTests
                 nameof(BedRetirementProcess.RoomId),
                 nameof(BedRetirementProcess.State)
             ]));
+        IIndex activeTarget = Assert.Single(
+            process.GetIndexes(),
+            index => index.GetDatabaseName() ==
+                "UX_bed_retirements_ScopeId_BedId_active");
+        Assert.True(activeTarget.IsUnique);
+        Assert.Equal(
+            [
+                nameof(BedRetirementProcess.ScopeId),
+                nameof(BedRetirementProcess.BedId)
+            ],
+            activeTarget.Properties.Select(property => property.Name));
+        Assert.Equal(
+            "\"State\" IN (1, 2, 3, 5)",
+            activeTarget.GetFilter());
     }
 
     [Fact]
@@ -377,6 +426,20 @@ public sealed class InventoryTopologyModelTests
                 nameof(RoomRetirementProcess.PropertyId),
                 nameof(RoomRetirementProcess.State)
             ]));
+        IIndex activeTarget = Assert.Single(
+            process.GetIndexes(),
+            index => index.GetDatabaseName() ==
+                "UX_room_retirements_ScopeId_RoomId_active");
+        Assert.True(activeTarget.IsUnique);
+        Assert.Equal(
+            [
+                nameof(RoomRetirementProcess.ScopeId),
+                nameof(RoomRetirementProcess.RoomId)
+            ],
+            activeTarget.Properties.Select(property => property.Name));
+        Assert.Equal(
+            "\"State\" IN (1, 2, 3, 5)",
+            activeTarget.GetFilter());
     }
 
     [Fact]

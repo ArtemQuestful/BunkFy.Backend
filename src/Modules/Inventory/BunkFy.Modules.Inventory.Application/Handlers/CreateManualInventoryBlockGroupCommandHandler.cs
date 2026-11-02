@@ -4,11 +4,15 @@ using BunkFy.Modules.Inventory.Application.Commands;
 using BunkFy.Modules.Inventory.Contracts;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
+using BunkFy.Modules.Inventory.Application.Ports;
+using BunkFy.Modules.Inventory.Domain.Aggregates;
+using BunkFy.Modules.Inventory.Domain.Errors;
 
 internal sealed class CreateManualInventoryBlockGroupCommandHandler(
     InventoryManagementMutationCoordinator mutations,
     InventoryManagementOperationJournal journal,
-    ManualInventoryBlockCreator creator)
+    ManualInventoryBlockCreator creator,
+    IInventoryAvailabilitySelectionFence selectionFence)
     : ICommandHandler<CreateManualInventoryBlockGroupCommand, ManualInventoryBlockGroupMutationReceiptDto>
 {
     public async Task<Result<ManualInventoryBlockGroupMutationReceiptDto>> HandleAsync(
@@ -22,6 +26,12 @@ internal sealed class CreateManualInventoryBlockGroupCommandHandler(
                 InventoryApplicationErrors.ManagementOperationInvalid);
         }
 
+        if (!command.Confirmed)
+        {
+            return Result.Failure<ManualInventoryBlockGroupMutationReceiptDto>(
+                InventoryApplicationErrors.BlockGroupConfirmationRequired);
+        }
+
         if (!InventoryBlockTargetNormalizer.TryNormalize(
                 command.Target,
                 out InventoryBlockTarget target))
@@ -32,13 +42,14 @@ internal sealed class CreateManualInventoryBlockGroupCommandHandler(
         }
 
         string fingerprint = InventoryManagementMutationFingerprint
-            .ComputeManualBlockCreate(
+            .ComputeManualBlockGroupCreateV2(
                 command.PropertyId,
                 target,
                 command.Arrival,
                 command.Departure,
                 command.Reason,
-                group: true);
+                command.ExpectedSelectionDigest,
+                command.ExpectedAffectedBlockCount);
         await mutations.AcquirePropertyOperationAsync(
                 command.PropertyId,
                 command.OperationId,
@@ -46,7 +57,7 @@ internal sealed class CreateManualInventoryBlockGroupCommandHandler(
             .ConfigureAwait(false);
         InventoryManagementReplayDecision<
             ManualInventoryBlockGroupMutationReceiptDto> replay =
-            await journal.InspectBlockGroupCreateAsync(
+            await journal.InspectBlockGroupCreateV2Async(
                 command.PropertyId,
                 command.OperationId,
                 fingerprint,
@@ -56,12 +67,24 @@ internal sealed class CreateManualInventoryBlockGroupCommandHandler(
             return replay.ToResult();
         }
 
-        Result<ManualInventoryBlockCreationResult> result = await creator.CreateAsync(
+        if (!ManualInventoryBlockGroup.IsValidActorId(command.ActorId))
+        {
+            return Result.Failure<ManualInventoryBlockGroupMutationReceiptDto>(
+                InventoryDomainErrors.BlockGroupActorInvalid);
+        }
+
+        await selectionFence.AcquireAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
+        Result<ManualInventoryBlockCreationResult> result = await creator.CreateConfirmedAsync(
             command.PropertyId,
             target,
             command.Arrival,
             command.Departure,
             command.Reason,
+            command.ExpectedSelectionDigest,
+            command.ExpectedAffectedBlockCount,
+            replacesGroupId: null,
+            excludedBlockIds: [],
             command.ActorId,
             cancellationToken).ConfigureAwait(false);
         if (result.IsFailure)
@@ -71,11 +94,11 @@ internal sealed class CreateManualInventoryBlockGroupCommandHandler(
         }
 
         ManualInventoryBlockGroupMutationReceiptDto receipt = await journal
-            .RecordBlockGroupCreateAsync(
+            .RecordBlockGroupCreateV2Async(
                 result.Value,
                 command.OperationId,
                 fingerprint,
-                result.Value.Blocks.First().CreatedAtUtc,
+                result.Value.Group.CreatedAtUtc,
                 cancellationToken)
             .ConfigureAwait(false);
         return Result.Success(receipt);

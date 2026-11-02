@@ -11,6 +11,7 @@ internal sealed class BedRetirementCoordinator(
     InventoryManagementMutationCoordinator mutations,
     IBedRetirementRepository retirements,
     IInventoryAvailabilityRepository availability,
+    IInventoryBusinessDateProvider businessDates,
     ISystemClock clock,
     IIdGenerator idGenerator)
 {
@@ -80,13 +81,23 @@ internal sealed class BedRetirementCoordinator(
         BedRetirementProcess process,
         Guid? excludedAllocationId,
         IReadOnlyCollection<Guid> excludedBlockIds,
-        CancellationToken cancellationToken) =>
-        await availability.GetBedRetirementImpactAsync(
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset nowUtc = clock.UtcNow;
+        DateOnly queryDate = await businessDates.GetAsync(
+                process.PropertyId,
+                nowUtc,
+                cancellationToken)
+            .ConfigureAwait(false) ?? throw new InvalidOperationException(
+                "A bed-retirement process references Inventory topology without a valid property business date.");
+        return await availability.GetBedRetirementImpactAsync(
             process.PropertyId,
             process.RoomId,
             process.BedId,
+            queryDate,
             excludedAllocationId,
             excludedBlockIds,
-            cancellationToken).ConfigureAwait(false) ??
-        throw new InvalidOperationException("A bed-retirement process references missing Inventory topology.");
+            cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException(
+                "A bed-retirement process references missing Inventory topology.");
+    }
 }

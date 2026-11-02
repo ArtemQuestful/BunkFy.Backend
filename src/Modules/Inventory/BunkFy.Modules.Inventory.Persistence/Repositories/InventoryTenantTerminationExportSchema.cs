@@ -22,6 +22,7 @@ internal static class InventoryTenantTerminationExportSchema
         typeof(InventoryRoomConfigurationTenantExport),
         typeof(InventoryManagementOperationTenantExport),
         typeof(InventoryManualBlockTenantExport),
+        typeof(InventoryManualBlockGroupTenantExport),
         typeof(InventoryAllocationTenantExport),
         typeof(InventoryAllocationUnitTenantExport),
         typeof(InventoryAllocationAmendmentDecisionTenantExport),
@@ -38,6 +39,18 @@ internal static class InventoryTenantTerminationExportSchema
             nameof(InventoryManualBlockTenantExport.Reason),
             "inventory.operational-reason",
             "include-after-authorized-subject-review-or-tenant-export"),
+        Binding<InventoryManualBlockGroupTenantExport>(
+            nameof(InventoryManualBlockGroupTenantExport.State),
+            "inventory.staff-change-operations",
+            "include-in-authorized-staff-or-tenant-export"),
+        Binding<InventoryManualBlockGroupTenantExport>(
+            nameof(InventoryManualBlockGroupTenantExport.Reason),
+            "inventory.operational-reason",
+            "include-after-authorized-subject-review-or-tenant-export"),
+        Binding<InventoryManualBlockGroupTenantExport>(
+            nameof(InventoryManualBlockGroupTenantExport.Actors),
+            "inventory.staff-actor-reference",
+            "include-in-authorized-staff-or-tenant-export"),
         Binding<InventoryAllocationTenantExport>(
             nameof(InventoryAllocationTenantExport.ReservationId),
             "inventory.guest-reservation-reference",

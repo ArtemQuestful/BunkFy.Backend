@@ -144,6 +144,9 @@ public sealed class InventoryMigrationIntegrationTests
                 .SingleAsync(process => process.Id == historicalBedRetirementId);
             RoomRetirementProcess historicalRoom = await upgraded.RoomRetirements
                 .SingleAsync(process => process.Id == historicalRoomRetirementId);
+            InventoryPropertyTopology selectionEpoch = await upgraded
+                .PropertyTopology.SingleAsync(property =>
+                    property.Id == propertyId);
             DateTimeOffset canceledAtUtc = createdAtUtc.AddHours(1);
             Assert.True(historicalBed.Cancel(
                 historicalBed.Version,
@@ -155,6 +158,11 @@ public sealed class InventoryMigrationIntegrationTests
                 "Keep room in service",
                 "user:operator",
                 canceledAtUtc).IsSuccess);
+            selectionEpoch.AdvanceAvailabilitySelection();
+            upgraded.ChangeTracker.DetectChanges();
+            Assert.True(upgraded.Entry(selectionEpoch)
+                .Property(property => property.AvailabilitySelectionVersion)
+                .IsModified);
             await upgraded.SaveChangesAsync();
 
             BedRetirementProcess activeBed = BedRetirementProcess.Create(
@@ -189,6 +197,11 @@ public sealed class InventoryMigrationIntegrationTests
                 "user:manager",
                 canceledAtUtc.AddMinutes(1)).Value;
             upgraded.AddRange(activeBed, anotherHistoricalBed, activeRoom);
+            selectionEpoch.AdvanceAvailabilitySelection();
+            upgraded.ChangeTracker.DetectChanges();
+            Assert.True(upgraded.Entry(selectionEpoch)
+                .Property(property => property.AvailabilitySelectionVersion)
+                .IsModified);
             await upgraded.SaveChangesAsync();
 
             Assert.Equal(3, await upgraded.BedRetirements.CountAsync(process => process.BedId == bedId));
@@ -386,7 +399,12 @@ public sealed class InventoryMigrationIntegrationTests
         }
 
         await using InventoryDbContext upgraded = CreateDbContext(postgreSql.GetConnectionString());
-        await upgraded.Database.MigrateAsync();
+        // Verify the exact canonical checks before the pending convergence
+        // triggers add their separate, earlier transition refusals.
+        await InventoryMigrationHistoryTestData.ApplyUnchangedMigrationsAsync(
+            upgraded,
+            "20260821144203_AddInventoryAuthoritativeStateIntegrity",
+            "20260821195120_AddInventoryAllocationAmendmentDecisionTenantIntegrity");
 
         Assert.Equal(1, await upgraded.Allocations.CountAsync(item => item.Id == allocationId));
         Assert.Equal(1, await upgraded.AllocationUnits.CountAsync(item => item.AllocationId == allocationId));
@@ -528,6 +546,11 @@ public sealed class InventoryMigrationIntegrationTests
             SET "AllocationId" = {Guid.NewGuid()}
             WHERE "Id" = {allocationId};
             """);
+
+        await upgraded.Database.MigrateAsync();
+        Assert.Equal(1, await upgraded.ManualBlockGroups.CountAsync());
+        Assert.Equal(1, await upgraded.ManualBlocks.CountAsync(item => item.Id == blockId));
+        Assert.Empty(await upgraded.Database.GetPendingMigrationsAsync());
     }
 
     [DockerFact]

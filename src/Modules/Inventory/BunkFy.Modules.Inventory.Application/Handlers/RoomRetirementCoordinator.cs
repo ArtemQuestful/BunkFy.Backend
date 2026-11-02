@@ -11,6 +11,7 @@ internal sealed class RoomRetirementCoordinator(
     InventoryManagementMutationCoordinator mutations,
     IRoomRetirementRepository retirements,
     IInventoryAvailabilityRepository availability,
+    IInventoryBusinessDateProvider businessDates,
     ISystemClock clock,
     IIdGenerator idGenerator)
 {
@@ -81,12 +82,22 @@ internal sealed class RoomRetirementCoordinator(
         RoomRetirementProcess process,
         Guid? excludedAllocationId,
         IReadOnlyCollection<Guid> excludedBlockIds,
-        CancellationToken cancellationToken) =>
-        await availability.GetRoomImpactAsync(
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset nowUtc = clock.UtcNow;
+        DateOnly queryDate = await businessDates.GetAsync(
+                process.PropertyId,
+                nowUtc,
+                cancellationToken)
+            .ConfigureAwait(false) ?? throw new InvalidOperationException(
+                "A room-retirement process references Inventory topology without a valid property business date.");
+        return await availability.GetRoomImpactAsync(
             process.PropertyId,
             process.RoomId,
+            queryDate,
             excludedAllocationId,
             excludedBlockIds,
-            cancellationToken).ConfigureAwait(false) ??
-        throw new InvalidOperationException("A room-retirement process references missing Inventory topology.");
+            cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException(
+                "A room-retirement process references missing Inventory topology.");
+    }
 }

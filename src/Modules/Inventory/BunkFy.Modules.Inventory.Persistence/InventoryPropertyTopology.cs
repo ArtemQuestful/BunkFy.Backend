@@ -19,6 +19,7 @@ public sealed class InventoryPropertyTopology : ScopedEntity<Guid>
     public long SourceVersion { get; private set; }
     public long DetailsVersion { get; private set; }
     public bool IsKnown { get; private set; }
+    public long AvailabilitySelectionVersion { get; private set; } = 1;
     public long ProjectionOrdinal { get; private set; }
 
     public static InventoryPropertyTopology Create(Guid propertyId, string scopeId) => new(propertyId, scopeId);
@@ -46,5 +47,16 @@ public sealed class InventoryPropertyTopology : ScopedEntity<Guid>
             this.DetailsVersion = sourceVersion;
             this.IsKnown = true;
         }
+    }
+
+    public void AdvanceAvailabilitySelection()
+    {
+        if (this.AvailabilitySelectionVersion == long.MaxValue)
+        {
+            throw new InvalidOperationException(
+                "The Inventory availability-selection version is exhausted.");
+        }
+
+        this.AvailabilitySelectionVersion++;
     }
 }

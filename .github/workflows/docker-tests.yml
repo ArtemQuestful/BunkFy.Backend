@@ -1,6 +1,7 @@
 name: Docker Tests
 
 on:
+  pull_request:
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
@@ -16,47 +17,77 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: 'true'
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_PROCESSOR_COUNT: '2'
   GMA_REQUIRE_DOCKER_TESTS: 'true'
 
 jobs:
-  docker:
-    name: Docker integration tests
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.groups.outputs.matrix }}
     steps:
-      - name: Checkout backend
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          fetch-depth: 0
           submodules: recursive
           token: ${{ secrets.GMA_CI_TOKEN || github.token }}
           persist-credentials: false
+      - shell: pwsh
+        run: |
+          ./eng/gma-bootstrap.ps1 -Force
+          ./eng/check-repository-security.ps1
+          ./eng/check-submodule-dev-heads.ps1
+          ./eng/update-solutions.ps1 -Check
+      - id: groups
+        shell: bash
+        run: |
+          python3 eng/test-docker-groups.tests.py
+          echo "matrix=$(python3 eng/test-docker-groups.py --matrix)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+  provider-tests:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+          token: ${{ secrets.GMA_CI_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: 10.0.303
-
-      - name: Show Docker version
-        shell: pwsh
-        run: docker version
-
-      - name: Check GMA submodule dev heads
-        shell: pwsh
-        run: ./eng/check-submodule-dev-heads.ps1
-
-      - name: Bootstrap source roots
-        shell: pwsh
+      - shell: pwsh
         run: ./eng/gma-bootstrap.ps1 -Force
+      - name: Record runner resource baseline
+        run: |
+          df -h . /var/lib/docker
+          free -m
+      - name: Run bounded provider group
+        run: python3 eng/test-docker-groups.py --group "${{ matrix.group }}"
+        env:
+          GMA_REQUIRE_DOCKER_TESTS: "true"
+      - name: Retain provider test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bunkfy-provider-${{ matrix.group }}-${{ github.run_attempt }}
+          path: artifacts/test-results/docker
+          if-no-files-found: ignore
+          retention-days: 30
 
-      - name: Restore
-        shell: pwsh
-        run: ./eng/restore.ps1
-
-      - name: Build
-        shell: pwsh
-        run: ./eng/build.ps1 -NoRestore
-
-      - name: Docker tests
-        shell: pwsh
-        run: ./eng/test-docker.ps1 -NoBuild
+  docker:
+    name: Docker integration tests
+    if: always()
+    needs: [plan, provider-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every provider group
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PROVIDER_RESULT: ${{ needs.provider-tests.result }}
+        run: test "$PLAN_RESULT" = success && test "$PROVIDER_RESULT" = success

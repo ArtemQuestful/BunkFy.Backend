@@ -1029,6 +1029,72 @@ public sealed class HostCompositionGuardTests
     }
 
     [Fact]
+    public void Inventory_block_group_admin_front_doors_keep_permission_audit_and_confirmation_parity()
+    {
+        string endpoints = RepositoryPaths.Read(
+            "src",
+            "Modules",
+            "Inventory",
+            "BunkFy.Modules.Inventory.AdminApi",
+            "InventoryAdminApiModule.cs");
+        string commands = RepositoryPaths.Read(
+            "src",
+            "Modules",
+            "Inventory",
+            "BunkFy.Modules.Inventory.AdminCli",
+            "InventoryBlockGroupAdminCliCommandGroup.cs");
+        (string Operation, string Permission)[] operationPermissionPairs =
+        [
+            ("BlockGroupsPreview", "BlockGroupsManage"),
+            ("BlockGroupsList", "Read"),
+            ("BlockGroupsGet", "Read"),
+            ("BlockGroupMembersList", "Read"),
+            ("BlockGroupsCreate", "BlockGroupsManage"),
+            ("BlockGroupsReplace", "BlockGroupsManage"),
+            ("BlockGroupsRelease", "BlockGroupsManage"),
+            ("BlockGroupCreateOperationsGet", "BlockGroupsManage"),
+            ("BlockGroupOperationsGet", "BlockGroupsManage")
+        ];
+
+        foreach ((string operation, string permission) in
+                 operationPermissionPairs)
+        {
+            Assert.Contains(
+                $"InventoryAdminOperationNames.{operation}",
+                endpoints,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"InventoryAdminPermissions.{permission}",
+                endpoints,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"InventoryAdminOperationNames.{operation}",
+                commands,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"InventoryAdminPermissions.{permission}",
+                commands,
+                StringComparison.Ordinal);
+        }
+
+        Assert.Equal(3, CountOccurrences(commands, "Option<bool> yes = new(\"--yes\")"));
+        Assert.True(CountOccurrences(endpoints, "Actor(httpContext)") >= 3);
+        Assert.Equal(3, CountOccurrences(commands, "ResolveActor(parse, globalOptions)"));
+        Assert.Contains("Option<string?> cursor = new(\"--cursor\")", commands, StringComparison.Ordinal);
+        Assert.Contains("result.Error.Code", commands, StringComparison.Ordinal);
+        Assert.DoesNotContain("new(\"--page\")", commands, StringComparison.Ordinal);
+
+        string legacyCommands = RepositoryPaths.Read(
+            "src",
+            "Modules",
+            "Inventory",
+            "BunkFy.Modules.Inventory.AdminCli",
+            "InventoryAdminCliModule.cs");
+        Assert.True(CountOccurrences(endpoints, "Actor(httpContext)") >= 5);
+        Assert.Equal(2, CountOccurrences(legacyCommands, "ResolveActor(parseResult, globalOptions)"));
+    }
+
+    [Fact]
     public void Admin_hosts_keep_audit_and_bootstrap_settings_under_their_domain_owners()
     {
         string[] settingsPaths =

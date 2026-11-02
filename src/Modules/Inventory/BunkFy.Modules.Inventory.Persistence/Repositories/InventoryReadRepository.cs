@@ -110,12 +110,294 @@ internal sealed class InventoryReadRepository(InventoryDbContext dbContext) : II
         InventoryBlockTarget target,
         CancellationToken cancellationToken)
     {
+        InventoryBlockTargetResolution resolution = await this
+            .ResolveBlockTargetUnitsCoreAsync(
+                propertyId,
+                target,
+                maximumUnitCount: null,
+                sellableOnly: false,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return resolution.Units;
+    }
+
+    public Task<InventoryBlockTargetResolution>
+        ResolveBlockTargetUnitsBoundedAsync(
+            Guid propertyId,
+            InventoryBlockTarget target,
+            int maximumUnitCount,
+            CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumUnitCount, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+            maximumUnitCount,
+            ManualInventoryBlockGroup.MaximumMemberCount + 1);
+        return this.ResolveBlockTargetUnitsBoundedCoreAsync(
+            propertyId,
+            target,
+            maximumUnitCount,
+            cancellationToken);
+    }
+
+    private async Task<InventoryBlockTargetResolution>
+        ResolveBlockTargetUnitsBoundedCoreAsync(
+            Guid propertyId,
+            InventoryBlockTarget target,
+            int maximumUnitCount,
+            CancellationToken cancellationToken)
+    {
+        string? buildingLabel = target.BuildingLabel?.Trim();
+        string? floorLabel = target.FloorLabel?.Trim();
+        InventoryRetirementProcessState[] activeStates =
+        [
+            InventoryRetirementProcessState.Draining,
+            InventoryRetirementProcessState.FinalizationRequested,
+            InventoryRetirementProcessState.FinalizedAwaitingTopology,
+            InventoryRetirementProcessState.Rejected
+        ];
+        var selected = await dbContext.InventoryUnits
+            .AsNoTracking()
+            .Where(unit =>
+                unit.PropertyId == propertyId &&
+                unit.IsKnown &&
+                unit.IsTopologyActive &&
+                dbContext.PropertyTopology.Any(property =>
+                    property.Id == propertyId &&
+                    property.IsKnown &&
+                    property.Status == PropertyStatus.Active) &&
+                dbContext.RoomTopology.Any(room =>
+                    room.Id == unit.RoomId &&
+                    room.PropertyId == propertyId &&
+                    room.IsKnown &&
+                    room.Status == RoomStatus.Active &&
+                    (target.Kind == InventoryBlockTargetKind.Property ||
+                     (target.Kind == InventoryBlockTargetKind.Building &&
+                      room.BuildingLabel == buildingLabel) ||
+                     (target.Kind == InventoryBlockTargetKind.Floor &&
+                      room.BuildingLabel == buildingLabel &&
+                      room.FloorLabel == floorLabel) ||
+                     (target.Kind == InventoryBlockTargetKind.Room &&
+                      room.Id == target.RoomId) ||
+                     (target.Kind == InventoryBlockTargetKind.Unit &&
+                      unit.Id == target.InventoryUnitId))) &&
+                ((unit.Kind == InventoryUnitKind.Room &&
+                  dbContext.RoomConfigurations.Any(configuration =>
+                      configuration.Id == unit.RoomId &&
+                      configuration.SalesMode == RoomSalesMode.RoomLevel) &&
+                  !dbContext.RoomRetirements.Any(process =>
+                      process.PropertyId == propertyId &&
+                      process.RoomId == unit.RoomId &&
+                      activeStates.Contains(process.State)) &&
+                  !dbContext.BedRetirements.Any(process =>
+                      process.PropertyId == propertyId &&
+                      process.RoomId == unit.RoomId &&
+                      activeStates.Contains(process.State))) ||
+                 (unit.Kind == InventoryUnitKind.Bed &&
+                  dbContext.RoomConfigurations.Any(configuration =>
+                      configuration.Id == unit.RoomId &&
+                      configuration.SalesMode == RoomSalesMode.BedLevel) &&
+                  !dbContext.RoomRetirements.Any(process =>
+                      process.PropertyId == propertyId &&
+                      process.RoomId == unit.RoomId &&
+                      activeStates.Contains(process.State)) &&
+                  !dbContext.BedRetirements.Any(process =>
+                      process.PropertyId == propertyId &&
+                      process.RoomId == unit.RoomId &&
+                      process.BedId == unit.Id &&
+                      activeStates.Contains(process.State)))))
+            .OrderBy(unit => unit.Id)
+            .Take(maximumUnitCount + 1)
+            .Select(unit => new
+            {
+                unit.Id,
+                unit.PropertyId,
+                unit.RoomId,
+                unit.BedId,
+                unit.Kind,
+                unit.Label
+            })
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        bool isTruncated = selected.Length > maximumUnitCount;
+        InventoryUnitSnapshot[] units = selected
+            .Take(maximumUnitCount)
+            .Select(unit => new InventoryUnitSnapshot(
+                new InventoryUnitDto(
+                    unit.Id,
+                    unit.PropertyId,
+                    unit.RoomId,
+                    unit.BedId,
+                    unit.Kind,
+                    unit.Label,
+                    IsSellable: true,
+                    IsTopologyActive: true),
+                IsSellable: true))
+            .OrderBy(unit =>
+                unit.Unit.InventoryUnitId.ToString("N"),
+                StringComparer.Ordinal)
+            .ToArray();
+        if (units.Length == 0)
+        {
+            return new(units, [], isTruncated);
+        }
+
+        Guid[] selectedIds = units
+            .Select(unit => unit.Unit.InventoryUnitId)
+            .ToArray();
+        var coordinateRows = await dbContext.InventoryUnits
+            .AsNoTracking()
+            .Where(unit =>
+                unit.PropertyId == propertyId &&
+                selectedIds.Contains(unit.Id))
+            .Select(unit => new
+            {
+                Unit = unit,
+                Property = dbContext.PropertyTopology.Single(property =>
+                    property.Id == propertyId),
+                Room = dbContext.RoomTopology.Single(room =>
+                    room.Id == unit.RoomId),
+                Configuration = dbContext.RoomConfigurations
+                    .Where(configuration => configuration.Id == unit.RoomId)
+                    .Select(configuration => new
+                    {
+                        configuration.SalesMode,
+                        configuration.Version,
+                        configuration.AvailabilityMutationVersion
+                    })
+                    .SingleOrDefault()
+            })
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        coordinateRows = coordinateRows
+            .OrderBy(
+                row => row.Unit.Id.ToString("N"),
+                StringComparer.Ordinal)
+            .ToArray();
+        Guid[] selectedRoomIds = coordinateRows
+            .Select(row => row.Unit.RoomId)
+            .Distinct()
+            .ToArray();
+        Guid[] selectedBedIds = coordinateRows
+            .Where(row => row.Unit.Kind == InventoryUnitKind.Bed)
+            .Select(row => row.Unit.Id)
+            .ToArray();
+        BedRetirementProcess[] bedRetirements = selectedBedIds.Length == 0
+            ? []
+            : await this.ActiveBedRetirementEvidence(
+                    propertyId,
+                    selectedBedIds,
+                    activeStates)
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+        RoomRetirementProcess[] roomRetirements = selectedRoomIds.Length == 0
+            ? []
+            : await this.ActiveRoomRetirementEvidence(
+                    propertyId,
+                    selectedRoomIds,
+                    activeStates)
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (bedRetirements.Length > selectedBedIds.Length ||
+            bedRetirements.Select(process => process.BedId).Distinct().Count() !=
+                bedRetirements.Length ||
+            roomRetirements.Length > selectedRoomIds.Length ||
+            roomRetirements.Select(process => process.RoomId).Distinct().Count() !=
+                roomRetirements.Length)
+        {
+            throw new InvalidDataException(
+                "Inventory selection has duplicate active retirement evidence.");
+        }
+        InventoryBlockSelectionCoordinate[] coordinates = coordinateRows
+            .Select(row => new InventoryBlockSelectionCoordinate(
+                row.Unit.Id,
+                row.Property.SourceVersion,
+                row.Property.DetailsVersion,
+                row.Property.AvailabilitySelectionVersion,
+                (int)row.Property.Status,
+                row.Room.Id,
+                row.Room.Name,
+                row.Room.SourceVersion,
+                row.Room.DetailsVersion,
+                (int)row.Room.Status,
+                (int)(row.Configuration?.SalesMode ??
+                    RoomSalesMode.Unconfigured),
+                row.Configuration?.Version ?? 0,
+                row.Configuration?.AvailabilityMutationVersion ?? 0,
+                row.Unit.SourceVersion,
+                row.Unit.DetailsVersion,
+                row.Unit.IsTopologyActive,
+                row.Unit.AvailabilityMutationVersion,
+                bedRetirements
+                    .Where(process => process.BedId == row.Unit.Id)
+                    .Select(process =>
+                        new InventoryBlockSelectionRetirementCoordinate(
+                            process.Id,
+                            Kind: 1,
+                            process.Version,
+                            (int)process.State))
+                    .Concat(roomRetirements
+                        .Where(process => process.RoomId == row.Unit.RoomId)
+                        .Select(process =>
+                            new InventoryBlockSelectionRetirementCoordinate(
+                                process.Id,
+                                Kind: 2,
+                                process.Version,
+                                (int)process.State)))
+                    .OrderBy(process => process.Kind)
+                    .ThenBy(
+                        process => process.TopologyChangeId.ToString("N"),
+                        StringComparer.Ordinal)
+                    .ToArray()))
+            .ToArray();
+        return new(units, coordinates, isTruncated);
+    }
+
+    private IQueryable<BedRetirementProcess> ActiveBedRetirementEvidence(
+        Guid propertyId,
+        Guid[] selectedBedIds,
+        InventoryRetirementProcessState[] activeStates) =>
+        dbContext.BedRetirements
+            .AsNoTracking()
+            .Where(process =>
+                process.PropertyId == propertyId &&
+                selectedBedIds.Contains(process.BedId) &&
+                activeStates.Contains(process.State))
+            .OrderBy(process => process.BedId)
+            .ThenBy(process => process.Id)
+            .Take(selectedBedIds.Length + 1);
+
+    private IQueryable<RoomRetirementProcess> ActiveRoomRetirementEvidence(
+        Guid propertyId,
+        Guid[] selectedRoomIds,
+        InventoryRetirementProcessState[] activeStates) =>
+        dbContext.RoomRetirements
+            .AsNoTracking()
+            .Where(process =>
+                process.PropertyId == propertyId &&
+                selectedRoomIds.Contains(process.RoomId) &&
+                activeStates.Contains(process.State))
+            .OrderBy(process => process.RoomId)
+            .ThenBy(process => process.Id)
+            .Take(selectedRoomIds.Length + 1);
+
+    private async Task<InventoryBlockTargetResolution>
+        ResolveBlockTargetUnitsCoreAsync(
+            Guid propertyId,
+            InventoryBlockTarget target,
+            int? maximumUnitCount,
+            bool sellableOnly,
+            CancellationToken cancellationToken)
+    {
         if (target.Kind == InventoryBlockTargetKind.Unit)
         {
             InventoryUnitSnapshot? unit = target.InventoryUnitId.HasValue
                 ? await this.GetUnitAsync(propertyId, target.InventoryUnitId.Value, cancellationToken).ConfigureAwait(false)
                 : null;
-            return unit is null ? [] : [unit];
+            InventoryUnitSnapshot[] unitResult = unit is null ||
+                (sellableOnly && !unit.IsSellable)
+                ? []
+                : [unit];
+            return new(unitResult, [], IsTruncated: false);
         }
 
         InventoryPropertyTopology? property = await dbContext.PropertyTopology
@@ -124,7 +406,7 @@ internal sealed class InventoryReadRepository(InventoryDbContext dbContext) : II
             .ConfigureAwait(false);
         if (property is null)
         {
-            return [];
+            return new([], [], IsTruncated: false);
         }
 
         IQueryable<InventoryRoomTopology> roomQuery = dbContext.RoomTopology
@@ -153,7 +435,7 @@ internal sealed class InventoryReadRepository(InventoryDbContext dbContext) : II
         Guid[] roomIds = rooms.Select(room => room.Id).ToArray();
         if (roomIds.Length == 0)
         {
-            return [];
+            return new([], [], IsTruncated: false);
         }
 
         Dictionary<Guid, RoomInventoryConfiguration> configurations = await dbContext.RoomConfigurations
@@ -161,18 +443,64 @@ internal sealed class InventoryReadRepository(InventoryDbContext dbContext) : II
             .Where(configuration => roomIds.Contains(configuration.Id))
             .ToDictionaryAsync(configuration => configuration.Id, cancellationToken)
             .ConfigureAwait(false);
-        InventoryUnit[] units = await dbContext.InventoryUnits
-            .AsNoTracking()
-            .Where(unit => roomIds.Contains(unit.RoomId) && unit.IsKnown)
-            .OrderBy(unit => unit.Id)
-            .ToArrayAsync(cancellationToken)
-            .ConfigureAwait(false);
-        Dictionary<Guid, InventoryRoomTopology> roomsById = rooms.ToDictionary(room => room.Id);
         (HashSet<Guid> drainedBedIds, HashSet<Guid> drainingRoomIds, HashSet<Guid> fullyDrainingRoomIds) = await this
             .GetActiveDrainsAsync(propertyId, roomIds, cancellationToken)
             .ConfigureAwait(false);
+        IQueryable<InventoryUnit> unitQuery = dbContext.InventoryUnits
+            .AsNoTracking()
+            .Where(unit => roomIds.Contains(unit.RoomId) && unit.IsKnown)
+            .OrderBy(unit => unit.Id);
+        if (sellableOnly)
+        {
+            Guid[] activeRoomIds = property.Status == PropertyStatus.Active
+                ? rooms
+                    .Where(room => room.Status == RoomStatus.Active)
+                    .Select(room => room.Id)
+                    .ToArray()
+                : [];
+            Guid[] roomLevelRoomIds = configurations.Values
+                .Where(configuration =>
+                    configuration.SalesMode == RoomSalesMode.RoomLevel)
+                .Select(configuration => configuration.Id)
+                .ToArray();
+            Guid[] bedLevelRoomIds = configurations.Values
+                .Where(configuration =>
+                    configuration.SalesMode == RoomSalesMode.BedLevel)
+                .Select(configuration => configuration.Id)
+                .ToArray();
+            Guid[] drainedBeds = drainedBedIds.ToArray();
+            Guid[] drainingRooms = drainingRoomIds.ToArray();
+            Guid[] fullyDrainingRooms = fullyDrainingRoomIds.ToArray();
+            unitQuery = unitQuery.Where(unit =>
+                unit.IsTopologyActive &&
+                activeRoomIds.Contains(unit.RoomId) &&
+                ((unit.Kind == InventoryUnitKind.Room &&
+                  roomLevelRoomIds.Contains(unit.RoomId) &&
+                  !drainingRooms.Contains(unit.RoomId)) ||
+                 (unit.Kind == InventoryUnitKind.Bed &&
+                  bedLevelRoomIds.Contains(unit.RoomId) &&
+                  !drainedBeds.Contains(unit.Id) &&
+                  !fullyDrainingRooms.Contains(unit.RoomId))));
+        }
 
-        return units
+        if (maximumUnitCount.HasValue)
+        {
+            unitQuery = unitQuery.Take(maximumUnitCount.Value + 1);
+        }
+
+        InventoryUnit[] units = await unitQuery
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        bool isTruncated = maximumUnitCount.HasValue &&
+            units.Length > maximumUnitCount.Value;
+        if (isTruncated)
+        {
+            units = units[..maximumUnitCount!.Value];
+        }
+
+        Dictionary<Guid, InventoryRoomTopology> roomsById = rooms.ToDictionary(room => room.Id);
+
+        InventoryUnitSnapshot[] mappedUnits = units
             .Select(unit =>
             {
                 InventoryRoomTopology room = roomsById[unit.RoomId];
@@ -186,7 +514,9 @@ internal sealed class InventoryReadRepository(InventoryDbContext dbContext) : II
                     fullyDrainingRoomIds);
                 return new InventoryUnitSnapshot(mapped, mapped.IsSellable);
             })
+            .Where(unit => !sellableOnly || unit.IsSellable)
             .ToArray();
+        return new(mappedUnits, [], isTruncated);
     }
 
     public async Task<RoomInventoryListResponse> ListRoomsAsync(

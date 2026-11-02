@@ -48,6 +48,7 @@ public sealed class InventoryRetirementAutoAdvanceTests
                 new TestScopeContext()),
             retirements,
             new UnusedAvailabilityRepository(),
+            new TestBusinessDateProvider(),
             new TestClock(),
             ids);
 
@@ -84,6 +85,7 @@ public sealed class InventoryRetirementAutoAdvanceTests
                 new TestScopeContext()),
             retirements,
             new UnusedAvailabilityRepository(),
+            new TestBusinessDateProvider(),
             new TestClock(),
             ids);
 
@@ -256,6 +258,15 @@ public sealed class InventoryRetirementAutoAdvanceTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class TestBusinessDateProvider : IInventoryBusinessDateProvider
+    {
+        public Task<DateOnly?> GetAsync(
+            Guid propertyId,
+            DateTimeOffset nowUtc,
+            CancellationToken cancellationToken) => Task.FromResult<DateOnly?>(
+                DateOnly.FromDateTime(nowUtc.UtcDateTime));
     }
 
     private sealed class TestIdGenerator : IIdGenerator

@@ -28,9 +28,14 @@ internal sealed class CreateManualInventoryBlockCommandValidator : ICommandValid
             yield return "Arrival must be before Departure.";
         }
 
-        if (string.IsNullOrWhiteSpace(command.Reason) || command.Reason.Trim().Length > ManualInventoryBlock.ReasonMaxLength)
+        if (!CreateManualInventoryBlockGroupCommandValidator.IsValidReason(command.Reason))
         {
             yield return $"Reason is required and must be {ManualInventoryBlock.ReasonMaxLength} characters or fewer.";
+        }
+
+        if (!CreateManualInventoryBlockGroupCommandValidator.IsValidActor(command.ActorId))
+        {
+            yield return $"ActorId is required and must be a control-free value of {ManualInventoryBlockGroup.ActorIdMaxLength} characters or fewer.";
         }
     }
 }

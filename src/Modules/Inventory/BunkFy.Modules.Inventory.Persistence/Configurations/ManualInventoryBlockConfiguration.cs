@@ -45,10 +45,46 @@ internal sealed class ManualInventoryBlockConfiguration : IEntityTypeConfigurati
             block.Departure
         });
         builder.HasIndex(block => new { block.ScopeId, block.PropertyId, block.BlockGroupId, block.Status });
+        builder.HasIndex(block => new
+        {
+            block.ScopeId,
+            block.PropertyId,
+            block.BlockGroupId,
+            block.InventoryUnitId
+        })
+            .IsUnique()
+            .HasDatabaseName("UX_inventory_manual_blocks_group_unit");
+        builder.HasOne<ManualInventoryBlockGroup>()
+            .WithMany()
+            .HasForeignKey(block => new
+            {
+                block.ScopeId,
+                block.PropertyId,
+                block.BlockGroupId
+            })
+            .HasPrincipalKey(group => new
+            {
+                group.ScopeId,
+                group.PropertyId,
+                group.Id
+            })
+            .HasConstraintName("FK_inventory_manual_blocks_group")
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<InventoryUnit>()
             .WithMany()
-            .HasForeignKey(block => new { block.ScopeId, block.InventoryUnitId })
-            .HasPrincipalKey(unit => new { unit.ScopeId, unit.Id })
+            .HasForeignKey(block => new
+            {
+                block.ScopeId,
+                block.PropertyId,
+                block.InventoryUnitId
+            })
+            .HasPrincipalKey(unit => new
+            {
+                unit.ScopeId,
+                unit.PropertyId,
+                unit.Id
+            })
+            .HasConstraintName("FK_inventory_manual_blocks_inventory_unit")
             .OnDelete(DeleteBehavior.Restrict);
         builder.Ignore(block => block.DomainEvents);
     }

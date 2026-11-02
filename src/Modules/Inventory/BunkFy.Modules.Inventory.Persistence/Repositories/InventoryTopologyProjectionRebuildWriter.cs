@@ -8,6 +8,7 @@ using BunkFy.Modules.Properties.Contracts;
 internal sealed class InventoryTopologyProjectionRebuildWriter(
     IInventoryTopologyRepository topologyRepository,
     IRoomInventoryConfigurationRepository configurationRepository,
+    IInventoryAvailabilitySelectionFence selectionFence,
     InventoryDbContext dbContext,
     ISystemClock clock)
     : IProjectionRebuildWriter<PropertyTopologyProjectionExport>
@@ -25,10 +26,13 @@ internal sealed class InventoryTopologyProjectionRebuildWriter(
             return new ProjectionWriteResult(writtenCount: 0, skippedCount: snapshots.Count);
         }
 
-        foreach (PropertyTopologyProjectionExport property in snapshots)
+        foreach (PropertyTopologyProjectionExport property in snapshots.OrderBy(
+                     snapshot => snapshot.PropertyId))
         {
             DateTimeOffset observedAtUtc = clock.UtcNow;
-            await topologyRepository.ApplyPropertyAsync(
+            await selectionFence.AcquireAsync(property.PropertyId, cancellationToken)
+                .ConfigureAwait(false);
+            bool selectionChanged = await topologyRepository.ApplyPropertyAsync(
                 new(
                     property.TenantId,
                     property.PropertyId,
@@ -41,7 +45,7 @@ internal sealed class InventoryTopologyProjectionRebuildWriter(
 
             foreach (RoomTopologyProjectionExport room in property.Rooms)
             {
-                await topologyRepository.ApplyRoomAsync(
+                selectionChanged |= await topologyRepository.ApplyRoomAsync(
                     new(
                         property.TenantId,
                         property.PropertyId,
@@ -52,7 +56,7 @@ internal sealed class InventoryTopologyProjectionRebuildWriter(
                         room.Status,
                         room.Version),
                     cancellationToken).ConfigureAwait(false);
-                await configurationRepository.EnsureAsync(
+                selectionChanged |= await configurationRepository.EnsureAsync(
                     property.TenantId,
                     property.PropertyId,
                     room.RoomId,
@@ -61,7 +65,7 @@ internal sealed class InventoryTopologyProjectionRebuildWriter(
 
                 foreach (BedTopologyProjectionExport bed in room.Beds)
                 {
-                    await topologyRepository.ApplyBedAsync(
+                    selectionChanged |= await topologyRepository.ApplyBedAsync(
                         new(
                             property.TenantId,
                             property.PropertyId,
@@ -72,6 +76,12 @@ internal sealed class InventoryTopologyProjectionRebuildWriter(
                             bed.Version),
                         cancellationToken).ConfigureAwait(false);
                 }
+            }
+
+            if (selectionChanged)
+            {
+                await selectionFence.AdvanceAsync(property.PropertyId, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
 

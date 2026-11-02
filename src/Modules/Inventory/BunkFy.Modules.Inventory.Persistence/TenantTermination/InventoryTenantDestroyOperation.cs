@@ -140,9 +140,9 @@ internal sealed class InventoryTenantDestroyOperation : IScopedEntity
     private static InventoryTenantDestroyStage Next(
         InventoryTenantDestroyStage stage)
     {
-        if (stage is < InventoryTenantDestroyStage.OutboxMessages or
-            > InventoryTenantDestroyStage.ManagementOperations or
-            InventoryTenantDestroyStage.Completed)
+        if (!Enum.IsDefined(stage) ||
+            stage is InventoryTenantDestroyStage.Unknown or
+                InventoryTenantDestroyStage.Completed)
         {
             throw new InvalidOperationException(
                 "The Inventory tenant destruction stage is invalid.");
@@ -154,6 +154,10 @@ internal sealed class InventoryTenantDestroyOperation : IScopedEntity
                 InventoryTenantDestroyStage.ManagementOperations,
             InventoryTenantDestroyStage.ManagementOperations =>
                 InventoryTenantDestroyStage.RoomConfigurations,
+            InventoryTenantDestroyStage.ManualBlocks =>
+                InventoryTenantDestroyStage.ManualBlockGroups,
+            InventoryTenantDestroyStage.ManualBlockGroups =>
+                InventoryTenantDestroyStage.AllocationOperationLocks,
             InventoryTenantDestroyStage.ProjectionRebuildCheckpoints =>
                 InventoryTenantDestroyStage.Completed,
             _ => (InventoryTenantDestroyStage)((int)stage + 1)
@@ -183,5 +187,6 @@ internal enum InventoryTenantDestroyStage
     PropertyTopology = 17,
     ProjectionRebuildCheckpoints = 18,
     Completed = 19,
-    ManagementOperations = 20
+    ManagementOperations = 20,
+    ManualBlockGroups = 21
 }

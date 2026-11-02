@@ -29,7 +29,8 @@ public static class WorkspaceAccessPermissionCatalogue
 
         Permission(InventoryAdminPermissionCodes.Read, "Inventory", "View inventory", "View room sales modes, availability, and blocks.", requires: [PropertiesAdminPermissionCodes.Read]),
         Permission(InventoryAdminPermissionCodes.Configure, "Inventory", "Configure room sales", "Choose whether rooms are sold whole or by individual bed.", requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read]),
-        Permission(InventoryAdminPermissionCodes.BlocksManage, "Inventory", "Manage inventory blocks", "Take rooms, beds, floors, or properties out of service.", requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read]),
+        Permission(InventoryAdminPermissionCodes.BlocksManage, "Inventory", "Manage inventory blocks", "Take an individual room or bed inventory unit out of service.", requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read]),
+        Permission(InventoryAdminPermissionCodes.BlockGroupsManage, "Inventory", "Manage inventory block groups", "Preview, create, replace, and release confirmed groups of inventory blocks.", sensitive: true, requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read, InventoryAdminPermissionCodes.BlocksManage]),
         Permission(InventoryAdminPermissionCodes.Retire, "Inventory", "Retire rooms and beds", "Start, inspect, and retry terminal room or bed retirement workflows.", sensitive: true, requires: [PropertiesAdminPermissionCodes.RoomsManage, PropertiesAdminPermissionCodes.BedsManage, InventoryAdminPermissionCodes.Read]),
 
         Permission(ReservationsAdminPermissionCodes.Read, "Reservations", "View reservations", "View reservation details and stay status."),

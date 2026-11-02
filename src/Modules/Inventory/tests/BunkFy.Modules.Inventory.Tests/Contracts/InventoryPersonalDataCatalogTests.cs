@@ -31,7 +31,24 @@ public sealed class InventoryPersonalDataCatalogTests
             [nameof(ConfigureRoomSalesModeCommand.OperationId)],
             StringComparer.Ordinal),
         [typeof(InventoryModule.CreateManualBlockRequest)] = OperationIdMember(),
-        [typeof(InventoryModule.CreateManualBlockGroupRequest)] = OperationIdMember(),
+        [typeof(InventoryModule.CreateManualBlockGroupRequest)] = new(
+            [
+                "OperationId",
+                "ExpectedSelectionDigest",
+                "ExpectedAffectedBlockCount",
+                "Confirmed"
+            ],
+            StringComparer.Ordinal),
+        [typeof(InventoryModule.ReplaceManualBlockGroupRequest)] =
+            GroupMutationControlMembers(),
+        [typeof(InventoryModule.ReleaseManualBlockGroupRequest)] =
+            OperationVersionAndConfirmationMembers(),
+        [typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.CreateManualBlockGroupRequest)] =
+            GroupMutationControlMembers(),
+        [typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.ReplaceManualBlockGroupRequest)] =
+            GroupMutationControlMembers(),
+        [typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.ReleaseManualBlockGroupRequest)] =
+            OperationVersionAndConfirmationMembers(),
         [typeof(InventoryModule.RequestBedRetirementRequest)] =
             OperationAndConfirmationMembers(),
         [typeof(InventoryModule.RequestRoomRetirementRequest)] =
@@ -39,9 +56,19 @@ public sealed class InventoryPersonalDataCatalogTests
         [typeof(InventoryModule.CancelRetirementRequest)] =
             OperationVersionAndConfirmationMembers(),
         [typeof(CreateManualInventoryBlockCommand)] = OperationIdMember(),
-        [typeof(CreateManualInventoryBlockGroupCommand)] = OperationIdMember(),
+        [typeof(CreateManualInventoryBlockGroupCommand)] = new(
+            [
+                "OperationId",
+                "ExpectedSelectionDigest",
+                "ExpectedAffectedBlockCount",
+                "Confirmed"
+            ],
+            StringComparer.Ordinal),
+        [typeof(ReplaceManualInventoryBlockGroupCommand)] =
+            GroupMutationControlMembers(),
         [typeof(ReleaseManualInventoryBlockCommand)] = OperationIdMember(),
-        [typeof(ReleaseManualInventoryBlockGroupCommand)] = OperationIdMember(),
+        [typeof(ReleaseManualInventoryBlockGroupCommand)] =
+            OperationVersionAndConfirmationMembers(),
         [typeof(RequestBedRetirementCommand)] = OperationAndConfirmationMembers(),
         [typeof(RequestRoomRetirementCommand)] = OperationAndConfirmationMembers(),
         [typeof(RetryBedRetirementCommand)] = OperationAndVersionMembers(),
@@ -51,6 +78,10 @@ public sealed class InventoryPersonalDataCatalogTests
         [typeof(CancelRoomRetirementCommand)] =
             OperationVersionAndConfirmationMembers(),
         [typeof(ManualInventoryBlockListResponse)] = PaginationMembers(),
+        [typeof(ManualInventoryBlockGroupListResponse)] =
+            new(["PageSize", "NextCursor"], StringComparer.Ordinal),
+        [typeof(ManualInventoryBlockGroupMemberListResponse)] =
+            new(["PageSize", "NextCursor"], StringComparer.Ordinal),
         [typeof(RoomInventoryListResponse)] = PaginationMembers(),
         [typeof(BedRetirementImpactSnapshot)] = new([nameof(BedRetirementImpactSnapshot.HasActiveClaims)], StringComparer.Ordinal),
         [typeof(RoomInventoryImpactSnapshot)] = new(
@@ -63,6 +94,15 @@ public sealed class InventoryPersonalDataCatalogTests
 
     private static HashSet<string> OperationAndVersionMembers() => new(
         ["OperationId", "ExpectedVersion"],
+        StringComparer.Ordinal);
+
+    private static HashSet<string> GroupMutationControlMembers() => new(
+        [
+            "OperationId",
+            "ExpectedSelectionDigest",
+            "ExpectedAffectedBlockCount",
+            "Confirmed"
+        ],
         StringComparer.Ordinal);
 
     private static HashSet<string> OperationAndConfirmationMembers() => new(
@@ -245,6 +285,7 @@ public sealed class InventoryPersonalDataCatalogTests
         typeof(InventoryAllocationAnonymisationTombstone),
         typeof(InventoryAllocationAnonymisationRestoreReceipt),
         typeof(ManualInventoryBlock),
+        typeof(ManualInventoryBlockGroup),
         typeof(BedRetirementProcess),
         typeof(RoomRetirementProcess),
         typeof(InventoryTenantDestroyOperation),
@@ -257,6 +298,13 @@ public sealed class InventoryPersonalDataCatalogTests
                  {
                      typeof(InventoryModule.CreateManualBlockRequest),
                      typeof(InventoryModule.CreateManualBlockGroupRequest),
+                     typeof(InventoryModule.PreviewManualBlockGroupRequest),
+                     typeof(InventoryModule.ReplaceManualBlockGroupRequest),
+                     typeof(InventoryModule.ReleaseManualBlockGroupRequest),
+                     typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.CreateManualBlockGroupRequest),
+                     typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.PreviewManualBlockGroupRequest),
+                     typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.ReplaceManualBlockGroupRequest),
+                     typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule.ReleaseManualBlockGroupRequest),
                      typeof(InventoryModule.RequestBedRetirementRequest),
                      typeof(InventoryModule.RequestRoomRetirementRequest),
                      typeof(InventoryModule.CancelRetirementRequest)
@@ -270,6 +318,7 @@ public sealed class InventoryPersonalDataCatalogTests
                      typeof(ConfigureRoomSalesModeCommand),
                      typeof(CreateManualInventoryBlockCommand),
                      typeof(CreateManualInventoryBlockGroupCommand),
+                     typeof(ReplaceManualInventoryBlockGroupCommand),
                      typeof(ReleaseManualInventoryBlockCommand),
                      typeof(ReleaseManualInventoryBlockGroupCommand),
                      typeof(RequestBedRetirementCommand),
@@ -294,7 +343,13 @@ public sealed class InventoryPersonalDataCatalogTests
                      typeof(GetRoomRetirementQuery),
                      typeof(GetInventoryRetirementContextQuery),
                      typeof(InventoryRetirementTargetSnapshot),
-                     typeof(ListManualInventoryBlocksQuery)
+                     typeof(ListManualInventoryBlocksQuery),
+                     typeof(PreviewManualInventoryBlockGroupQuery),
+                     typeof(GetManualInventoryBlockGroupQuery),
+                     typeof(ListManualInventoryBlockGroupsQuery),
+                     typeof(ListManualInventoryBlockGroupMembersQuery),
+                     typeof(GetManualInventoryBlockGroupCreateOperationQuery),
+                     typeof(GetManualInventoryBlockGroupOperationQuery)
                  })
         {
             yield return (PersonalDataSurface.ApplicationQuery, type);
@@ -318,6 +373,13 @@ public sealed class InventoryPersonalDataCatalogTests
                      typeof(InventoryUnitAvailabilityDto),
                      typeof(ManualInventoryBlockDto),
                      typeof(ManualInventoryBlockListResponse),
+                     typeof(ManualInventoryBlockGroupDto),
+                     typeof(ManualInventoryBlockGroupListResponse),
+                     typeof(ManualInventoryBlockGroupMemberListResponse),
+                     typeof(ManualInventoryBlockGroupOperationDto),
+                     typeof(ManualInventoryBlockGroupSelectionPreviewDto),
+                     typeof(ManualInventoryBlockGroupPreviewMemberDto),
+                     typeof(ManualInventoryBlockGroupMutationReceiptDto),
                      typeof(BedRetirementDto),
                      typeof(RoomRetirementDto),
                      typeof(InventoryRetirementContextDto),
@@ -335,6 +397,14 @@ public sealed class InventoryPersonalDataCatalogTests
 
         yield return (PersonalDataSurface.AdminOutput, typeof(BedRetirementDto));
         yield return (PersonalDataSurface.AdminOutput, typeof(RoomRetirementDto));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockDto));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupDto));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupListResponse));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupMemberListResponse));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupOperationDto));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupSelectionPreviewDto));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupPreviewMemberDto));
+        yield return (PersonalDataSurface.AdminOutput, typeof(ManualInventoryBlockGroupMutationReceiptDto));
 
         foreach (Type type in new[]
                  {
@@ -391,6 +461,7 @@ public sealed class InventoryPersonalDataCatalogTests
         new[]
         {
             typeof(InventoryModule).Assembly,
+            typeof(BunkFy.Modules.Inventory.AdminApi.InventoryAdminApiModule).Assembly,
             typeof(ConfigureRoomSalesModeCommand).Assembly,
             typeof(InventoryModuleMetadata).Assembly,
             typeof(InventoryAllocation).Assembly,

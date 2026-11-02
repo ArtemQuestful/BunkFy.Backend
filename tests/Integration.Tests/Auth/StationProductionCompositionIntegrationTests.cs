@@ -15,12 +15,6 @@ public sealed class StationProductionCompositionIntegrationTests
     {
         await using NotificationStreamingTestApplication publicApplication = new();
         StationEndpointInventory publicInventory = BuildInventory(publicApplication.Services, "public");
-        await AssertProductionK0Async(
-            publicApplication.Services,
-            publicInventory,
-            expectedEndpointCount: 309,
-            expectedCanonicalSha256: "c955bf6c7a98d63ab8118e72a56cfb28e549ec3a7bc33cdf3f717c31f8c5fcae");
-
         await using AdminApiTestApplication adminApplication = new(
             "SqlServer",
             "Server=127.0.0.1,1433;Database=unused;User Id=sa;Password=Pass@word1;" +
@@ -28,14 +22,19 @@ public sealed class StationProductionCompositionIntegrationTests
             "nats://127.0.0.1:4222",
             disableDatabaseBackgroundServices: true);
         StationEndpointInventory adminInventory = BuildInventory(adminApplication.Services, "admin");
+        await WriteEvidenceAsync(publicInventory, adminInventory);
+        await AssertProductionK0Async(
+            publicApplication.Services,
+            publicInventory,
+            expectedEndpointCount: 316,
+            expectedCanonicalSha256: "e9f994dddc67cccc4b300d9f53e978a6564537ff0f3965e37eaf588f925572f7");
         await AssertProductionK0Async(
             adminApplication.Services,
             adminInventory,
-            expectedEndpointCount: 174,
-            expectedCanonicalSha256: "8ef4e9fd374ba557f1551364801182a66642f87201f505314d07621a4f7533f9");
+            expectedEndpointCount: 181,
+            expectedCanonicalSha256: "8515ba6b3e7adce05b33805f40f0eac7e16637a89da4b274fdb546654c3ee54e");
 
         Assert.NotEqual(publicInventory.CanonicalSha256, adminInventory.CanonicalSha256);
-        await WriteEvidenceAsync(publicInventory, adminInventory);
     }
 
     private static StationEndpointInventory BuildInventory(IServiceProvider services, string hostSurface)

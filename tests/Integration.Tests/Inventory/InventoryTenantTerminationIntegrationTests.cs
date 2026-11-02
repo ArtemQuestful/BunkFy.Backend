@@ -1,6 +1,10 @@
 namespace Integration.Tests;
 
 using System.Text.Json;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Inventory.Application.Ports;
 using BunkFy.Modules.Inventory.Contracts;
@@ -77,10 +81,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
         {
             InventoryDbContext tenantBContext = tenantBScope.ServiceProvider
                 .GetRequiredService<InventoryDbContext>();
-            tenantBContext.InventoryUnits.Add(CreateUnit(
-                TenantB,
-                otherTenantUnitId));
-            await tenantBContext.SaveChangesAsync();
+            await SeedForeignUnitAsync(tenantBContext, otherTenantUnitId);
         }
 
         using IServiceScope scope = tenantAProvider.CreateScope();
@@ -107,7 +108,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("inventory.termination.exported", result.ResultCode);
-        Assert.Equal(12, result.AffectedCount);
+        Assert.Equal(13, result.AffectedCount);
         Assert.Equal(
             InventoryTenantTerminationMetadata.RecordTypes,
             first.Records.Select(record => record.RecordType).ToArray());
@@ -117,7 +118,8 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
         Assert.Equal(
             "user:owner",
             Field(
-                    first.Records[7],
+                    first.Records.Single(record => record.RecordType ==
+                        InventoryTenantTerminationMetadata.AllocationAnonymisationReceiptRecordType),
                     "inventory.staff-actor-reference")
                 .GetString());
 
@@ -147,6 +149,11 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
     {
         InventoryDbContext context = services
             .GetRequiredService<InventoryDbContext>();
+        await using var transaction = await context.Database.BeginTransactionAsync();
+        InventoryPropertyTopology property = InventoryPropertyTopology.Create(PropertyId, TenantA);
+        property.Apply("Termination fixture", "termination-fixture", "UTC", PropertyStatus.Active, 1);
+        context.PropertyTopology.Add(property);
+        await context.SaveChangesAsync();
         IInventoryAllocationAmendmentDecisionRepository decisions = services
             .GetRequiredService<
                 IInventoryAllocationAmendmentDecisionRepository>();
@@ -178,6 +185,21 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
             Guid.NewGuid(),
             FrozenAtUtc.AddDays(-1),
             "user:owner").Value;
+        string membershipPayload =
+            "bunkfy-inventory-manual-block-group-membership/v1" +
+            "|kind=5|building=0:|floor=0:|room=|unit=" + BedId.ToString("N") +
+            "|arrival=" + block.Arrival.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) +
+            "|departure=" + block.Departure.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) +
+            "|members=1|" + BedId.ToString("N");
+        string membershipDigest = Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes(membershipPayload)));
+        ManualInventoryBlockGroup group = ManualInventoryBlockGroup.Create(
+            block.BlockGroupId, TenantA, PropertyId,
+            ManualInventoryBlockGroupTargetKind.Unit,
+            buildingLabel: null, floorLabel: null, roomId: null, inventoryUnitId: BedId,
+            block.Arrival, block.Departure, block.Reason, Digest, membershipDigest,
+            ManualInventoryBlockGroup.CurrentMembershipDigestVersion,
+            initialBlockCount: 1, replacesGroupId: null, block.CreatedAtUtc, "user:owner").Value;
         Guid reservationId =
             Guid.Parse("43000000-0000-0000-0000-000000000001");
         InventoryAllocation allocation =
@@ -285,6 +307,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
                 ResultVersion: 2,
                 FrozenAtUtc.AddDays(-4)),
             CancellationToken.None);
+        context.ManualBlockGroups.Add(group);
         context.ManualBlocks.Add(block);
         context.Allocations.Add(allocation);
         context.AllocationAnonymisationReceipts.Add(receipt);
@@ -306,6 +329,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
                 FrozenAtUtc.AddDays(-1)),
             CancellationToken.None);
         await context.SaveChangesAsync();
+        await transaction.CommitAsync();
         return (receipt.Id, restoreReceipt.Id);
     }
 
@@ -387,18 +411,34 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
         Assert.Equal("P0001", delete.SqlState);
     }
 
+    private static async Task SeedForeignUnitAsync(InventoryDbContext context, Guid bedId)
+    {
+        InventoryPropertyTopology property = InventoryPropertyTopology.Create(ForeignPropertyId, TenantB);
+        property.Apply("Foreign fixture", "foreign-fixture", "UTC", PropertyStatus.Active, 1);
+        context.PropertyTopology.Add(property);
+        context.InventoryUnits.Add(CreateUnit(TenantB, bedId));
+        await context.SaveChangesAsync();
+    }
+
+    private static readonly Guid ForeignPropertyId =
+        Guid.Parse("10000000-0000-0000-0000-000000000002");
+    private static readonly Guid ForeignRoomId =
+        Guid.Parse("20000000-0000-0000-0000-000000000002");
+
     private static InventoryUnit CreateUnit(
         string tenantId,
         Guid bedId)
     {
+        Guid propertyId = tenantId == TenantB ? ForeignPropertyId : PropertyId;
+        Guid roomId = tenantId == TenantB ? ForeignRoomId : RoomId;
         InventoryUnit unit = InventoryUnit.CreateBed(
             bedId,
             tenantId,
-            PropertyId,
-            RoomId);
+            propertyId,
+            roomId);
         unit.Apply(
-            PropertyId,
-            RoomId,
+            propertyId,
+            roomId,
             bedId,
             InventoryUnitKind.Bed,
             "1",

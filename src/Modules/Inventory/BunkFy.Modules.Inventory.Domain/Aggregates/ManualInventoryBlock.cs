@@ -82,7 +82,8 @@ public sealed class ManualInventoryBlock : ScopedAggregateRoot<Guid>
         }
 
         string normalizedReason = reason?.Trim() ?? string.Empty;
-        if (normalizedReason.Length is 0 or > ReasonMaxLength)
+        if (normalizedReason.Length is 0 or > ReasonMaxLength ||
+            normalizedReason.Any(char.IsControl))
         {
             return Result.Failure<ManualInventoryBlock>(InventoryDomainErrors.BlockReasonInvalid);
         }

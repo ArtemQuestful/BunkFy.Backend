@@ -8,6 +8,15 @@ public static class InventoryAdminOperationNames
     public const string BlocksList = "inventory.blocks.list";
     public const string BlocksCreate = "inventory.blocks.create";
     public const string BlocksRelease = "inventory.blocks.release";
+    public const string BlockGroupsPreview = "inventory.block-groups.preview";
+    public const string BlockGroupsList = "inventory.block-groups.list";
+    public const string BlockGroupsGet = "inventory.block-groups.get";
+    public const string BlockGroupMembersList = "inventory.block-groups.members.list";
+    public const string BlockGroupsCreate = "inventory.block-groups.create";
+    public const string BlockGroupsReplace = "inventory.block-groups.replace";
+    public const string BlockGroupsRelease = "inventory.block-groups.release";
+    public const string BlockGroupCreateOperationsGet = "inventory.block-group-create-operations.get";
+    public const string BlockGroupOperationsGet = "inventory.block-group-operations.get";
     public const string BedRetirementsGet = "inventory.bed-retirements.get";
     public const string BedRetirementsRequest = "inventory.bed-retirements.request";
     public const string BedRetirementsRetry = "inventory.bed-retirements.retry";

@@ -63,8 +63,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
         {
             InventoryDbContext tenantB = tenantBSeedScope.ServiceProvider
                 .GetRequiredService<InventoryDbContext>();
-            tenantB.InventoryUnits.Add(CreateUnit(TenantB, tenantBUnitId));
-            await tenantB.SaveChangesAsync().ConfigureAwait(false);
+            await SeedForeignUnitAsync(tenantB, tenantBUnitId).ConfigureAwait(false);
         }
 
         WorkspaceTerminationFence fence = CreateTerminationFence();
@@ -217,7 +216,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
         Assert.Equal(
             "inventory.termination.destroyed",
             completed.ResultCode);
-        Assert.Equal(524, completed.AffectedCount);
+        Assert.Equal(525, completed.AffectedCount);
         Assert.Equal(selectedRevision, completed.SelectedProofRevision);
         Assert.Equal(
             selectedRevision + 1,
@@ -254,7 +253,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
             await ReadReceiptCountAsync(ownerContext, TenantA)
                 .ConfigureAwait(false));
         Assert.Equal(
-            524,
+            525,
             await ReadReceiptRemovedCountAsync(ownerContext, TenantA)
                 .ConfigureAwait(false));
         Assert.Equal(
@@ -301,7 +300,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
                 tenantBVerificationScope.ServiceProvider
                     .GetRequiredService<InventoryDbContext>();
             Assert.Equal(
-                1,
+                2,
                 await ReadOwnerRecordCountAsync(tenantB, TenantB)
                     .ConfigureAwait(false));
             Assert.Equal(
@@ -354,14 +353,15 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
             context.Allocations.Add(allocation);
         }
 
-        InventoryPropertyTopology property =
-            InventoryPropertyTopology.Create(PropertyId, TenantA);
+        InventoryPropertyTopology property = await context.PropertyTopology
+            .SingleAsync(item => item.Id == PropertyId).ConfigureAwait(false);
         property.Apply(
             "Dense property",
             "dense",
             "UTC",
             PropertyStatus.Active,
-            sourceVersion: 1);
+            sourceVersion: 2);
+        property.AdvanceAvailabilitySelection();
         InventoryRoomTopology room = InventoryRoomTopology.Create(
             RoomId,
             TenantA,
@@ -399,7 +399,6 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
             clock.UtcNow,
             TimeSpan.FromMinutes(1));
 
-        context.PropertyTopology.Add(property);
         context.RoomTopology.Add(room);
         context.BedTopology.Add(bed);
         context.OutboxMessages.Add(outbox);
@@ -534,6 +533,7 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
                 (SELECT COUNT(*) FROM inventory.allocation_units WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM inventory.allocations WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM inventory.manual_blocks WHERE "ScopeId" = {tenantId}) +
+                (SELECT COUNT(*) FROM inventory.manual_block_groups WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM inventory.allocation_operation_locks WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM inventory.bed_retirements WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM inventory.room_retirements WHERE "ScopeId" = {tenantId}) +

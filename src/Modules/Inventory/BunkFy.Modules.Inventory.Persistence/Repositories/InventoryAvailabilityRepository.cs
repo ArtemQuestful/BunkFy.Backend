@@ -174,6 +174,18 @@ internal sealed class InventoryAvailabilityRepository(
         await this.GetRoomImpactAsync(
             propertyId,
             roomId,
+            DateOnly.MinValue,
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<RoomInventoryImpactSnapshot?> GetRoomImpactAsync(
+        Guid propertyId,
+        Guid roomId,
+        DateOnly queryDate,
+        CancellationToken cancellationToken) =>
+        await this.GetRoomImpactAsync(
+            propertyId,
+            roomId,
+            queryDate,
             excludedAllocationId: null,
             excludedBlockIds: [],
             cancellationToken).ConfigureAwait(false);
@@ -181,6 +193,7 @@ internal sealed class InventoryAvailabilityRepository(
     public async Task<RoomInventoryImpactSnapshot?> GetRoomImpactAsync(
         Guid propertyId,
         Guid roomId,
+        DateOnly queryDate,
         Guid? excludedAllocationId,
         IReadOnlyCollection<Guid> excludedBlockIds,
         CancellationToken cancellationToken)
@@ -223,6 +236,7 @@ internal sealed class InventoryAvailabilityRepository(
             .Where(block =>
                 block.PropertyId == propertyId &&
                 block.Status == ManualInventoryBlockState.Active &&
+                block.Departure > queryDate &&
                 !excludedIds.Contains(block.Id) &&
                 roomUnitIds.Contains(block.InventoryUnitId))
             .Select(block => block.BlockGroupId)
@@ -264,6 +278,23 @@ internal sealed class InventoryAvailabilityRepository(
         Guid propertyId,
         Guid roomId,
         Guid bedId,
+        Guid? excludedAllocationId,
+        IReadOnlyCollection<Guid> excludedBlockIds,
+        CancellationToken cancellationToken) =>
+        await this.GetBedRetirementImpactAsync(
+            propertyId,
+            roomId,
+            bedId,
+            DateOnly.MinValue,
+            excludedAllocationId,
+            excludedBlockIds,
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<BedRetirementImpactSnapshot?> GetBedRetirementImpactAsync(
+        Guid propertyId,
+        Guid roomId,
+        Guid bedId,
+        DateOnly queryDate,
         Guid? excludedAllocationId,
         IReadOnlyCollection<Guid> excludedBlockIds,
         CancellationToken cancellationToken)
@@ -316,6 +347,7 @@ internal sealed class InventoryAvailabilityRepository(
             .Where(block =>
                 block.PropertyId == propertyId &&
                 block.Status == ManualInventoryBlockState.Active &&
+                block.Departure > queryDate &&
                 !excludedIds.Contains(block.Id) &&
                 conflictUnitIds.Contains(block.InventoryUnitId))
             .Select(block => block.BlockGroupId)
