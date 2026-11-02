@@ -63,6 +63,15 @@ internal sealed class RoomRetirementProcessConfiguration : IEntityTypeConfigurat
         builder.Property(process => process.Version).IsConcurrencyToken().IsRequired();
         builder.HasIndex(process => new { process.ScopeId, process.RoomId, process.State });
         builder.HasIndex(process => new { process.ScopeId, process.PropertyId, process.State });
+        builder.HasIndex(process => new
+        {
+            process.ScopeId,
+            process.RoomId
+        })
+            .IsUnique()
+            .HasFilter("\"State\" IN (1, 2, 3, 5)")
+            .HasDatabaseName(
+                "UX_room_retirements_ScopeId_RoomId_active");
         builder.Ignore(process => process.DomainEvents);
     }
 }

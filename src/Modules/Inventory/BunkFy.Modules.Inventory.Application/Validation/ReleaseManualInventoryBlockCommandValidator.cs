@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Inventory.Application.Validation;
 
 using Gma.Framework.Cqrs;
 using BunkFy.Modules.Inventory.Application.Commands;
+using BunkFy.Modules.Inventory.Domain.Aggregates;
 
 internal sealed class ReleaseManualInventoryBlockCommandValidator : ICommandValidator<ReleaseManualInventoryBlockCommand>
 {
@@ -25,6 +26,11 @@ internal sealed class ReleaseManualInventoryBlockCommandValidator : ICommandVali
         if (command.ExpectedVersion <= 0)
         {
             yield return "ExpectedVersion must be greater than zero.";
+        }
+
+        if (!CreateManualInventoryBlockGroupCommandValidator.IsValidActor(command.ActorId))
+        {
+            yield return $"ActorId is required and must be a control-free value of {ManualInventoryBlockGroup.ActorIdMaxLength} characters or fewer.";
         }
     }
 }

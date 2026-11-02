@@ -12,6 +12,11 @@ public interface IInventoryReadRepository
         Guid propertyId,
         InventoryBlockTarget target,
         CancellationToken cancellationToken);
+    Task<InventoryBlockTargetResolution> ResolveBlockTargetUnitsBoundedAsync(
+        Guid propertyId,
+        InventoryBlockTarget target,
+        int maximumUnitCount,
+        CancellationToken cancellationToken);
     Task<RoomInventoryListResponse> ListRoomsAsync(Guid propertyId, PageRequest pageRequest, CancellationToken cancellationToken);
     Task<InventoryAvailabilityResponse> GetAvailabilityAsync(
         Guid propertyId,

@@ -18,6 +18,8 @@ internal sealed class RequestRoomRetirementCommandHandler(
     IInventoryReadRepository inventory,
     IRoomRetirementRepository retirements,
     IInventoryAvailabilityRepository availability,
+    IInventoryAvailabilitySelectionFence selectionFence,
+    IInventoryBusinessDateProvider businessDates,
     RoomRetirementCoordinator coordinator,
     InventoryUnitDefinitionPublisher definitions,
     IScopeContext scopeContext,
@@ -54,6 +56,8 @@ internal sealed class RequestRoomRetirementCommandHandler(
                 command.PropertyId,
                 command.RoomId,
                 normalizedReason);
+        await selectionFence.AcquireAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         await mutations.AcquireRoomAsync(command.RoomId, cancellationToken)
             .ConfigureAwait(false);
         InventoryManagementReplayDecision<
@@ -110,8 +114,17 @@ internal sealed class RequestRoomRetirementCommandHandler(
             return Result.Failure<RoomRetirementDto>(InventoryApplicationErrors.RoomRetired);
         }
 
+        DateOnly? businessDate = await businessDates.GetAsync(
+            command.PropertyId,
+            clock.UtcNow,
+            cancellationToken).ConfigureAwait(false);
+        if (!businessDate.HasValue)
+        {
+            return Result.Failure<RoomRetirementDto>(InventoryApplicationErrors.PropertyNotFound);
+        }
+
         RoomInventoryImpactSnapshot? impact = await availability
-            .GetRoomImpactAsync(command.PropertyId, command.RoomId, cancellationToken)
+            .GetRoomImpactAsync(command.PropertyId, command.RoomId, businessDate.Value, cancellationToken)
             .ConfigureAwait(false);
         if (impact is null)
         {
@@ -157,6 +170,8 @@ internal sealed class RequestRoomRetirementCommandHandler(
 
         await retirements.AddAsync(created.Value, cancellationToken).ConfigureAwait(false);
         await availability.TouchUnitsAsync(command.PropertyId, unitIds, cancellationToken).ConfigureAwait(false);
+        await selectionFence.AdvanceAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         RoomRetirementDto result = await coordinator.TryAdvanceAsync(
             created.Value,
             excludedAllocationId: null,

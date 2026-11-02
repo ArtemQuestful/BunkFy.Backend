@@ -52,7 +52,7 @@ internal sealed class NotificationStreamingTestApplication(
         builder.ConfigureLogging(logging => logging.AddProvider(this.stationEvidenceLogs));
         builder.UseSetting("ApplicationIdentity:Namespace", "test-app");
         builder.UseSetting("Persistence:Provider", "SqlServer");
-        builder.UseSetting("ConnectionStrings:SqlServer", "Server=localhost,1433;Database=unused;User Id=sa;Password=Pass@word1;TrustServerCertificate=True");
+        builder.UseSetting("ConnectionStrings:SqlServer", "Server=127.0.0.1,1433;Database=unused;User Id=sa;Password=Pass@word1;TrustServerCertificate=True;Connect Timeout=1;ConnectRetryCount=0");
         builder.UseSetting("ConnectionStrings:PostgreSql", string.Empty);
         builder.UseSetting("ConnectionStrings:nats", string.Empty);
         builder.UseSetting("NatsJetStream:Enabled", "false");
@@ -82,7 +82,7 @@ internal sealed class NotificationStreamingTestApplication(
             {
                 ["ApplicationIdentity:Namespace"] = "test-app",
                 ["Persistence:Provider"] = "SqlServer",
-                ["ConnectionStrings:SqlServer"] = "Server=localhost,1433;Database=unused;User Id=sa;Password=Pass@word1;TrustServerCertificate=True",
+                ["ConnectionStrings:SqlServer"] = "Server=127.0.0.1,1433;Database=unused;User Id=sa;Password=Pass@word1;TrustServerCertificate=True;Connect Timeout=1;ConnectRetryCount=0",
                 ["ConnectionStrings:PostgreSql"] = string.Empty,
                 ["ConnectionStrings:nats"] = string.Empty,
                 ["NatsJetStream:Enabled"] = "false",

@@ -64,6 +64,15 @@ internal sealed class BedRetirementProcessConfiguration : IEntityTypeConfigurati
         builder.Property(process => process.Version).IsConcurrencyToken().IsRequired();
         builder.HasIndex(process => new { process.ScopeId, process.BedId, process.State });
         builder.HasIndex(process => new { process.ScopeId, process.PropertyId, process.RoomId, process.State });
+        builder.HasIndex(process => new
+        {
+            process.ScopeId,
+            process.BedId
+        })
+            .IsUnique()
+            .HasFilter("\"State\" IN (1, 2, 3, 5)")
+            .HasDatabaseName(
+                "UX_bed_retirements_ScopeId_BedId_active");
         builder.Ignore(process => process.DomainEvents);
     }
 }

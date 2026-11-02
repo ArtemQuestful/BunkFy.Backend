@@ -27,6 +27,8 @@ public sealed class InventoryDbContext(
     public DbSet<RoomInventoryConfiguration> RoomConfigurations => this.Set<RoomInventoryConfiguration>();
     internal DbSet<InventoryManagementOperation> ManagementOperations =>
         this.Set<InventoryManagementOperation>();
+    public DbSet<ManualInventoryBlockGroup> ManualBlockGroups =>
+        this.Set<ManualInventoryBlockGroup>();
     public DbSet<ManualInventoryBlock> ManualBlocks => this.Set<ManualInventoryBlock>();
     public DbSet<InventoryAllocation> Allocations => this.Set<InventoryAllocation>();
     public DbSet<InventoryAllocationUnit> AllocationUnits => this.Set<InventoryAllocationUnit>();
@@ -138,8 +140,17 @@ public sealed class InventoryDbContext(
         {
             if (ownedTransaction is not null)
             {
-                await ownedTransaction.RollbackAsync(CancellationToken.None)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await ownedTransaction.RollbackAsync(CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    // A deferred provider constraint can complete the transaction
+                    // while CommitAsync is failing. Preserve that original failure;
+                    // a best-effort rollback must never replace its diagnostics.
+                }
             }
 
             throw;
@@ -287,6 +298,7 @@ public sealed class InventoryDbContext(
 
     private void EnsureProofRecordsAreAppendOnly()
     {
+        this.EnsureManualBlockGroupTransitionsAreLegal();
         bool receiptMutation = this.ChangeTracker
             .Entries<InventoryAllocationAnonymisationReceipt>()
             .Any(entry =>
@@ -328,6 +340,95 @@ public sealed class InventoryDbContext(
         {
             throw new InvalidOperationException(
                 "Inventory management operation receipts are append-only.");
+        }
+    }
+
+    private void EnsureManualBlockGroupTransitionsAreLegal()
+    {
+        foreach (Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<
+                     ManualInventoryBlockGroup> entry in this.ChangeTracker
+                     .Entries<ManualInventoryBlockGroup>())
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                throw new InvalidOperationException(
+                    "Inventory manual block groups cannot be deleted.");
+            }
+
+            if (entry.State != EntityState.Modified)
+            {
+                continue;
+            }
+
+            string[] immutableProperties =
+            [
+                nameof(ManualInventoryBlockGroup.Id),
+                nameof(ManualInventoryBlockGroup.ScopeId),
+                nameof(ManualInventoryBlockGroup.PropertyId),
+                nameof(ManualInventoryBlockGroup.TargetKind),
+                nameof(ManualInventoryBlockGroup.BuildingLabel),
+                nameof(ManualInventoryBlockGroup.FloorLabel),
+                nameof(ManualInventoryBlockGroup.RoomId),
+                nameof(ManualInventoryBlockGroup.InventoryUnitId),
+                nameof(ManualInventoryBlockGroup.Arrival),
+                nameof(ManualInventoryBlockGroup.Departure),
+                nameof(ManualInventoryBlockGroup.Reason),
+                nameof(ManualInventoryBlockGroup.SelectionDigest),
+                nameof(ManualInventoryBlockGroup.MembershipDigest),
+                nameof(ManualInventoryBlockGroup.MembershipDigestVersion),
+                nameof(ManualInventoryBlockGroup.InitialBlockCount),
+                nameof(ManualInventoryBlockGroup.ReplacesGroupId),
+                nameof(ManualInventoryBlockGroup.CreatedAtUtc),
+                nameof(ManualInventoryBlockGroup.CreatedByActorId)
+            ];
+            if (immutableProperties.Any(propertyName =>
+                    entry.Property(propertyName).IsModified))
+            {
+                throw new InvalidOperationException(
+                    "Inventory manual block-group definitions are immutable.");
+            }
+
+            ManualInventoryBlockGroupState originalState =
+                entry.Property(group => group.State).OriginalValue;
+            ManualInventoryBlockGroupState currentState =
+                entry.Entity.State;
+            int originalCount = entry.Property(group => group.ActiveBlockCount)
+                .OriginalValue;
+            int currentCount = entry.Entity.ActiveBlockCount;
+            long originalVersion = entry.Property(group => group.Version)
+                .OriginalValue;
+            bool legalState = originalState switch
+            {
+                ManualInventoryBlockGroupState.Active => currentState is
+                    ManualInventoryBlockGroupState.PartiallyReleased or
+                    ManualInventoryBlockGroupState.Released or
+                    ManualInventoryBlockGroupState.Replaced,
+                ManualInventoryBlockGroupState.PartiallyReleased =>
+                    currentState is
+                        ManualInventoryBlockGroupState.PartiallyReleased or
+                        ManualInventoryBlockGroupState.Released or
+                        ManualInventoryBlockGroupState.Replaced,
+                _ => false
+            };
+            bool legalCount = currentCount >= 0 &&
+                currentCount < originalCount;
+            bool legalVersion = entry.Entity.Version == originalVersion + 1;
+            bool legalTimestamps = entry.Entity.UpdatedAtUtc is { } updated &&
+                updated >= entry.Entity.CreatedAtUtc &&
+                ((currentState is ManualInventoryBlockGroupState.Released or
+                      ManualInventoryBlockGroupState.Replaced &&
+                  entry.Entity.ReleasedAtUtc == updated) ||
+                 (currentState ==
+                      ManualInventoryBlockGroupState.PartiallyReleased &&
+                  entry.Entity.ReleasedAtUtc is null));
+            string? currentActor = entry.Entity.LastModifiedByActorId;
+            bool legalActor = !string.IsNullOrWhiteSpace(currentActor);
+            if (!legalState || !legalCount || !legalVersion ||
+                !legalTimestamps || !legalActor)
+            {
+                throw new InvalidOperationException(
+                    "Inventory manual block-group transition is invalid.");
+            }
         }
     }
 

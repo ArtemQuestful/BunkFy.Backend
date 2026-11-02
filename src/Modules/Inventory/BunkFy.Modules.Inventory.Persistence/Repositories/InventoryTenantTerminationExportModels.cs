@@ -82,7 +82,15 @@ internal sealed record InventoryManagementOperationStateTenantExport(
     int? ResultAffectedBlockCount,
     Guid? ResultTopologyChangeId,
     long ResultVersion,
-    DateTimeOffset CompletedAtUtc);
+    DateTimeOffset CompletedAtUtc,
+    ManualInventoryBlockGroupStatus? ResultBlockGroupStatus,
+    Guid? ResultPreviousBlockGroupId,
+    int? ResultTotalBlockCount,
+    int? ResultActiveBlockCount,
+    int? ResultReleasedBlockCount,
+    int? ResultAlreadyReleasedBlockCount,
+    int? ResultCreatedBlockCount,
+    string? ResultMembershipDigest);
 
 internal sealed record InventoryManualBlockTenantExport(
     [property: InventoryTenantExportField("inventory.scope-id")]
@@ -108,6 +116,44 @@ internal sealed record InventoryManualBlockTenantExport(
     [property: InventoryTenantExportField("inventory.created-at")]
     DateTimeOffset CreatedAtUtc,
     [property: InventoryTenantExportField("inventory.released-at")]
+    DateTimeOffset? ReleasedAtUtc);
+
+internal sealed record InventoryManualBlockGroupTenantExport(
+    [property: InventoryTenantExportField("inventory.scope-id")]
+    string ScopeId,
+    [property: InventoryTenantExportField("inventory.block-group-id")]
+    Guid BlockGroupId,
+    [property: InventoryTenantExportField("inventory.property-id")]
+    Guid PropertyId,
+    [property: InventoryTenantExportField("inventory.staff-change-operations")]
+    InventoryManualBlockGroupTenantExportState State,
+    [property: InventoryTenantExportField("inventory.operational-reason")]
+    string Reason,
+    [property: InventoryTenantExportField("inventory.staff-actor-reference")]
+    InventoryManualBlockGroupActorTenantExport Actors);
+
+internal sealed record InventoryManualBlockGroupActorTenantExport(
+    string? CreatedByActorId,
+    string? LastModifiedByActorId);
+
+internal sealed record InventoryManualBlockGroupTenantExportState(
+    ManualInventoryBlockGroupTargetKind TargetKind,
+    string? BuildingLabel,
+    string? FloorLabel,
+    Guid? RoomId,
+    Guid? InventoryUnitId,
+    DateOnly Arrival,
+    DateOnly Departure,
+    string? SelectionDigest,
+    string MembershipDigest,
+    int MembershipDigestVersion,
+    int InitialBlockCount,
+    int ActiveBlockCount,
+    ManualInventoryBlockGroupState Status,
+    long Version,
+    Guid? ReplacesGroupId,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? UpdatedAtUtc,
     DateTimeOffset? ReleasedAtUtc);
 
 internal sealed record InventoryAllocationTenantExport(

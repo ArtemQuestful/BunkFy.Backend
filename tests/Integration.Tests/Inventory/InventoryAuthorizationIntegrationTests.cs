@@ -6,6 +6,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
+using BunkFy.Modules.Inventory.Admin.Contracts;
 using BunkFy.Modules.Inventory.Application;
 using BunkFy.Modules.Inventory.Application.Commands;
 using BunkFy.Modules.Inventory.Application.Ports;
@@ -42,6 +44,7 @@ public sealed class InventoryAuthorizationIntegrationTests
     private static readonly Guid PropertyA = Guid.Parse("10000000-0000-0000-0000-00000000000a");
     private static readonly Guid PropertyB = Guid.Parse("10000000-0000-0000-0000-00000000000b");
     private static readonly Guid RoomA = Guid.Parse("20000000-0000-0000-0000-00000000000a");
+    private static readonly Guid RoomA2 = Guid.Parse("20000000-0000-0000-0000-00000000001a");
     private static readonly Guid RoomB = Guid.Parse("20000000-0000-0000-0000-00000000000b");
     private static readonly Guid BedB = Guid.Parse("30000000-0000-0000-0000-00000000000b");
     private static readonly Guid BedB2 = Guid.Parse("30000000-0000-0000-0000-00000000002b");
@@ -49,6 +52,8 @@ public sealed class InventoryAuthorizationIntegrationTests
     private static readonly Guid PropertyC = Guid.Parse("10000000-0000-0000-0000-00000000000c");
     private static readonly Guid RoomC = Guid.Parse("20000000-0000-0000-0000-00000000000c");
     private static readonly Guid BedC = Guid.Parse("30000000-0000-0000-0000-00000000000c");
+    private static readonly JsonSerializerOptions JsonOptions =
+        new(JsonSerializerDefaults.Web);
 
     [DockerFact]
     [Trait("Category", "Docker")]
@@ -57,6 +62,7 @@ public sealed class InventoryAuthorizationIntegrationTests
     {
         await using IContainer nats = AuthTestContainers.CreateNatsContainer();
         await nats.StartAsync();
+        string natsConnectionString = AuthTestContainers.GetNatsConnectionString(nats);
 
         await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bunkfy_inventory_authorization_tests")
@@ -68,7 +74,7 @@ public sealed class InventoryAuthorizationIntegrationTests
         await using AuthTestApplication api = new(
             "PostgreSql",
             connectionString,
-            AuthTestContainers.GetNatsConnectionString(nats),
+            natsConnectionString,
             inventoryCommandInterceptor: queryCounter);
         await api.MigrateInventoryAuthorizationDatabaseAsync().ConfigureAwait(false);
         await SeedInventoryAsync(api).ConfigureAwait(false);
@@ -76,7 +82,10 @@ public sealed class InventoryAuthorizationIntegrationTests
         await ExerciseBedRetirementWorkflowAsync(api).ConfigureAwait(false);
         await ExerciseRoomRetirementWorkflowAsync(api).ConfigureAwait(false);
 
-        await using AdminCliTestApplication admin = new("PostgreSql", connectionString);
+        await using AdminCliTestApplication admin = new(
+            "PostgreSql",
+            connectionString,
+            includeInventory: true);
         await admin.MigrateAsync().ConfigureAwait(false);
         using HttpClient client = api.CreateClient();
 
@@ -86,6 +95,7 @@ public sealed class InventoryAuthorizationIntegrationTests
                    $"/api/inventory/properties/{PropertyA:D}/rooms").ConfigureAwait(false))
         {
             await AssertStatusAsync(HttpStatusCode.Unauthorized, unauthenticated).ConfigureAwait(false);
+            AssertNoStore(unauthenticated);
         }
 
         AuthTokensResponse operatorTokens = await AuthApiClient.RegisterAsync(
@@ -102,6 +112,7 @@ public sealed class InventoryAuthorizationIntegrationTests
                    operatorTokens.AccessToken).ConfigureAwait(false))
         {
             await AssertStatusAsync(HttpStatusCode.Forbidden, noGrant).ConfigureAwait(false);
+            AssertNoStore(noGrant);
         }
 
         await AssertAdminSuccessAsync(admin.ExecuteAsync("admin", "bootstrap", "--actor", "owner", "--yes"));
@@ -113,7 +124,8 @@ public sealed class InventoryAuthorizationIntegrationTests
                  {
                      InventoryAdminPermissionCodes.Read,
                      InventoryAdminPermissionCodes.Configure,
-                     InventoryAdminPermissionCodes.BlocksManage
+                     InventoryAdminPermissionCodes.BlocksManage,
+                     InventoryAdminPermissionCodes.BlockGroupsManage
                  })
         {
             await AssertAdminSuccessAsync(admin.ExecuteAsync(
@@ -130,6 +142,32 @@ public sealed class InventoryAuthorizationIntegrationTests
             "--target-id", operatorId.ToString("D"),
             "--role", "inventory-operator",
             "--scope", $"tenant:{TenantA}/property:{PropertyA:D}"));
+        Guid cliOperatorId = Guid.NewGuid();
+        await AssertAdminSuccessAsync(admin.ExecuteAsync(
+            "admin", "roles", "assign",
+            "--actor", "owner",
+            "--target-kind", "admin-actor",
+            "--target-id", cliOperatorId.ToString("D"),
+            "--role", "inventory-operator",
+            "--scope", $"tenant:{TenantA}/property:{PropertyA:D}"));
+        Guid adminOperatorId = Guid.NewGuid();
+        await AssertAdminSuccessAsync(admin.ExecuteAsync(
+            "admin", "roles", "assign",
+            "--actor", "owner",
+            "--target-kind", "admin-actor",
+            "--target-id", adminOperatorId.ToString("D"),
+            "--role", "inventory-operator",
+            "--scope", $"tenant:{TenantA}/property:{PropertyA:D}"));
+
+        using (HttpResponseMessage malformedGroupStatus = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups?status=not-a-status",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            await AssertStatusAsync(HttpStatusCode.BadRequest, malformedGroupStatus).ConfigureAwait(false);
+            AssertNoStore(malformedGroupStatus);
+        }
 
         using (HttpResponseMessage roomsResponse = await SendAsync(
                    client,
@@ -235,6 +273,7 @@ public sealed class InventoryAuthorizationIntegrationTests
                    }).ConfigureAwait(false))
         {
             await AssertStatusAsync(HttpStatusCode.Conflict, overlap).ConfigureAwait(false);
+            AssertNoStore(overlap);
         }
 
         using (HttpResponseMessage otherProperty = await SendAsync(
@@ -280,6 +319,54 @@ public sealed class InventoryAuthorizationIntegrationTests
             Assert.Equal(2, released.Version);
         }
 
+        await AddSecondPropertyARoomAsync(api).ConfigureAwait(false);
+        using (HttpResponseMessage configureSecondRoom = await SendAsync(
+                   client,
+                   HttpMethod.Put,
+                   $"/api/inventory/properties/{PropertyA:D}/rooms/{RoomA2:D}/sales-mode",
+                   operatorTokens.AccessToken,
+                   new
+                   {
+                       operationId = Guid.NewGuid(),
+                       salesMode = InventorySalesMode.RoomLevel,
+                       expectedVersion = 1
+                   }).ConfigureAwait(false))
+        {
+            RoomInventoryMutationReceiptDto receipt =
+                await ReadSuccessAsync<RoomInventoryMutationReceiptDto>(configureSecondRoom)
+                    .ConfigureAwait(false);
+            Assert.Equal(RoomA2, receipt.RoomId);
+            Assert.Equal(InventorySalesMode.RoomLevel, receipt.SalesMode);
+        }
+
+        ManualInventoryBlockGroupSelectionPreviewDto blockGroupPreview;
+        using (HttpResponseMessage previewBlockGroup = await SendAsync(
+                   client,
+                   HttpMethod.Post,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups/preview",
+                   operatorTokens.AccessToken,
+                   new
+                   {
+                       target = new { kind = InventoryBlockTargetKind.Property },
+                       arrival = "2026-08-05",
+                       departure = "2026-08-07",
+                       reason = "Property maintenance"
+                   }).ConfigureAwait(false))
+        {
+            blockGroupPreview =
+                await ReadSuccessAsync<ManualInventoryBlockGroupSelectionPreviewDto>(previewBlockGroup)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupPreviewStatus.Ready, blockGroupPreview.Status);
+            Assert.Equal(2, blockGroupPreview.AffectedBlockCount);
+            Assert.Equal(500, blockGroupPreview.MaximumAffectedBlockCount);
+            Assert.False(blockGroupPreview.ExceedsMaximumAffectedBlockCount);
+            Assert.NotNull(blockGroupPreview.SelectionDigest);
+            Assert.False(blockGroupPreview.HasMoreMembers);
+            Assert.Equal(2, blockGroupPreview.Members.Count);
+            AssertNoStore(previewBlockGroup);
+        }
+
+        Guid blockGroupCreateOperationId = Guid.NewGuid();
         ManualInventoryBlockGroupMutationReceiptDto blockGroup;
         using (HttpResponseMessage createBlockGroup = await SendAsync(
                    client,
@@ -288,18 +375,115 @@ public sealed class InventoryAuthorizationIntegrationTests
                    operatorTokens.AccessToken,
                    new
                    {
-                       operationId = Guid.NewGuid(),
+                       operationId = blockGroupCreateOperationId,
                        target = new { kind = InventoryBlockTargetKind.Property },
                        arrival = "2026-08-05",
                        departure = "2026-08-07",
-                       reason = "Property maintenance"
+                       reason = "Property maintenance",
+                       expectedSelectionDigest = blockGroupPreview.SelectionDigest,
+                       expectedAffectedBlockCount = blockGroupPreview.AffectedBlockCount,
+                       confirmed = true
                    }).ConfigureAwait(false))
         {
             blockGroup =
                 await ReadSuccessAsync<ManualInventoryBlockGroupMutationReceiptDto>(createBlockGroup).ConfigureAwait(false);
             Assert.NotEqual(Guid.Empty, blockGroup.BlockGroupId);
             Assert.Equal(PropertyA, blockGroup.PropertyId);
-            Assert.Equal(1, blockGroup.AffectedBlockCount);
+            Assert.Equal(2, blockGroup.AffectedBlockCount);
+            Assert.Equal(ManualInventoryBlockGroupStatus.Active, blockGroup.Status);
+            Assert.Equal(1, blockGroup.Version);
+            Assert.Equal(2, blockGroup.TotalBlockCount);
+            Assert.Equal(2, blockGroup.ActiveBlockCount);
+            Assert.Equal(2, blockGroup.CreatedNowBlockCount);
+            Assert.Equal(blockGroupPreview.MembershipDigest, blockGroup.MembershipDigest);
+        }
+
+        using (HttpResponseMessage getBlockGroup = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups/{blockGroup.BlockGroupId:D}",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupDto group =
+                await ReadSuccessAsync<ManualInventoryBlockGroupDto>(getBlockGroup).ConfigureAwait(false);
+            Assert.Equal(blockGroup.BlockGroupId, group.BlockGroupId);
+            Assert.Equal(2, group.ActiveBlockCount);
+            Assert.Equal($"user:{operatorId:D}", group.CreatedByActorId);
+        }
+
+        ManualInventoryBlockGroupDto firstListedGroup;
+        string groupCursor;
+        using (HttpResponseMessage listBlockGroups = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups?pageSize=1",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupListResponse groups =
+                await ReadSuccessAsync<ManualInventoryBlockGroupListResponse>(listBlockGroups).ConfigureAwait(false);
+            firstListedGroup = Assert.Single(groups.BlockGroups);
+            Assert.Equal(blockGroup.BlockGroupId, firstListedGroup.BlockGroupId);
+            groupCursor = Assert.IsType<string>(groups.NextCursor);
+            Assert.False(Guid.TryParse(groupCursor, out _));
+        }
+
+        using (HttpResponseMessage listNextBlockGroup = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups?pageSize=1&cursor={Uri.EscapeDataString(groupCursor)}",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupListResponse groups =
+                await ReadSuccessAsync<ManualInventoryBlockGroupListResponse>(listNextBlockGroup)
+                    .ConfigureAwait(false);
+            ManualInventoryBlockGroupDto historicalGroup = Assert.Single(groups.BlockGroups);
+            Assert.Equal(block.BlockGroupId, historicalGroup.BlockGroupId);
+            Assert.NotEqual(firstListedGroup.BlockGroupId, historicalGroup.BlockGroupId);
+            Assert.True(firstListedGroup.CreatedAtUtc >= historicalGroup.CreatedAtUtc);
+            Assert.Null(groups.NextCursor);
+        }
+
+        ManualInventoryBlockDto firstMember;
+        string memberCursor;
+        using (HttpResponseMessage listBlockGroupMembers = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups/{blockGroup.BlockGroupId:D}/members?pageSize=1",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupMemberListResponse members =
+                await ReadSuccessAsync<ManualInventoryBlockGroupMemberListResponse>(listBlockGroupMembers)
+                    .ConfigureAwait(false);
+            firstMember = Assert.Single(members.Blocks);
+            memberCursor = Assert.IsType<string>(members.NextCursor);
+            Assert.False(Guid.TryParse(memberCursor, out _));
+        }
+
+        using (HttpResponseMessage listNextBlockGroupMember = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups/{blockGroup.BlockGroupId:D}/members?pageSize=1&cursor={Uri.EscapeDataString(memberCursor)}",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupMemberListResponse members =
+                await ReadSuccessAsync<ManualInventoryBlockGroupMemberListResponse>(listNextBlockGroupMember)
+                    .ConfigureAwait(false);
+            ManualInventoryBlockDto secondMember = Assert.Single(members.Blocks);
+            Assert.NotEqual(firstMember.BlockId, secondMember.BlockId);
+            Assert.Null(members.NextCursor);
+        }
+
+        using (HttpResponseMessage recoverCreate = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-group-create-operations/{blockGroupCreateOperationId:D}",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupOperationDto operation =
+                await ReadSuccessAsync<ManualInventoryBlockGroupOperationDto>(recoverCreate).ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupOperationKind.Create, operation.Kind);
+            Assert.Equal(ManualInventoryBlockGroupOperationStatus.Applied, operation.Status);
+            Assert.Equal(blockGroup.BlockGroupId, operation.Receipt.ResultBlockGroupId);
         }
 
         InventoryAvailabilityResponse groupBlocked = await GetAvailabilityAsync(
@@ -307,20 +491,83 @@ public sealed class InventoryAuthorizationIntegrationTests
             operatorTokens.AccessToken,
             "2026-08-05",
             "2026-08-06").ConfigureAwait(false);
-        Assert.False(Assert.Single(groupBlocked.Units).IsAvailable);
+        Assert.Equal(2, groupBlocked.Units.Count);
+        Assert.All(groupBlocked.Units, unit => Assert.False(unit.IsAvailable));
 
+        using (HttpResponseMessage partialRelease = await SendAsync(
+                   client,
+                   HttpMethod.Post,
+                   $"/api/inventory/properties/{PropertyA:D}/blocks/{firstMember.BlockId:D}/release",
+                   operatorTokens.AccessToken,
+                   new
+                   {
+                       operationId = Guid.NewGuid(),
+                       expectedVersion = firstMember.Version
+                   }).ConfigureAwait(false))
+        {
+            ManualInventoryBlockMutationReceiptDto receipt =
+                await ReadSuccessAsync<ManualInventoryBlockMutationReceiptDto>(partialRelease)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockStatus.Released, receipt.Status);
+            Assert.Equal(2, receipt.Version);
+        }
+
+        ManualInventoryBlockGroupDto partiallyReleasedGroup;
+        using (HttpResponseMessage getPartiallyReleasedGroup = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups/{blockGroup.BlockGroupId:D}",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            partiallyReleasedGroup =
+                await ReadSuccessAsync<ManualInventoryBlockGroupDto>(getPartiallyReleasedGroup)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupStatus.PartiallyReleased, partiallyReleasedGroup.Status);
+            Assert.Equal(2, partiallyReleasedGroup.InitialBlockCount);
+            Assert.Equal(1, partiallyReleasedGroup.ActiveBlockCount);
+            Assert.True(partiallyReleasedGroup.Version > blockGroup.Version);
+        }
+
+        Guid blockGroupReleaseOperationId = Guid.NewGuid();
         using (HttpResponseMessage releaseBlockGroup = await SendAsync(
                    client,
                    HttpMethod.Post,
                    $"/api/inventory/properties/{PropertyA:D}/block-groups/{blockGroup.BlockGroupId:D}/release",
                    operatorTokens.AccessToken,
-                   new { operationId = Guid.NewGuid() }).ConfigureAwait(false))
+                   new
+                   {
+                       operationId = blockGroupReleaseOperationId,
+                       expectedVersion = partiallyReleasedGroup.Version,
+                       confirmed = true
+                   }).ConfigureAwait(false))
         {
             ManualInventoryBlockGroupMutationReceiptDto releasedGroup =
                 await ReadSuccessAsync<ManualInventoryBlockGroupMutationReceiptDto>(releaseBlockGroup).ConfigureAwait(false);
             Assert.Equal(blockGroup.BlockGroupId, releasedGroup.BlockGroupId);
             Assert.Equal(PropertyA, releasedGroup.PropertyId);
             Assert.Equal(1, releasedGroup.AffectedBlockCount);
+            Assert.Equal(ManualInventoryBlockGroupStatus.Released, releasedGroup.Status);
+            Assert.True(releasedGroup.Version > partiallyReleasedGroup.Version);
+            Assert.Equal(2, releasedGroup.TotalBlockCount);
+            Assert.Equal(1, releasedGroup.ReleasedNowBlockCount);
+            Assert.Equal(1, releasedGroup.AlreadyReleasedBlockCount);
+            Assert.Equal(0, releasedGroup.ActiveBlockCount);
+        }
+
+        using (HttpResponseMessage recoverRelease = await SendAsync(
+                   client,
+                   HttpMethod.Get,
+                   $"/api/inventory/properties/{PropertyA:D}/block-groups/{blockGroup.BlockGroupId:D}/operations/{blockGroupReleaseOperationId:D}",
+                   operatorTokens.AccessToken).ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupOperationDto operation =
+                await ReadSuccessAsync<ManualInventoryBlockGroupOperationDto>(recoverRelease).ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupOperationKind.Release, operation.Kind);
+            Assert.Equal(ManualInventoryBlockGroupOperationStatus.Applied, operation.Status);
+            Assert.Equal(2, operation.Receipt.TotalBlockCount);
+            Assert.Equal(1, operation.Receipt.ReleasedNowBlockCount);
+            Assert.Equal(1, operation.Receipt.AlreadyReleasedBlockCount);
+            Assert.Equal(0, operation.Receipt.ActiveBlockCount);
         }
 
         InventoryAvailabilityResponse available = await GetAvailabilityAsync(
@@ -328,7 +575,8 @@ public sealed class InventoryAuthorizationIntegrationTests
             operatorTokens.AccessToken,
             "2026-08-02",
             "2026-08-03").ConfigureAwait(false);
-        Assert.True(Assert.Single(available.Units).IsAvailable);
+        Assert.Equal(2, available.Units.Count);
+        Assert.All(available.Units, unit => Assert.True(unit.IsAvailable));
 
         using IServiceScope verificationScope = api.Services.CreateScope();
         ITenantContextAccessor tenantContext = verificationScope.ServiceProvider.GetRequiredService<ITenantContextAccessor>();
@@ -342,7 +590,7 @@ public sealed class InventoryAuthorizationIntegrationTests
             .OrderBy(message => message.OccurredAtUtc)
             .ToListAsync()
             .ConfigureAwait(false);
-        Assert.Equal(4, blockMessages.Count);
+        Assert.Equal(6, blockMessages.Count);
         Assert.All(blockMessages, message => Assert.Equal(TenantA, message.ScopeId));
 
         IInventoryAvailabilityProjectionExportSource exportSource = verificationScope.ServiceProvider
@@ -354,10 +602,647 @@ public sealed class InventoryAuthorizationIntegrationTests
         InventoryAvailabilityProjectionExport propertyExport = Assert.Single(
             export.Snapshots,
             snapshot => snapshot.PropertyId == PropertyA);
-        InventoryUnitProjectionExport unitExport = Assert.Single(propertyExport.Units);
-        Assert.True(unitExport.IsSellable);
-        Assert.Equal(2, unitExport.Blocks.Count);
-        Assert.All(unitExport.Blocks, exportedBlock => Assert.Equal(ManualInventoryBlockStatus.Released, exportedBlock.Status));
+        Assert.Equal(2, propertyExport.Units.Count);
+        Assert.All(propertyExport.Units, unit => Assert.True(unit.IsSellable));
+        Assert.Equal(3, propertyExport.Units.Sum(unit => unit.Blocks.Count));
+        Assert.All(
+            propertyExport.Units.SelectMany(unit => unit.Blocks),
+            exportedBlock => Assert.Equal(ManualInventoryBlockStatus.Released, exportedBlock.Status));
+
+        await ExerciseAdminNoStoreBoundaryAsync(
+            connectionString,
+            natsConnectionString,
+            adminOperatorId).ConfigureAwait(false);
+        await ExerciseInventoryAdminCliBlockGroupsAsync(
+            admin,
+            cliOperatorId).ConfigureAwait(false);
+    }
+
+    private static async Task ExerciseAdminNoStoreBoundaryAsync(
+        string connectionString,
+        string natsConnectionString,
+        Guid adminOperatorId)
+    {
+        await using AdminApiTestApplication adminApi = new(
+            "PostgreSql",
+            connectionString,
+            natsConnectionString);
+        string groupsPath =
+            $"/api/admin/inventory/properties/{PropertyA:D}/block-groups";
+
+        using HttpClient anonymous = adminApi.CreateClient();
+        using (HttpResponseMessage response = await anonymous.GetAsync(groupsPath)
+                   .ConfigureAwait(false))
+        {
+            await AssertStatusAsync(HttpStatusCode.Unauthorized, response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        using HttpClient denied = adminApi.CreateClient();
+        denied.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            AdminApiTestApplication.CreateAccessTokenWithTenantClaim(
+                Guid.NewGuid(),
+                TenantA));
+        denied.DefaultRequestHeaders.Add(TenantHeader, TenantA);
+        using (HttpResponseMessage response = await denied.GetAsync(groupsPath)
+                   .ConfigureAwait(false))
+        {
+            await AssertStatusAsync(HttpStatusCode.Forbidden, response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        using HttpClient authorized = adminApi.CreateClient();
+        authorized.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            AdminApiTestApplication.CreateAccessTokenWithTenantClaim(
+                adminOperatorId,
+                TenantA));
+        authorized.DefaultRequestHeaders.Add(TenantHeader, TenantA);
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"{groupsPath}?status=not-a-status").ConfigureAwait(false))
+        {
+            await AssertStatusAsync(HttpStatusCode.BadRequest, response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(groupsPath)
+                   .ConfigureAwait(false))
+        {
+            _ = await ReadSuccessAsync<ManualInventoryBlockGroupListResponse>(response)
+                .ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"{groupsPath}/{Guid.NewGuid():D}").ConfigureAwait(false))
+        {
+            await AssertStatusAsync(HttpStatusCode.NotFound, response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        var adminCreateDefinition = new
+        {
+            target = new { kind = InventoryBlockTargetKind.Property },
+            arrival = "2026-09-01",
+            departure = "2026-09-03",
+            reason = "Admin property maintenance"
+        };
+        ManualInventoryBlockGroupSelectionPreviewDto createPreview;
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   $"{groupsPath}/preview",
+                   adminCreateDefinition).ConfigureAwait(false))
+        {
+            createPreview = await ReadSuccessAsync<
+                    ManualInventoryBlockGroupSelectionPreviewDto>(response)
+                .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupPreviewStatus.Ready, createPreview.Status);
+            Assert.Equal(2, createPreview.AffectedBlockCount);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   $"/api/admin/inventory/properties/{PropertyB:D}/block-groups/preview",
+                   adminCreateDefinition).ConfigureAwait(false))
+        {
+            await AssertStatusAsync(HttpStatusCode.Forbidden, response)
+                .ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        Guid createOperationId = Guid.NewGuid();
+        var createRequest = new
+        {
+            operationId = createOperationId,
+            adminCreateDefinition.target,
+            adminCreateDefinition.arrival,
+            adminCreateDefinition.departure,
+            adminCreateDefinition.reason,
+            expectedSelectionDigest = createPreview.SelectionDigest,
+            expectedAffectedBlockCount = createPreview.AffectedBlockCount,
+            confirmed = false
+        };
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   groupsPath,
+                   createRequest).ConfigureAwait(false))
+        {
+            await AssertProblemAsync(
+                HttpStatusCode.BadRequest,
+                InventoryApplicationErrors.BlockGroupConfirmationRequired.Code,
+                response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"/api/admin/inventory/properties/{PropertyA:D}/block-group-create-operations/{createOperationId:D}")
+                   .ConfigureAwait(false))
+        {
+            await AssertProblemAsync(
+                HttpStatusCode.NotFound,
+                InventoryApplicationErrors.BlockGroupOperationNotFound.Code,
+                response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        ManualInventoryBlockGroupMutationReceiptDto created;
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   groupsPath,
+                   createRequest with { confirmed = true }).ConfigureAwait(false))
+        {
+            created = await ReadSuccessAsync<
+                    ManualInventoryBlockGroupMutationReceiptDto>(response)
+                .ConfigureAwait(false);
+            Assert.Equal(2, created.CreatedNowBlockCount);
+            Assert.Equal(2, created.ActiveBlockCount);
+            Assert.Equal(ManualInventoryBlockGroupStatus.Active, created.Status);
+            Assert.Equal(1L, created.Version);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"{groupsPath}/{created.ResultBlockGroupId:D}").ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupDto group =
+                await ReadSuccessAsync<ManualInventoryBlockGroupDto>(response)
+                    .ConfigureAwait(false);
+            Assert.Equal(
+                $"admin-api:{adminOperatorId:D}",
+                group.CreatedByActorId);
+            Assert.Equal(group.CreatedByActorId, group.LastModifiedByActorId);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"/api/admin/inventory/properties/{PropertyA:D}/block-group-create-operations/{createOperationId:D}")
+                   .ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupOperationDto recovery =
+                await ReadSuccessAsync<ManualInventoryBlockGroupOperationDto>(response)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupOperationKind.Create, recovery.Kind);
+            Assert.Equal(created, recovery.Receipt);
+            AssertNoStore(response);
+        }
+
+        var adminReplacementDefinition = new
+        {
+            target = new
+            {
+                kind = InventoryBlockTargetKind.Room,
+                roomId = RoomA
+            },
+            adminCreateDefinition.arrival,
+            adminCreateDefinition.departure,
+            reason = "Admin room maintenance",
+            blockGroupId = created.ResultBlockGroupId,
+            expectedVersion = created.Version
+        };
+        ManualInventoryBlockGroupSelectionPreviewDto replacementPreview;
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   $"{groupsPath}/preview",
+                   adminReplacementDefinition).ConfigureAwait(false))
+        {
+            replacementPreview = await ReadSuccessAsync<
+                    ManualInventoryBlockGroupSelectionPreviewDto>(response)
+                .ConfigureAwait(false);
+            Assert.Equal(1, replacementPreview.AffectedBlockCount);
+            Assert.False(replacementPreview.IsNoOpReplacement);
+            AssertNoStore(response);
+        }
+
+        Guid replaceOperationId = Guid.NewGuid();
+        ManualInventoryBlockGroupMutationReceiptDto replaced;
+        using (HttpResponseMessage response = await authorized.PutAsJsonAsync(
+                   $"{groupsPath}/{created.ResultBlockGroupId:D}",
+                   new
+                   {
+                       operationId = replaceOperationId,
+                       expectedVersion = created.Version,
+                       adminReplacementDefinition.target,
+                       adminReplacementDefinition.arrival,
+                       adminReplacementDefinition.departure,
+                       adminReplacementDefinition.reason,
+                       expectedSelectionDigest = replacementPreview.SelectionDigest,
+                       expectedAffectedBlockCount = replacementPreview.AffectedBlockCount,
+                       confirmed = true
+                   }).ConfigureAwait(false))
+        {
+            replaced = await ReadSuccessAsync<
+                    ManualInventoryBlockGroupMutationReceiptDto>(response)
+                .ConfigureAwait(false);
+            Assert.Equal(created.ResultBlockGroupId, replaced.PreviousBlockGroupId);
+            Assert.NotEqual(created.ResultBlockGroupId, replaced.ResultBlockGroupId);
+            Assert.Equal(2, replaced.ReleasedNowBlockCount);
+            Assert.Equal(1, replaced.CreatedNowBlockCount);
+            Assert.Equal(1, replaced.ActiveBlockCount);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"{groupsPath}/{created.ResultBlockGroupId:D}/operations/{replaceOperationId:D}")
+                   .ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupOperationDto recovery =
+                await ReadSuccessAsync<ManualInventoryBlockGroupOperationDto>(response)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupOperationKind.Replace, recovery.Kind);
+            Assert.Equal(replaced, recovery.Receipt);
+            AssertNoStore(response);
+        }
+
+        Guid releaseOperationId = Guid.NewGuid();
+        var releaseRequest = new
+        {
+            operationId = releaseOperationId,
+            expectedVersion = replaced.Version,
+            confirmed = false
+        };
+        string successorPath = $"{groupsPath}/{replaced.ResultBlockGroupId:D}";
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   $"{successorPath}/release",
+                   releaseRequest).ConfigureAwait(false))
+        {
+            await AssertProblemAsync(
+                HttpStatusCode.BadRequest,
+                InventoryApplicationErrors.BlockGroupConfirmationRequired.Code,
+                response).ConfigureAwait(false);
+            AssertNoStore(response);
+        }
+
+        ManualInventoryBlockGroupMutationReceiptDto released;
+        using (HttpResponseMessage response = await authorized.PostAsJsonAsync(
+                   $"{successorPath}/release",
+                   releaseRequest with { confirmed = true }).ConfigureAwait(false))
+        {
+            released = await ReadSuccessAsync<
+                    ManualInventoryBlockGroupMutationReceiptDto>(response)
+                .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupStatus.Released, released.Status);
+            Assert.Equal(1, released.ReleasedNowBlockCount);
+            Assert.Equal(0, released.ActiveBlockCount);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(
+                   $"{successorPath}/operations/{releaseOperationId:D}")
+                   .ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupOperationDto recovery =
+                await ReadSuccessAsync<ManualInventoryBlockGroupOperationDto>(response)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupOperationKind.Release, recovery.Kind);
+            Assert.Equal(released, recovery.Receipt);
+            AssertNoStore(response);
+        }
+
+        using (HttpResponseMessage response = await authorized.GetAsync(successorPath)
+                   .ConfigureAwait(false))
+        {
+            ManualInventoryBlockGroupDto group =
+                await ReadSuccessAsync<ManualInventoryBlockGroupDto>(response)
+                    .ConfigureAwait(false);
+            Assert.Equal(ManualInventoryBlockGroupStatus.Released, group.Status);
+            Assert.Equal($"admin-api:{adminOperatorId:D}", group.CreatedByActorId);
+            Assert.Equal($"admin-api:{adminOperatorId:D}", group.LastModifiedByActorId);
+            AssertNoStore(response);
+        }
+
+        Assert.Equal(
+            2,
+            await adminApi.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsCreate).ConfigureAwait(false));
+        Assert.Equal(
+            1,
+            await adminApi.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsCreate,
+                InventoryApplicationErrors.BlockGroupConfirmationRequired.Code)
+                .ConfigureAwait(false));
+        Assert.Equal(
+            1,
+            await adminApi.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsReplace).ConfigureAwait(false));
+        Assert.Equal(
+            2,
+            await adminApi.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsRelease).ConfigureAwait(false));
+        Assert.Equal(
+            1,
+            await adminApi.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsRelease,
+                InventoryApplicationErrors.BlockGroupConfirmationRequired.Code)
+                .ConfigureAwait(false));
+        Assert.True(
+            await adminApi.CountAuditEntriesContainingAsync(
+                adminOperatorId.ToString("D")).ConfigureAwait(false) >= 10);
+    }
+
+    private static async Task ExerciseInventoryAdminCliBlockGroupsAsync(
+        AdminCliTestApplication admin,
+        Guid cliOperatorId)
+    {
+        const string arrival = "2028-10-01";
+        const string departure = "2028-10-03";
+        const string createReason = "CLI room maintenance";
+        string actorId = cliOperatorId.ToString("D");
+
+        AdminCliResult forbidden = await ExecuteInventoryBlockGroupCliAsync(
+            admin,
+            actorId,
+            "preview",
+            "--property-id", PropertyB.ToString("D"),
+            "--target-kind", InventoryBlockTargetKind.Property.ToString(),
+            "--arrival", arrival,
+            "--departure", departure,
+            "--reason", "Out of scope").ConfigureAwait(false);
+        Assert.Equal(AdminExitCodes.Unauthorized, forbidden.ExitCode);
+        Assert.Contains(
+            AdminErrors.Unauthorized.Message,
+            forbidden.Error,
+            StringComparison.Ordinal);
+
+        ManualInventoryBlockGroupSelectionPreviewDto createPreview =
+            ReadAdminCliJson<ManualInventoryBlockGroupSelectionPreviewDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "preview",
+                        "--property-id", PropertyA.ToString("D"),
+                        "--target-kind", InventoryBlockTargetKind.Room.ToString(),
+                        "--room-id", RoomA.ToString("D"),
+                        "--arrival", arrival,
+                        "--departure", departure,
+                        "--reason", createReason)).ConfigureAwait(false));
+        Assert.Equal(ManualInventoryBlockGroupPreviewStatus.Ready, createPreview.Status);
+        Assert.Equal(1, createPreview.AffectedBlockCount);
+        Assert.NotNull(createPreview.SelectionDigest);
+
+        Guid createOperationId = Guid.NewGuid();
+        string[] createArguments =
+        [
+            "create",
+            "--operation-id", createOperationId.ToString("D"),
+            "--property-id", PropertyA.ToString("D"),
+            "--target-kind", InventoryBlockTargetKind.Room.ToString(),
+            "--room-id", RoomA.ToString("D"),
+            "--arrival", arrival,
+            "--departure", departure,
+            "--reason", createReason,
+            "--selection-digest", createPreview.SelectionDigest!,
+            "--expected-affected-count", createPreview.AffectedBlockCount!.Value.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+        ];
+        AdminCliResult unconfirmedCreate =
+            await ExecuteInventoryBlockGroupCliAsync(
+                admin,
+                actorId,
+                createArguments).ConfigureAwait(false);
+        Assert.Equal(AdminExitCodes.Failed, unconfirmedCreate.ExitCode);
+        Assert.Contains(
+            InventoryApplicationErrors.BlockGroupConfirmationRequired.Code,
+            unconfirmedCreate.Error,
+            StringComparison.Ordinal);
+
+        AdminCliResult unboundCreateRecovery =
+            await ExecuteInventoryBlockGroupCliAsync(
+                admin,
+                actorId,
+                "get-create-operation",
+                "--property-id", PropertyA.ToString("D"),
+                "--operation-id", createOperationId.ToString("D"))
+                .ConfigureAwait(false);
+        Assert.Equal(AdminExitCodes.Failed, unboundCreateRecovery.ExitCode);
+        Assert.Contains(
+            InventoryApplicationErrors.BlockGroupOperationNotFound.Code,
+            unboundCreateRecovery.Error,
+            StringComparison.Ordinal);
+
+        ManualInventoryBlockGroupMutationReceiptDto created =
+            ReadAdminCliJson<ManualInventoryBlockGroupMutationReceiptDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        [.. createArguments, "--yes"])).ConfigureAwait(false));
+        Assert.Equal(1, created.CreatedNowBlockCount);
+        Assert.Equal(1, created.ActiveBlockCount);
+        Assert.Equal(ManualInventoryBlockGroupStatus.Active, created.Status);
+        Assert.Equal(1L, created.Version);
+
+        ManualInventoryBlockGroupOperationDto createRecovery =
+            ReadAdminCliJson<ManualInventoryBlockGroupOperationDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "get-create-operation",
+                        "--property-id", PropertyA.ToString("D"),
+                        "--operation-id", createOperationId.ToString("D")))
+                    .ConfigureAwait(false));
+        Assert.Equal(ManualInventoryBlockGroupOperationKind.Create, createRecovery.Kind);
+        Assert.Equal(created, createRecovery.Receipt);
+
+        const string replacementReason = "CLI replacement maintenance";
+        ManualInventoryBlockGroupSelectionPreviewDto replacementPreview =
+            ReadAdminCliJson<ManualInventoryBlockGroupSelectionPreviewDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "preview",
+                        "--property-id", PropertyA.ToString("D"),
+                        "--block-group-id", created.ResultBlockGroupId.ToString("D"),
+                        "--expected-version", created.Version!.Value.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture),
+                        "--target-kind", InventoryBlockTargetKind.Room.ToString(),
+                        "--room-id", RoomA2.ToString("D"),
+                        "--arrival", arrival,
+                        "--departure", departure,
+                        "--reason", replacementReason)).ConfigureAwait(false));
+        Assert.Equal(1, replacementPreview.AffectedBlockCount);
+        Assert.False(replacementPreview.IsNoOpReplacement);
+
+        Guid replaceOperationId = Guid.NewGuid();
+        ManualInventoryBlockGroupMutationReceiptDto replaced =
+            ReadAdminCliJson<ManualInventoryBlockGroupMutationReceiptDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "replace",
+                        "--operation-id", replaceOperationId.ToString("D"),
+                        "--property-id", PropertyA.ToString("D"),
+                        "--block-group-id", created.ResultBlockGroupId.ToString("D"),
+                        "--expected-version", created.Version.Value.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture),
+                        "--target-kind", InventoryBlockTargetKind.Room.ToString(),
+                        "--room-id", RoomA2.ToString("D"),
+                        "--arrival", arrival,
+                        "--departure", departure,
+                        "--reason", replacementReason,
+                        "--selection-digest", replacementPreview.SelectionDigest!,
+                        "--expected-affected-count", replacementPreview.AffectedBlockCount!.Value.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture),
+                        "--yes")).ConfigureAwait(false));
+        Assert.Equal(created.ResultBlockGroupId, replaced.PreviousBlockGroupId);
+        Assert.NotEqual(created.ResultBlockGroupId, replaced.ResultBlockGroupId);
+        Assert.Equal(1, replaced.ReleasedNowBlockCount);
+        Assert.Equal(1, replaced.CreatedNowBlockCount);
+
+        ManualInventoryBlockGroupOperationDto replaceRecovery =
+            ReadAdminCliJson<ManualInventoryBlockGroupOperationDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "get-operation",
+                        "--property-id", PropertyA.ToString("D"),
+                        "--block-group-id", created.ResultBlockGroupId.ToString("D"),
+                        "--operation-id", replaceOperationId.ToString("D")))
+                    .ConfigureAwait(false));
+        Assert.Equal(ManualInventoryBlockGroupOperationKind.Replace, replaceRecovery.Kind);
+        Assert.Equal(replaced, replaceRecovery.Receipt);
+
+        Guid releaseOperationId = Guid.NewGuid();
+        string[] releaseArguments =
+        [
+            "release",
+            "--operation-id", releaseOperationId.ToString("D"),
+            "--property-id", PropertyA.ToString("D"),
+            "--block-group-id", replaced.ResultBlockGroupId.ToString("D"),
+            "--expected-version", replaced.Version!.Value.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+        ];
+        AdminCliResult unconfirmedRelease =
+            await ExecuteInventoryBlockGroupCliAsync(
+                admin,
+                actorId,
+                releaseArguments).ConfigureAwait(false);
+        Assert.Equal(AdminExitCodes.Failed, unconfirmedRelease.ExitCode);
+        Assert.Contains(
+            InventoryApplicationErrors.BlockGroupConfirmationRequired.Code,
+            unconfirmedRelease.Error,
+            StringComparison.Ordinal);
+
+        ManualInventoryBlockGroupMutationReceiptDto released =
+            ReadAdminCliJson<ManualInventoryBlockGroupMutationReceiptDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        [.. releaseArguments, "--yes"])).ConfigureAwait(false));
+        Assert.Equal(ManualInventoryBlockGroupStatus.Released, released.Status);
+        Assert.Equal(1, released.ReleasedNowBlockCount);
+        Assert.Equal(0, released.ActiveBlockCount);
+
+        ManualInventoryBlockGroupOperationDto releaseRecovery =
+            ReadAdminCliJson<ManualInventoryBlockGroupOperationDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "get-operation",
+                        "--property-id", PropertyA.ToString("D"),
+                        "--block-group-id", replaced.ResultBlockGroupId.ToString("D"),
+                        "--operation-id", releaseOperationId.ToString("D")))
+                    .ConfigureAwait(false));
+        Assert.Equal(ManualInventoryBlockGroupOperationKind.Release, releaseRecovery.Kind);
+        Assert.Equal(released, releaseRecovery.Receipt);
+
+        ManualInventoryBlockGroupDto finalGroup =
+            ReadAdminCliJson<ManualInventoryBlockGroupDto>(
+                await AssertAdminSuccessAsync(
+                    ExecuteInventoryBlockGroupCliAsync(
+                        admin,
+                        actorId,
+                        "get",
+                        "--property-id", PropertyA.ToString("D"),
+                        "--block-group-id", replaced.ResultBlockGroupId.ToString("D")))
+                    .ConfigureAwait(false));
+        Assert.Equal($"admin-cli:{actorId}", finalGroup.CreatedByActorId);
+        Assert.Equal($"admin-cli:{actorId}", finalGroup.LastModifiedByActorId);
+
+        Assert.Equal(
+            2,
+            await admin.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsCreate,
+                actorId: actorId).ConfigureAwait(false));
+        Assert.Equal(
+            1,
+            await admin.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsCreate,
+                InventoryApplicationErrors.BlockGroupConfirmationRequired.Code,
+                actorId)
+                .ConfigureAwait(false));
+        Assert.Equal(
+            1,
+            await admin.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsReplace,
+                actorId: actorId).ConfigureAwait(false));
+        Assert.Equal(
+            2,
+            await admin.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsRelease,
+                actorId: actorId).ConfigureAwait(false));
+        Assert.Equal(
+            1,
+            await admin.CountAuditEntriesAsync(
+                InventoryAdminOperationNames.BlockGroupsRelease,
+                InventoryApplicationErrors.BlockGroupConfirmationRequired.Code,
+                actorId)
+                .ConfigureAwait(false));
+        Assert.True(
+            await admin.CountAuditEntriesContainingAsync(actorId)
+                .ConfigureAwait(false) >= 10);
+    }
+
+    private static Task<AdminCliResult> ExecuteInventoryBlockGroupCliAsync(
+        AdminCliTestApplication admin,
+        string actorId,
+        params string[] arguments) => admin.ExecuteAsync(
+            [
+                "inventory",
+                "block-groups",
+                .. arguments,
+                "--tenant", TenantA,
+                "--actor", actorId,
+                "--output", "json"
+            ]);
+
+    private static T ReadAdminCliJson<T>(AdminCliResult result)
+    {
+        T? value = JsonSerializer.Deserialize<T>(result.Output, JsonOptions);
+        Assert.NotNull(value);
+        return value;
+    }
+
+    private static async Task AddSecondPropertyARoomAsync(AuthTestApplication api)
+    {
+        using IServiceScope scope = api.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ITenantContextAccessor>()
+            .SetTenant(TenantA);
+        IIntegrationEventHandler<RoomCreatedIntegrationEvent> roomHandler =
+            ResolveInventoryHandler<RoomCreatedIntegrationEvent>(scope.ServiceProvider);
+        InventoryDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<InventoryDbContext>();
+        await using var transaction = await dbContext.Database
+            .BeginTransactionAsync()
+            .ConfigureAwait(false);
+        await roomHandler.HandleAsync(
+            new(
+                Guid.NewGuid(),
+                TenantA,
+                DateTimeOffset.UtcNow,
+                PropertyA,
+                RoomA2,
+                "102",
+                "Main",
+                "1",
+                RoomStatus.Active,
+                1),
+            CancellationToken.None).ConfigureAwait(false);
+        await dbContext.SaveChangesAsync().ConfigureAwait(false);
+        await transaction.CommitAsync().ConfigureAwait(false);
     }
 
     [DockerFact]
@@ -415,10 +1300,21 @@ public sealed class InventoryAuthorizationIntegrationTests
         DateTimeOffset now = DateTimeOffset.UtcNow;
         long beforeOutbox;
         long beforeUnitVersions;
+        long beforePropertyEpochs;
         using (IServiceScope scope = api.Services.CreateScope())
         {
             scope.ServiceProvider.GetRequiredService<ITenantContextAccessor>().SetTenant(TenantA);
             InventoryDbContext db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            IInventoryAvailabilitySelectionFence selectionFence = scope.ServiceProvider
+                .GetRequiredService<IInventoryAvailabilitySelectionFence>();
+            foreach (Guid propertyId in new[] { PropertyA, PropertyB })
+            {
+                await selectionFence.AcquireAsync(propertyId, CancellationToken.None);
+                await selectionFence.AdvanceAsync(propertyId, CancellationToken.None);
+            }
+
+            await db.SaveChangesAsync();
             foreach (Guid processId in new[] { Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"), latestBedId })
             {
                 BedRetirementProcess process = BedRetirementProcess.Create(processId, TenantA, PropertyB, RoomB, BedB,
@@ -433,6 +1329,8 @@ public sealed class InventoryAuthorizationIntegrationTests
             db.Add(RoomRetirementProcess.Create(activeRoomId, TenantA, PropertyA, RoomA,
                 "Active attempt wins timestamp skew", "qa-reader", now.AddDays(-1)).Value);
             await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+            beforePropertyEpochs = await db.PropertyTopology.SumAsync(property => property.AvailabilitySelectionVersion);
             beforeOutbox = await db.OutboxMessages.LongCountAsync();
             beforeUnitVersions = await db.InventoryUnits.SumAsync(unit => unit.AvailabilityMutationVersion);
         }
@@ -465,6 +1363,7 @@ public sealed class InventoryAuthorizationIntegrationTests
         verify.ServiceProvider.GetRequiredService<ITenantContextAccessor>().SetTenant(TenantA);
         InventoryDbContext verifiedDb = verify.ServiceProvider.GetRequiredService<InventoryDbContext>();
         Assert.Equal(beforeOutbox, await verifiedDb.OutboxMessages.LongCountAsync());
+        Assert.Equal(beforePropertyEpochs, await verifiedDb.PropertyTopology.SumAsync(property => property.AvailabilitySelectionVersion));
         Assert.Equal(beforeUnitVersions, await verifiedDb.InventoryUnits.SumAsync(unit => unit.AvailabilityMutationVersion));
         Assert.Equal(2, await verifiedDb.RoomRetirements.CountAsync());
         Assert.Equal(2, await verifiedDb.BedRetirements.CountAsync());
@@ -1554,6 +2453,36 @@ public sealed class InventoryAuthorizationIntegrationTests
         Assert.True(
             response.StatusCode == expected,
             $"Expected {(int)expected} but received {(int)response.StatusCode}. Body: {body}");
+    }
+
+    private static async Task AssertProblemAsync(
+        HttpStatusCode expected,
+        string expectedCode,
+        HttpResponseMessage response)
+    {
+        string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.True(
+            response.StatusCode == expected,
+            $"Expected {(int)expected} but received {(int)response.StatusCode}. Body: {body}");
+        Microsoft.AspNetCore.Mvc.ProblemDetails? problem =
+            JsonSerializer.Deserialize<Microsoft.AspNetCore.Mvc.ProblemDetails>(
+                body,
+                JsonOptions);
+        Assert.NotNull(problem);
+        Assert.Equal(expectedCode, problem.Title);
+    }
+
+    private static void AssertNoStore(HttpResponseMessage response)
+    {
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        Assert.Contains(
+            response.Headers.Pragma,
+            directive => string.Equals(
+                directive.Name,
+                "no-cache",
+                StringComparison.OrdinalIgnoreCase));
+        Assert.True(response.Content.Headers.TryGetValues("Expires", out IEnumerable<string>? expires));
+        Assert.Equal("0", Assert.Single(expires));
     }
 
     private static async Task<AdminCliResult> AssertAdminSuccessAsync(Task<AdminCliResult> resultTask)

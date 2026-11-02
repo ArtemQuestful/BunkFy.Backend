@@ -24,6 +24,12 @@ public static class InventoryApplicationErrors
     public static readonly Error InventoryUnitNotSellable = new("Inventory.InventoryUnitNotSellable", "The inventory unit is not sellable in the room's current mode.");
     public static readonly Error BlockNotFound = new("Inventory.BlockNotFound", "The inventory block was not found.");
     public static readonly Error BlockGroupNotFound = new("Inventory.BlockGroupNotFound", "The inventory block group was not found.");
+    public static readonly Error BlockGroupOperationNotFound = new("Inventory.BlockGroupOperationNotFound", "The manual inventory block group operation was not found.");
+    public static readonly Error BlockGroupConfirmationRequired = new("Inventory.BlockGroupConfirmationRequired", "Explicit confirmation is required for the manual inventory block group mutation.");
+    public static readonly Error BlockGroupSelectionDigestInvalid = new("Inventory.BlockGroupSelectionDigestInvalid", "The expected manual inventory block group selection digest must be a lowercase SHA-256 value.");
+    public static readonly Error BlockGroupSelectionMismatch = new("Inventory.BlockGroupSelectionMismatch", "The selected inventory changed after preview. Preview again and confirm the current selection.");
+    public static readonly Error BlockGroupTargetTooLarge = new("Inventory.BlockGroupTargetTooLarge", "The manual inventory block group target exceeds the 500-member atomic limit.");
+    public static readonly Error BlockGroupCursorInvalid = new("Inventory.BlockGroupCursorInvalid", "The manual inventory block group cursor is invalid.");
     public static readonly Error BlockTargetInvalid = new("Inventory.BlockTargetInvalid", "The inventory block target is invalid.");
     public static readonly Error BlockTargetEmpty = new("Inventory.BlockTargetEmpty", "The selected target has no sellable inventory.");
     public static readonly Error BlockOverlap = new("Inventory.BlockOverlap", "An active manual block already overlaps this stay range.");

@@ -55,6 +55,64 @@ internal static class InventoryManagementMutationFingerprint
             propertyId.ToString("N"),
             blockGroupId.ToString("N"));
 
+    public static string ComputeManualBlockGroupCreateV2(
+        Guid propertyId,
+        InventoryBlockTarget target,
+        DateOnly arrival,
+        DateOnly departure,
+        string reason,
+        string expectedSelectionDigest,
+        int expectedAffectedBlockCount) => Compute(
+            "bunkfy-inventory-manual-block-group-create/v2",
+            propertyId.ToString("N"),
+            ((int)target.Kind).ToString(CultureInfo.InvariantCulture),
+            target.BuildingLabel ?? string.Empty,
+            target.FloorLabel ?? string.Empty,
+            target.RoomId?.ToString("N") ?? string.Empty,
+            target.InventoryUnitId?.ToString("N") ?? string.Empty,
+            arrival.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            departure.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            NormalizeReason(reason),
+            expectedSelectionDigest,
+            expectedAffectedBlockCount.ToString(CultureInfo.InvariantCulture),
+            bool.TrueString);
+
+    public static string ComputeManualBlockGroupReplace(
+        Guid propertyId,
+        Guid blockGroupId,
+        long expectedVersion,
+        InventoryBlockTarget target,
+        DateOnly arrival,
+        DateOnly departure,
+        string reason,
+        string expectedSelectionDigest,
+        int expectedAffectedBlockCount) => Compute(
+            "bunkfy-inventory-manual-block-group-replace/v1",
+            propertyId.ToString("N"),
+            blockGroupId.ToString("N"),
+            expectedVersion.ToString(CultureInfo.InvariantCulture),
+            ((int)target.Kind).ToString(CultureInfo.InvariantCulture),
+            target.BuildingLabel ?? string.Empty,
+            target.FloorLabel ?? string.Empty,
+            target.RoomId?.ToString("N") ?? string.Empty,
+            target.InventoryUnitId?.ToString("N") ?? string.Empty,
+            arrival.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            departure.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            NormalizeReason(reason),
+            expectedSelectionDigest,
+            expectedAffectedBlockCount.ToString(CultureInfo.InvariantCulture),
+            bool.TrueString);
+
+    public static string ComputeManualBlockGroupReleaseV2(
+        Guid propertyId,
+        Guid blockGroupId,
+        long expectedVersion) => Compute(
+            "bunkfy-inventory-manual-block-group-release/v2",
+            propertyId.ToString("N"),
+            blockGroupId.ToString("N"),
+            expectedVersion.ToString(CultureInfo.InvariantCulture),
+            bool.TrueString);
+
     public static string ComputeBedRetirementRequest(
         Guid propertyId,
         Guid roomId,

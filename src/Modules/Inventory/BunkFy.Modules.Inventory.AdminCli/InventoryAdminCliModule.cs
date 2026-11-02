@@ -46,6 +46,9 @@ public sealed class InventoryAdminCliModule : IAdminCliModule
                 CreateBlockCommand(commands.Services, globalOptions),
                 CreateReleaseBlockCommand(commands.Services, globalOptions)
             },
+            InventoryBlockGroupAdminCliCommandGroup.Create(
+                commands.Services,
+                globalOptions),
             InventoryBedRetirementAdminCliCommandGroup.Create(commands.Services, globalOptions),
             InventoryRoomRetirementAdminCliCommandGroup.Create(commands.Services, globalOptions)
         };
@@ -254,7 +257,8 @@ public sealed class InventoryAdminCliModule : IAdminCliModule
                             parseResult.GetValue(unitOption),
                             arrival,
                             departure,
-                            parseResult.GetValue(reasonOption) ?? string.Empty),
+                            parseResult.GetValue(reasonOption) ?? string.Empty,
+                            ResolveActor(parseResult, globalOptions)),
                         token).ConfigureAwait(false);
                     if (result.IsSuccess)
                     {
@@ -304,7 +308,8 @@ public sealed class InventoryAdminCliModule : IAdminCliModule
                             parseResult.GetValue(operationOption),
                             parseResult.GetValue(propertyOption),
                             parseResult.GetValue(blockOption),
-                            parseResult.GetValue(expectedVersionOption)),
+                            parseResult.GetValue(expectedVersionOption),
+                            ResolveActor(parseResult, globalOptions)),
                         token).ConfigureAwait(false);
                     if (result.IsSuccess)
                     {
@@ -386,6 +391,17 @@ public sealed class InventoryAdminCliModule : IAdminCliModule
             _ => InventorySalesMode.Unknown
         };
         return salesMode != InventorySalesMode.Unknown;
+    }
+
+    private static string ResolveActor(
+        ParseResult parse,
+        AdminCliGlobalOptions globalOptions)
+    {
+        string actor = string.IsNullOrWhiteSpace(
+            parse.GetValue(globalOptions.ActorOption))
+            ? $"{Environment.UserDomainName}\\{Environment.UserName}"
+            : parse.GetValue(globalOptions.ActorOption)!.Trim();
+        return $"admin-cli:{actor}";
     }
 
     private static bool TryParseStayRange(

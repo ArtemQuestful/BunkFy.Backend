@@ -534,8 +534,8 @@ public sealed class StationTokenEvidenceIntegrationTests
             "public",
             "Integration",
             "standard",
-            expectedEndpointCount: 309,
-            expectedCanonicalSha256: "c955bf6c7a98d63ab8118e72a56cfb28e549ec3a7bc33cdf3f717c31f8c5fcae"));
+            expectedEndpointCount: 316,
+            expectedCanonicalSha256: "e9f994dddc67cccc4b300d9f53e978a6564537ff0f3965e37eaf588f925572f7"));
 
         (string Subcase, HttpMethod Method, string Path)[] protectedPublic =
         [
@@ -683,8 +683,8 @@ public sealed class StationTokenEvidenceIntegrationTests
             "admin",
             "Integration",
             "standard",
-            expectedEndpointCount: 174,
-            expectedCanonicalSha256: "8ef4e9fd374ba557f1551364801182a66642f87201f505314d07621a4f7533f9"));
+            expectedEndpointCount: 181,
+            expectedCanonicalSha256: "8515ba6b3e7adce05b33805f40f0eac7e16637a89da4b274fdb546654c3ee54e"));
         foreach ((string subcase, string path) in new[]
                  {
                      ("admin-audit", "/api/admin/audit/"),
@@ -731,7 +731,7 @@ public sealed class StationTokenEvidenceIntegrationTests
             "public",
             "Development",
             "prometheus-enabled",
-            expectedEndpointCount: 310,
+            expectedEndpointCount: 317,
             expectedCanonicalSha256: null));
         observations.Add(await CaptureFullHostAsync(
             "K0TOK-020",
@@ -1418,17 +1418,17 @@ public sealed class StationTokenEvidenceIntegrationTests
         Assert.Contains(compositionInventories, static item =>
             item.Host == "public" &&
             item.ConfigurationVariant == "standard" &&
-            item.EndpointCount == 309 &&
-            item.ProtectedEndpointCount == 279);
+            item.EndpointCount == 316 &&
+            item.ProtectedEndpointCount == 286);
         Assert.Contains(compositionInventories, static item =>
             item.Host == "admin" &&
             item.ConfigurationVariant == "standard" &&
-            item.EndpointCount == 174 &&
-            item.ProtectedEndpointCount == 172);
+            item.EndpointCount == 181 &&
+            item.ProtectedEndpointCount == 179);
         Assert.Contains(compositionInventories, static item =>
             item.Host == "public" &&
             item.ConfigurationVariant == "prometheus-enabled" &&
-            item.EndpointCount == 310);
+            item.EndpointCount == 317);
         Assert.All(compositionInventories, static item =>
         {
             Assert.Equal(0, item.EligibleEndpointCount);

@@ -36,7 +36,10 @@ Make Inventory's ordinary operator surfaces truthful, bounded, cache-safe, and i
 
 ## Deferred
 
-- A first-class persisted manual-block-group aggregate and group-paged history. The current storage model records one block per unit, so changing history pagination semantics safely requires preserving the original target intent rather than inferring it from mutable topology.
+- A first-class persisted manual-block-group aggregate and group-paged history
+  were deferred by this historical slice and are addressed by
+  `inventory-manual-block-group-convergence-task.md`, which preserves original
+  target intent and marks legacy intent unknown rather than inferring it.
 - Server-side searchable block-target discovery for unusually large properties.
 - Partial availability paging or search. That requires a reservation-selection UX and consistency contract of its own.
 - Provider-specific query tuning or partitioning before measurements justify it.

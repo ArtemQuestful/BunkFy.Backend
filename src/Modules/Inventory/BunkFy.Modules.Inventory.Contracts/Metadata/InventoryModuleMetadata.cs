@@ -39,6 +39,7 @@ public static class InventoryModuleMetadata
             new ModulePermissionDescriptor(InventoryAdminPermissionCodes.Read, "Read inventory configuration.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
             new ModulePermissionDescriptor(InventoryAdminPermissionCodes.Configure, "Configure inventory sales modes.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
             new ModulePermissionDescriptor(InventoryAdminPermissionCodes.BlocksManage, "Manage inventory blocks.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
+            new ModulePermissionDescriptor(InventoryAdminPermissionCodes.BlockGroupsManage, "Manage bounded inventory block groups.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
             new ModulePermissionDescriptor(InventoryAdminPermissionCodes.Retire, "Manage room and bed retirement.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
         ])
         .WithSubscription<PropertyCreatedIntegrationEvent>(PropertiesModuleMetadata.Name, PropertyCreatedHandlerName)

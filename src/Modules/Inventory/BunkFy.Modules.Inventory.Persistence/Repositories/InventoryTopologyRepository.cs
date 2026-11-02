@@ -13,7 +13,7 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
     private const string RoomLockPrefix = "bunkfy:inventory:topology:room:";
     private const string BedLockPrefix = "bunkfy:inventory:topology:bed:";
 
-    public async Task ApplyPropertyAsync(
+    public async Task<bool> ApplyPropertyAsync(
         InventoryPropertyTopologyWriteModel property,
         CancellationToken cancellationToken)
     {
@@ -29,21 +29,29 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
                 .FirstOrDefaultAsync(item => item.Id == property.PropertyId, cancellationToken)
                 .ConfigureAwait(false);
 
-        if (projection is null)
+        bool created = projection is null;
+        if (created)
         {
             projection = InventoryPropertyTopology.Create(property.PropertyId, property.ScopeId);
             dbContext.PropertyTopology.Add(projection);
         }
 
+        long previousSourceVersion = projection!.SourceVersion;
+        long previousDetailsVersion = projection.DetailsVersion;
         projection.Apply(
             property.Name,
             property.Code,
             property.TimeZoneId,
             property.Status,
             property.SourceVersion);
+        return created ||
+            projection.SourceVersion != previousSourceVersion ||
+            projection.DetailsVersion != previousDetailsVersion;
     }
 
-    public async Task ApplyRoomAsync(InventoryRoomTopologyWriteModel room, CancellationToken cancellationToken)
+    public async Task<bool> ApplyRoomAsync(
+        InventoryRoomTopologyWriteModel room,
+        CancellationToken cancellationToken)
     {
         await this.AcquireTopologyLocksAsync(
             room.ScopeId,
@@ -51,19 +59,25 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             room.RoomId,
             bedId: null,
             cancellationToken).ConfigureAwait(false);
-        await this.EnsurePropertyPlaceholderAsync(room.ScopeId, room.PropertyId, cancellationToken).ConfigureAwait(false);
+        bool changed = await this.EnsurePropertyPlaceholderAsync(
+            room.ScopeId,
+            room.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         InventoryRoomTopology? projection = dbContext.RoomTopology.Local
             .FirstOrDefault(item => item.Id == room.RoomId && item.ScopeId == room.ScopeId) ??
             await dbContext.RoomTopology
                 .FirstOrDefaultAsync(item => item.Id == room.RoomId, cancellationToken)
                 .ConfigureAwait(false);
 
-        if (projection is null)
+        bool created = projection is null;
+        if (created)
         {
             projection = InventoryRoomTopology.Create(room.RoomId, room.ScopeId, room.PropertyId);
             dbContext.RoomTopology.Add(projection);
         }
 
+        long previousSourceVersion = projection!.SourceVersion;
+        long previousDetailsVersion = projection.DetailsVersion;
         projection.Apply(
             room.PropertyId,
             room.Name,
@@ -71,7 +85,10 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             room.FloorLabel,
             room.Status,
             room.SourceVersion);
-        await this.ApplyInventoryUnitAsync(
+        changed |= created ||
+            projection.SourceVersion != previousSourceVersion ||
+            projection.DetailsVersion != previousDetailsVersion;
+        changed |= await this.ApplyInventoryUnitAsync(
             room.ScopeId,
             room.PropertyId,
             room.RoomId,
@@ -81,9 +98,12 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             room.Status == RoomStatus.Active,
             room.SourceVersion,
             cancellationToken).ConfigureAwait(false);
+        return changed;
     }
 
-    public async Task ApplyBedAsync(InventoryBedTopologyWriteModel bed, CancellationToken cancellationToken)
+    public async Task<bool> ApplyBedAsync(
+        InventoryBedTopologyWriteModel bed,
+        CancellationToken cancellationToken)
     {
         await this.AcquireTopologyLocksAsync(
             bed.ScopeId,
@@ -91,26 +111,36 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             bed.RoomId,
             bed.BedId,
             cancellationToken).ConfigureAwait(false);
-        await this.EnsurePropertyPlaceholderAsync(bed.ScopeId, bed.PropertyId, cancellationToken).ConfigureAwait(false);
-        await this.EnsureRoomPlaceholderAsync(
+        bool changed = await this.EnsurePropertyPlaceholderAsync(
+            bed.ScopeId,
+            bed.PropertyId,
+            cancellationToken).ConfigureAwait(false);
+        (InventoryRoomTopology _, bool roomCreated) = await this.EnsureRoomPlaceholderAsync(
             bed.ScopeId,
             bed.PropertyId,
             bed.RoomId,
             cancellationToken).ConfigureAwait(false);
+        changed |= roomCreated;
 
         InventoryBedTopology? projection = dbContext.BedTopology.Local
             .FirstOrDefault(item => item.Id == bed.BedId && item.ScopeId == bed.ScopeId) ??
             await dbContext.BedTopology
                 .FirstOrDefaultAsync(item => item.Id == bed.BedId, cancellationToken)
                 .ConfigureAwait(false);
-        if (projection is null)
+        bool created = projection is null;
+        if (created)
         {
             projection = InventoryBedTopology.Create(bed.BedId, bed.ScopeId, bed.PropertyId, bed.RoomId);
             dbContext.BedTopology.Add(projection);
         }
 
+        long previousSourceVersion = projection!.SourceVersion;
+        long previousDetailsVersion = projection.DetailsVersion;
         projection.Apply(bed.PropertyId, bed.RoomId, bed.Label, bed.Status, bed.BedSourceVersion);
-        await this.ApplyInventoryUnitAsync(
+        changed |= created ||
+            projection.SourceVersion != previousSourceVersion ||
+            projection.DetailsVersion != previousDetailsVersion;
+        changed |= await this.ApplyInventoryUnitAsync(
             bed.ScopeId,
             bed.PropertyId,
             bed.RoomId,
@@ -120,6 +150,7 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             bed.Status == BedStatus.Active,
             bed.BedSourceVersion,
             cancellationToken).ConfigureAwait(false);
+        return changed;
     }
 
     public async Task<InventoryRoomTopologySnapshot?> GetRoomAsync(
@@ -339,7 +370,7 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
         }
     }
 
-    private async Task EnsurePropertyPlaceholderAsync(
+    private async Task<bool> EnsurePropertyPlaceholderAsync(
         string scopeId,
         Guid propertyId,
         CancellationToken cancellationToken)
@@ -347,13 +378,14 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
         if (dbContext.PropertyTopology.Local.Any(item => item.Id == propertyId && item.ScopeId == scopeId) ||
             await dbContext.PropertyTopology.AnyAsync(item => item.Id == propertyId, cancellationToken).ConfigureAwait(false))
         {
-            return;
+            return false;
         }
 
         dbContext.PropertyTopology.Add(InventoryPropertyTopology.Create(propertyId, scopeId));
+        return true;
     }
 
-    private async Task<InventoryRoomTopology> EnsureRoomPlaceholderAsync(
+    private async Task<(InventoryRoomTopology Room, bool Created)> EnsureRoomPlaceholderAsync(
         string scopeId,
         Guid propertyId,
         Guid roomId,
@@ -364,15 +396,15 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             await dbContext.RoomTopology.FirstOrDefaultAsync(item => item.Id == roomId, cancellationToken).ConfigureAwait(false);
         if (room is not null)
         {
-            return room;
+            return (room, false);
         }
 
         room = InventoryRoomTopology.Create(roomId, scopeId, propertyId);
         dbContext.RoomTopology.Add(room);
-        return room;
+        return (room, true);
     }
 
-    private async Task ApplyInventoryUnitAsync(
+    private async Task<bool> ApplyInventoryUnitAsync(
         string scopeId,
         Guid propertyId,
         Guid roomId,
@@ -389,7 +421,8 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             await dbContext.InventoryUnits.FirstOrDefaultAsync(
                 item => item.Id == inventoryUnitId,
                 cancellationToken).ConfigureAwait(false);
-        if (unit is null)
+        bool created = unit is null;
+        if (created)
         {
             unit = kind == InventoryUnitKind.Room
                 ? InventoryUnit.CreateRoom(roomId, scopeId, propertyId)
@@ -397,6 +430,8 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             dbContext.InventoryUnits.Add(unit);
         }
 
+        long previousSourceVersion = unit!.SourceVersion;
+        long previousDetailsVersion = unit.DetailsVersion;
         unit.Apply(
             propertyId,
             roomId,
@@ -405,5 +440,8 @@ internal sealed class InventoryTopologyRepository(InventoryDbContext dbContext) 
             label,
             isTopologyActive,
             sourceVersion);
+        return created ||
+            unit.SourceVersion != previousSourceVersion ||
+            unit.DetailsVersion != previousDetailsVersion;
     }
 }

@@ -17,6 +17,15 @@ internal static class ManualInventoryBlockMappings
     public static ManualInventoryBlockGroupMutationReceiptDto ToMutationReceipt(
         this ManualInventoryBlockCreationResult result) => new(
         result.BlockGroupId,
-        result.Blocks.First().PropertyId,
-        result.Blocks.Count);
+        result.Group.PropertyId,
+        result.Blocks.Count,
+        ManualInventoryBlockGroupStatus.Active,
+        result.Group.Version,
+        result.Group.ReplacesGroupId,
+        ReleasedBlockCount: 0,
+        CreatedBlockCount: result.Blocks.Count,
+        TotalBlockCount: result.Group.InitialBlockCount,
+        ActiveBlockCount: result.Group.ActiveBlockCount,
+        AlreadyReleasedBlockCount: 0,
+        MembershipDigest: result.Group.MembershipDigest);
 }

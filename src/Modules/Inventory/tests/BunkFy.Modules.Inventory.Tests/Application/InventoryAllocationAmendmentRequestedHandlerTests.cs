@@ -43,12 +43,14 @@ public sealed class InventoryAllocationAmendmentRequestedHandlerTests
             retirementMutations,
             new FakeBedRetirementRepository(),
             availability,
+            new TestBusinessDateProvider(),
             new TestClock(),
             new TestIdGenerator());
         RoomRetirementCoordinator roomRetirements = new(
             retirementMutations,
             new FakeRoomRetirementRepository(),
             availability,
+            new TestBusinessDateProvider(),
             new TestClock(),
             new TestIdGenerator());
         InventoryAllocationAmendmentRequestedHandler handler = new(
@@ -181,12 +183,14 @@ public sealed class InventoryAllocationAmendmentRequestedHandlerTests
             retirementMutations,
             new FakeBedRetirementRepository(),
             availability,
+            new TestBusinessDateProvider(),
             new TestClock(),
             new TestIdGenerator());
         RoomRetirementCoordinator roomRetirements = new(
             retirementMutations,
             new FakeRoomRetirementRepository(),
             availability,
+            new TestBusinessDateProvider(),
             new TestClock(),
             new TestIdGenerator());
         return new(
@@ -488,6 +492,15 @@ public sealed class InventoryAllocationAmendmentRequestedHandlerTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class TestBusinessDateProvider : IInventoryBusinessDateProvider
+    {
+        public Task<DateOnly?> GetAsync(
+            Guid propertyId,
+            DateTimeOffset nowUtc,
+            CancellationToken cancellationToken) => Task.FromResult<DateOnly?>(
+                DateOnly.FromDateTime(nowUtc.UtcDateTime));
     }
 
     private sealed class TestIdGenerator : IIdGenerator

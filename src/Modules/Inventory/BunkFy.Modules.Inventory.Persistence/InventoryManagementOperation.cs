@@ -26,6 +26,15 @@ internal sealed class InventoryManagementOperation : IScopedEntity
         this.ResultAffectedBlockCount = record.ResultAffectedBlockCount;
         this.ResultVersion = record.ResultVersion;
         this.ResultTopologyChangeId = record.ResultTopologyChangeId;
+        this.ResultBlockGroupStatus = record.ResultBlockGroupStatus;
+        this.ResultPreviousBlockGroupId = record.ResultPreviousBlockGroupId;
+        this.ResultTotalBlockCount = record.ResultTotalBlockCount;
+        this.ResultActiveBlockCount = record.ResultActiveBlockCount;
+        this.ResultReleasedBlockCount = record.ResultReleasedBlockCount;
+        this.ResultAlreadyReleasedBlockCount =
+            record.ResultAlreadyReleasedBlockCount;
+        this.ResultCreatedBlockCount = record.ResultCreatedBlockCount;
+        this.ResultMembershipDigest = record.ResultMembershipDigest;
         this.CompletedAtUtc = record.CompletedAtUtc;
     }
 
@@ -44,6 +53,18 @@ internal sealed class InventoryManagementOperation : IScopedEntity
     public int? ResultAffectedBlockCount { get; private set; }
     public long ResultVersion { get; private set; }
     public Guid? ResultTopologyChangeId { get; private set; }
+    public ManualInventoryBlockGroupStatus? ResultBlockGroupStatus
+    {
+        get;
+        private set;
+    }
+    public Guid? ResultPreviousBlockGroupId { get; private set; }
+    public int? ResultTotalBlockCount { get; private set; }
+    public int? ResultActiveBlockCount { get; private set; }
+    public int? ResultReleasedBlockCount { get; private set; }
+    public int? ResultAlreadyReleasedBlockCount { get; private set; }
+    public int? ResultCreatedBlockCount { get; private set; }
+    public string? ResultMembershipDigest { get; private set; }
     public DateTimeOffset CompletedAtUtc { get; private set; }
 
     internal InventoryManagementOperationRecord ToRecord() => new(
@@ -62,5 +83,13 @@ internal sealed class InventoryManagementOperation : IScopedEntity
         this.ResultAffectedBlockCount,
         this.ResultVersion,
         this.CompletedAtUtc,
-        this.ResultTopologyChangeId);
+        this.ResultTopologyChangeId,
+        this.ResultBlockGroupStatus,
+        this.ResultPreviousBlockGroupId,
+        this.ResultTotalBlockCount,
+        this.ResultActiveBlockCount,
+        this.ResultReleasedBlockCount,
+        this.ResultAlreadyReleasedBlockCount,
+        this.ResultCreatedBlockCount,
+        this.ResultMembershipDigest);
 }

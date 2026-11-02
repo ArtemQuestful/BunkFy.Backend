@@ -8,6 +8,7 @@ using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Stations.Contracts;
 using BunkFy.Modules.Workspaces.Application.Authorization;
 using BunkFy.Modules.Workspaces.Application.Contributors;
 using BunkFy.Modules.Workspaces.Application.Handlers;
@@ -219,6 +220,12 @@ public static class DependencyInjection
         services.AddGmaAccessControlPermissionPolicies(GuestsModuleMetadata.Descriptor);
         services.AddGmaAccessControlPermissionPolicies(StaffModuleMetadata.Descriptor);
         services.AddGmaAccessControlPermissionPolicies(IngestionModuleMetadata.Descriptor);
+        // A worker may delegate a profile without hosting these modules. Use
+        // their declared scope policies, just as the API does, rather than the
+        // fallback exact-scope policy for an unregistered permission.
+        services.AddGmaAccessControlPermissionPolicies(StationsModuleMetadata.Descriptor);
+        services.AddGmaAccessControlPermissionPolicies(RetentionModuleMetadata.Descriptor);
+        services.AddGmaAccessControlPermissionPolicies(DataRightsModuleMetadata.Descriptor);
     }
 
     public static IServiceCollection AddWorkspacesTaskHandlers(this IServiceCollection services)

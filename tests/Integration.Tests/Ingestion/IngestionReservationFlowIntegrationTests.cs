@@ -58,7 +58,7 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
         await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bunkfy_ingestion_flow_tests")
             .Build();
-        await using IContainer minio = new ContainerBuilder("quay.io/minio/minio:latest")
+        await using IContainer minio = ProviderTestContainers.Minio()
             .WithEnvironment("MINIO_ROOT_USER", AccessKey)
             .WithEnvironment("MINIO_ROOT_PASSWORD", SecretKey)
             .WithPortBinding(9000, assignRandomHostPort: true)

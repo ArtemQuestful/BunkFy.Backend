@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 internal sealed class RoomInventoryConfigurationRepository(InventoryDbContext dbContext)
     : IRoomInventoryConfigurationRepository
 {
-    public async Task EnsureAsync(
+    public async Task<bool> EnsureAsync(
         string scopeId,
         Guid propertyId,
         Guid roomId,
@@ -17,12 +17,13 @@ internal sealed class RoomInventoryConfigurationRepository(InventoryDbContext db
         if (dbContext.RoomConfigurations.Local.Any(configuration => configuration.Id == roomId) ||
             await dbContext.RoomConfigurations.AnyAsync(configuration => configuration.Id == roomId, cancellationToken).ConfigureAwait(false))
         {
-            return;
+            return false;
         }
 
         RoomInventoryConfiguration configuration = RoomInventoryConfiguration
             .Create(roomId, scopeId, propertyId, createdAtUtc).Value;
         dbContext.RoomConfigurations.Add(configuration);
+        return true;
     }
 
     public Task<RoomInventoryConfiguration?> GetAsync(

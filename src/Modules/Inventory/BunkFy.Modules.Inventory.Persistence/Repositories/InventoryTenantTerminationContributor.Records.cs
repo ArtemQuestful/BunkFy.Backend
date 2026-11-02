@@ -34,6 +34,11 @@ internal sealed partial class InventoryTenantTerminationContributor
             sink,
             count,
             cancellationToken).ConfigureAwait(false);
+        count = await this.ExportManualBlockGroupsAsync(
+            tenantId,
+            sink,
+            count,
+            cancellationToken).ConfigureAwait(false);
         count = await this.ExportAllocationsAsync(
             tenantId,
             sink,
@@ -192,7 +197,15 @@ internal sealed partial class InventoryTenantTerminationContributor
                     operation.ResultAffectedBlockCount,
                     operation.ResultTopologyChangeId,
                     operation.ResultVersion,
-                    operation.CompletedAtUtc));
+                    operation.CompletedAtUtc,
+                    operation.ResultBlockGroupStatus,
+                    operation.ResultPreviousBlockGroupId,
+                    operation.ResultTotalBlockCount,
+                    operation.ResultActiveBlockCount,
+                    operation.ResultReleasedBlockCount,
+                    operation.ResultAlreadyReleasedBlockCount,
+                    operation.ResultCreatedBlockCount,
+                    operation.ResultMembershipDigest));
             await WriteAsync(
                 InventoryTenantTerminationMetadata
                     .ManagementOperationRecordType,
@@ -241,6 +254,62 @@ internal sealed partial class InventoryTenantTerminationContributor
                 InventoryTenantTerminationMetadata.ManualBlockRecordType,
                 block.Id,
                 block.Version,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        return count;
+    }
+
+    private async Task<long> ExportManualBlockGroupsAsync(
+        string tenantId,
+        IDataRightsExportSink sink,
+        long count,
+        CancellationToken cancellationToken)
+    {
+        await foreach (ManualInventoryBlockGroup group in
+            dbContext.ManualBlockGroups
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.PropertyId)
+                .ThenBy(item => item.Id)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            InventoryManualBlockGroupTenantExport record = new(
+                group.ScopeId,
+                group.Id,
+                group.PropertyId,
+                new InventoryManualBlockGroupTenantExportState(
+                    group.TargetKind,
+                    group.BuildingLabel,
+                    group.FloorLabel,
+                    group.RoomId,
+                    group.InventoryUnitId,
+                    group.Arrival,
+                    group.Departure,
+                    group.SelectionDigest,
+                    group.MembershipDigest,
+                    group.MembershipDigestVersion,
+                    group.InitialBlockCount,
+                    group.ActiveBlockCount,
+                    group.State,
+                    group.Version,
+                    group.ReplacesGroupId,
+                    group.CreatedAtUtc,
+                    group.UpdatedAtUtc,
+                    group.ReleasedAtUtc),
+                group.Reason,
+                new InventoryManualBlockGroupActorTenantExport(
+                    group.CreatedByActorId,
+                    group.LastModifiedByActorId));
+            await WriteAsync(
+                InventoryTenantTerminationMetadata.ManualBlockGroupRecordType,
+                group.Id,
+                group.Version,
                 record,
                 sink,
                 cancellationToken).ConfigureAwait(false);

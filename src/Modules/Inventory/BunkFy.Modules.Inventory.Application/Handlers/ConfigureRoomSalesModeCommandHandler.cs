@@ -17,6 +17,8 @@ internal sealed class ConfigureRoomSalesModeCommandHandler(
     IInventoryTopologyRepository topologyRepository,
     IRoomInventoryConfigurationRepository configurationRepository,
     IInventoryAvailabilityRepository availability,
+    IInventoryAvailabilitySelectionFence selectionFence,
+    IInventoryBusinessDateProvider businessDates,
     ISystemClock clock,
     IIdGenerator idGenerator)
     : ICommandHandler<ConfigureRoomSalesModeCommand, RoomInventoryMutationReceiptDto>
@@ -49,6 +51,8 @@ internal sealed class ConfigureRoomSalesModeCommandHandler(
                 command.RoomId,
                 command.ExpectedVersion,
                 command.SalesMode);
+        await selectionFence.AcquireAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         await mutations.AcquireRoomAsync(command.RoomId, cancellationToken)
             .ConfigureAwait(false);
         InventoryManagementReplayDecision<RoomInventoryMutationReceiptDto>
@@ -103,8 +107,17 @@ internal sealed class ConfigureRoomSalesModeCommandHandler(
 
         if (evaluation.Value == RoomSalesModeConfigurationOutcome.Changed)
         {
+            DateOnly? businessDate = await businessDates.GetAsync(
+                command.PropertyId,
+                clock.UtcNow,
+                cancellationToken).ConfigureAwait(false);
+            if (!businessDate.HasValue)
+            {
+                return Result.Failure<RoomInventoryMutationReceiptDto>(InventoryApplicationErrors.PropertyNotFound);
+            }
+
             RoomInventoryImpactSnapshot? impact = await availability
-                .GetRoomImpactAsync(command.PropertyId, command.RoomId, cancellationToken)
+                .GetRoomImpactAsync(command.PropertyId, command.RoomId, businessDate.Value, cancellationToken)
                 .ConfigureAwait(false);
             if (impact?.PreventsSalesModeChange == true)
             {
@@ -124,6 +137,12 @@ internal sealed class ConfigureRoomSalesModeCommandHandler(
         if (result.IsFailure)
         {
             return Result.Failure<RoomInventoryMutationReceiptDto>(result.Error);
+        }
+
+        if (evaluation.Value == RoomSalesModeConfigurationOutcome.Changed)
+        {
+            await selectionFence.AdvanceAsync(command.PropertyId, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         RoomInventoryMutationReceiptDto receipt = await journal.RecordRoomAsync(

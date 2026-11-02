@@ -36,7 +36,16 @@ public static class DependencyInjection
         builder.Services.TryAddScoped<IInventoryReadRepository, InventoryReadRepository>();
         builder.Services.TryAddScoped<BunkFy.Modules.Inventory.Contracts.Stations.IStationInventoryLabelReader, StationInventoryLabelReader>();
         builder.Services.TryAddScoped<IInventoryRetirementContextReadRepository, InventoryRetirementContextReadRepository>();
+        builder.Services.TryAddScoped<
+            IInventoryBusinessDateProvider,
+            InventoryBusinessDateProvider>();
         builder.Services.TryAddScoped<IInventoryAvailabilityRepository, InventoryAvailabilityRepository>();
+        builder.Services.TryAddScoped<
+            IInventoryAvailabilitySelectionFence,
+            InventoryAvailabilitySelectionFence>();
+        builder.Services.TryAddScoped<
+            IManualInventoryBlockGroupRepository,
+            ManualInventoryBlockGroupRepository>();
         builder.Services.TryAddScoped<IManualInventoryBlockRepository, ManualInventoryBlockRepository>();
         builder.Services.TryAddScoped<
             IInventoryManagementOperationRepository,
@@ -79,7 +88,13 @@ public static class DependencyInjection
                 InventoryTenantTerminationContributor>());
         builder.Services.TryAddEnumerable(ServiceDescriptor.Scoped(
             typeof(ICommandPipelineBehavior<,>),
+            typeof(InventoryPersistenceRetryBehavior<,>)));
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Scoped(
+            typeof(ICommandPipelineBehavior<,>),
             typeof(InventoryPersistenceAdmissionBehavior<,>)));
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Scoped(
+            typeof(IQueryPipelineBehavior<,>),
+            typeof(InventoryRepeatableReadQueryBehavior<,>)));
         builder.Services.MoveCommandUnitOfWorkBehaviorToEnd();
         builder.Services.TryAddScoped<IBedRetirementRepository, BedRetirementRepository>();
         builder.Services.TryAddScoped<IRoomRetirementRepository, RoomRetirementRepository>();

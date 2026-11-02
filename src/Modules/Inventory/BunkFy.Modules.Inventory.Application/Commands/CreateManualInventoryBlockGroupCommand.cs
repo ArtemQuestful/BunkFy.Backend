@@ -10,5 +10,8 @@ public sealed record CreateManualInventoryBlockGroupCommand(
     DateOnly Arrival,
     DateOnly Departure,
     string Reason,
+    string ExpectedSelectionDigest,
+    int ExpectedAffectedBlockCount,
+    bool Confirmed,
     string? ActorId = null)
     : ITransactionalCommand<ManualInventoryBlockGroupMutationReceiptDto>;

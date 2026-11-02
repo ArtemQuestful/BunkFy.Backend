@@ -8,11 +8,13 @@ using BunkFy.Modules.Inventory.Application.Commands;
 using BunkFy.Modules.Inventory.Application.Ports;
 using BunkFy.Modules.Inventory.Contracts;
 using BunkFy.Modules.Inventory.Domain.Aggregates;
+using BunkFy.Modules.Inventory.Domain.Errors;
 
 internal sealed class ReleaseManualInventoryBlockCommandHandler(
     InventoryManagementMutationCoordinator mutations,
     InventoryManagementOperationJournal journal,
     IManualInventoryBlockRepository blocks,
+    IManualInventoryBlockGroupRepository groups,
     IInventoryAvailabilityRepository availability,
     InventoryRetirementCoordinator retirements,
     ISystemClock clock,
@@ -53,6 +55,12 @@ internal sealed class ReleaseManualInventoryBlockCommandHandler(
             return replay.ToResult();
         }
 
+        if (!ManualInventoryBlockGroup.IsValidActorId(command.ActorId))
+        {
+            return Result.Failure<ManualInventoryBlockMutationReceiptDto>(
+                InventoryDomainErrors.BlockGroupActorInvalid);
+        }
+
         ManualInventoryBlockIdentity? identity = await blocks
             .GetIdentityAsync(
                 command.PropertyId,
@@ -77,6 +85,38 @@ internal sealed class ReleaseManualInventoryBlockCommandHandler(
             return Result.Failure<ManualInventoryBlockMutationReceiptDto>(InventoryApplicationErrors.BlockNotFound);
         }
 
+        ManualInventoryBlockGroup? group = await groups.GetAsync(
+            command.PropertyId,
+            identity.BlockGroupId,
+            cancellationToken).ConfigureAwait(false);
+        if (group is null || group.Id != block.BlockGroupId ||
+            group.PropertyId != block.PropertyId)
+        {
+            throw new InvalidDataException(
+                "A manual Inventory block references a missing or mismatched parent group.");
+        }
+
+        if (block.Status != ManualInventoryBlockState.Active ||
+            group.State is ManualInventoryBlockGroupState.Released or ManualInventoryBlockGroupState.Replaced ||
+            group.ActiveBlockCount <= 0)
+        {
+            return Result.Failure<ManualInventoryBlockMutationReceiptDto>(
+                InventoryApplicationErrors.BlockAlreadyReleased);
+        }
+
+
+        IReadOnlyCollection<ManualInventoryBlock> activeGroupBlocks = await blocks.GetActiveGroupAsync(
+            command.PropertyId,
+            group.Id,
+            cancellationToken).ConfigureAwait(false);
+        if (activeGroupBlocks.Count != group.ActiveBlockCount ||
+            activeGroupBlocks.Count == 0 ||
+            !activeGroupBlocks.Any(active => active.Id == block.Id))
+        {
+            throw new InvalidDataException(
+                "A manual Inventory block group disagrees with its active child rows.");
+        }
+
         DateTimeOffset nowUtc = clock.UtcNow;
         Result released = block.Release(
             command.ExpectedVersion,
@@ -86,6 +126,13 @@ internal sealed class ReleaseManualInventoryBlockCommandHandler(
         if (released.IsFailure)
         {
             return Result.Failure<ManualInventoryBlockMutationReceiptDto>(released.Error);
+        }
+
+        Result parentReleased = group.RecordMemberRelease(nowUtc, command.ActorId);
+        if (parentReleased.IsFailure)
+        {
+            return Result.Failure<ManualInventoryBlockMutationReceiptDto>(
+                parentReleased.Error);
         }
 
         await availability.TouchUnitsAsync(

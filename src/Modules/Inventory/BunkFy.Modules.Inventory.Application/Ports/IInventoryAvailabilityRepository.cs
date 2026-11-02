@@ -21,15 +21,24 @@ public interface IInventoryAvailabilityRepository
     Task<RoomInventoryImpactSnapshot?> GetRoomImpactAsync(
         Guid propertyId,
         Guid roomId,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken) => throw new NotSupportedException(
+            "Call the property-business-date-aware room impact overload.");
 
     Task<RoomInventoryImpactSnapshot?> GetRoomImpactAsync(
         Guid propertyId,
         Guid roomId,
+        DateOnly queryDate,
+        CancellationToken cancellationToken) =>
+        this.GetRoomImpactAsync(propertyId, roomId, cancellationToken);
+
+    Task<RoomInventoryImpactSnapshot?> GetRoomImpactAsync(
+        Guid propertyId,
+        Guid roomId,
+        DateOnly queryDate,
         Guid? excludedAllocationId,
         IReadOnlyCollection<Guid> excludedBlockIds,
         CancellationToken cancellationToken) =>
-        this.GetRoomImpactAsync(propertyId, roomId, cancellationToken);
+        this.GetRoomImpactAsync(propertyId, roomId, queryDate, cancellationToken);
 
     Task<BedRetirementImpactSnapshot?> GetBedRetirementImpactAsync(
         Guid propertyId,
@@ -37,7 +46,23 @@ public interface IInventoryAvailabilityRepository
         Guid bedId,
         Guid? excludedAllocationId,
         IReadOnlyCollection<Guid> excludedBlockIds,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken) => throw new NotSupportedException(
+            "Call the property-business-date-aware bed impact overload.");
+
+    Task<BedRetirementImpactSnapshot?> GetBedRetirementImpactAsync(
+        Guid propertyId,
+        Guid roomId,
+        Guid bedId,
+        DateOnly queryDate,
+        Guid? excludedAllocationId,
+        IReadOnlyCollection<Guid> excludedBlockIds,
+        CancellationToken cancellationToken) => this.GetBedRetirementImpactAsync(
+            propertyId,
+            roomId,
+            bedId,
+            excludedAllocationId,
+            excludedBlockIds,
+            cancellationToken);
 
     Task TouchUnitsAsync(
         Guid propertyId,

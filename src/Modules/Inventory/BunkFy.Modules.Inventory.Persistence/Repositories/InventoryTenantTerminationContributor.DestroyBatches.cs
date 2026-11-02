@@ -75,6 +75,11 @@ internal sealed partial class InventoryTenantTerminationContributor
                     dbContext.ManualBlocks,
                     block => block.Id,
                     cancellationToken),
+            InventoryTenantDestroyStage.ManualBlockGroups =>
+                this.RemoveManualBlockGroupBatchAsync(
+                    operation,
+                    tenantId,
+                    cancellationToken),
             InventoryTenantDestroyStage.AllocationOperationLocks =>
                 this.RemoveGuidBatchAsync(
                     operation,
@@ -147,6 +152,25 @@ internal sealed partial class InventoryTenantTerminationContributor
                 "The Inventory tenant destruction stage is invalid.")
         };
 
+    private Task<bool> RemoveManualBlockGroupBatchAsync(
+        InventoryTenantDestroyOperation operation,
+        string tenantId,
+        CancellationToken cancellationToken) =>
+        this.RemoveBatchAsync(
+            operation,
+            dbContext.ManualBlockGroups
+                .Where(group =>
+                    group.ScopeId == tenantId &&
+                    !dbContext.ManualBlockGroups.Any(successor =>
+                        successor.ScopeId == tenantId &&
+                        successor.PropertyId == group.PropertyId &&
+                        successor.ReplacesGroupId == group.Id))
+                .OrderBy(group => group.PropertyId)
+                .ThenBy(group => group.Id),
+            group => $"{group.PropertyId:N}|{group.Id:N}",
+            completeWhenExhausted: false,
+            cancellationToken);
+
     private Task<bool> RemoveGuidBatchAsync<TEntity>(
         InventoryTenantDestroyOperation operation,
         IQueryable<TEntity> source,
@@ -162,10 +186,23 @@ internal sealed partial class InventoryTenantTerminationContributor
             cancellationToken);
     }
 
+    private Task<bool> RemoveBatchAsync<TEntity>(
+        InventoryTenantDestroyOperation operation,
+        IQueryable<TEntity> source,
+        Func<TEntity, string> keySelector,
+        CancellationToken cancellationToken)
+        where TEntity : class => this.RemoveBatchAsync(
+            operation,
+            source,
+            keySelector,
+            completeWhenExhausted: true,
+            cancellationToken);
+
     private async Task<bool> RemoveBatchAsync<TEntity>(
         InventoryTenantDestroyOperation operation,
         IQueryable<TEntity> source,
         Func<TEntity, string> keySelector,
+        bool completeWhenExhausted,
         CancellationToken cancellationToken)
         where TEntity : class
     {
@@ -185,7 +222,7 @@ internal sealed partial class InventoryTenantTerminationContributor
         EnsureBatchRecorded(
             operation,
             keys,
-            loaded.Length <= operation.BatchSize,
+            completeWhenExhausted && loaded.Length <= operation.BatchSize,
             clock.UtcNow);
         return true;
     }
@@ -213,6 +250,9 @@ internal sealed partial class InventoryTenantTerminationContributor
             .ConfigureAwait(false) ||
         await dbContext.ManualBlocks.AnyAsync(cancellationToken)
             .ConfigureAwait(false) ||
+        await dbContext.ManualBlockGroups.AnyAsync(
+            group => group.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
         await dbContext.AllocationOperationLocks.AnyAsync(cancellationToken)
             .ConfigureAwait(false) ||
         await dbContext.BedRetirements.AnyAsync(cancellationToken)

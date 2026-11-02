@@ -55,6 +55,100 @@ internal sealed class ManualInventoryBlockRepository(InventoryDbContext dbContex
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
 
+    public async Task<IReadOnlyCollection<Guid>> GetActiveGroupIdsAsync(
+        Guid propertyId,
+        Guid blockGroupId,
+        CancellationToken cancellationToken) =>
+        await dbContext.ManualBlocks
+            .AsNoTracking()
+            .Where(block =>
+                block.PropertyId == propertyId &&
+                block.BlockGroupId == blockGroupId &&
+                block.Status == ManualInventoryBlockState.Active)
+            .OrderBy(block => block.InventoryUnitId)
+            .ThenBy(block => block.Id)
+            .Select(block => block.Id)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<ManualInventoryBlockGroupMemberListResponse>
+        ListGroupMembersAsync(
+            Guid propertyId,
+            Guid blockGroupId,
+            ManualInventoryBlockStatus? status,
+            string? cursor,
+            int pageSize,
+            CancellationToken cancellationToken)
+    {
+        int normalizedPageSize = Math.Clamp(
+            pageSize,
+            1,
+            PageRequest.MaxPageSize);
+        IQueryable<ManualInventoryBlock> query = dbContext.ManualBlocks
+            .AsNoTracking()
+            .Where(block =>
+                block.PropertyId == propertyId &&
+                block.BlockGroupId == blockGroupId);
+        if (status.HasValue)
+        {
+            ManualInventoryBlockState state = status.Value switch
+            {
+                ManualInventoryBlockStatus.Active =>
+                    ManualInventoryBlockState.Active,
+                ManualInventoryBlockStatus.Released =>
+                    ManualInventoryBlockState.Released,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(status),
+                    "The manual block status is invalid.")
+            };
+            query = query.Where(block => block.Status == state);
+        }
+
+        if (cursor is not null)
+        {
+            Guid afterBlockId = ManualInventoryBlockGroupCursor.DecodeMember(
+                cursor,
+                propertyId,
+                blockGroupId,
+                status);
+            query = query.Where(block => block.Id.CompareTo(afterBlockId) > 0);
+        }
+
+        ManualInventoryBlockDto[] page = await query
+            .OrderBy(block => block.Id)
+            .Take(normalizedPageSize + 1)
+            .Select(block => new ManualInventoryBlockDto(
+                block.Id,
+                block.BlockGroupId,
+                block.PropertyId,
+                block.InventoryUnitId,
+                block.Arrival,
+                block.Departure,
+                block.Reason,
+                block.Status == ManualInventoryBlockState.Active
+                    ? ManualInventoryBlockStatus.Active
+                    : ManualInventoryBlockStatus.Released,
+                block.Version,
+                block.CreatedAtUtc,
+                block.ReleasedAtUtc))
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        bool hasMore = page.Length > normalizedPageSize;
+        if (hasMore)
+        {
+            page = page[..normalizedPageSize];
+        }
+
+        string? nextCursor = hasMore && page.Length > 0
+            ? ManualInventoryBlockGroupCursor.EncodeMember(
+                propertyId,
+                blockGroupId,
+                status,
+                page[^1].BlockId)
+            : null;
+        return new(page, nextCursor, normalizedPageSize);
+    }
+
     public async Task<ManualInventoryBlockListResponse> ListAsync(
         Guid propertyId,
         Guid? inventoryUnitId,

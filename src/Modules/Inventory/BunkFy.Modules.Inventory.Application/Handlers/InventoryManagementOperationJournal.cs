@@ -60,6 +60,23 @@ internal sealed class InventoryManagementOperationJournal(
             cancellationToken);
 
     public Task<InventoryManagementReplayDecision<
+        ManualInventoryBlockGroupMutationReceiptDto>>
+        InspectBlockGroupCreateV2Async(
+        Guid propertyId,
+        Guid operationId,
+        string fingerprint,
+        CancellationToken cancellationToken) => this.InspectAsync(
+            propertyId,
+            InventoryManagementResourceKind.Property,
+            propertyId,
+            operationId,
+            InventoryManagementMutationKind.ManualBlockGroupCreateV2,
+            0,
+            fingerprint,
+            static operation => operation.ToBlockGroupReceipt(),
+            cancellationToken);
+
+    public Task<InventoryManagementReplayDecision<
         ManualInventoryBlockMutationReceiptDto>> InspectBlockReleaseAsync(
         Guid propertyId,
         Guid blockId,
@@ -91,6 +108,42 @@ internal sealed class InventoryManagementOperationJournal(
             operationId,
             InventoryManagementMutationKind.ManualBlockGroupRelease,
             0,
+            fingerprint,
+            static operation => operation.ToBlockGroupReceipt(),
+            cancellationToken);
+
+    public Task<InventoryManagementReplayDecision<
+        ManualInventoryBlockGroupMutationReceiptDto>> InspectBlockGroupReplaceAsync(
+        Guid propertyId,
+        Guid blockGroupId,
+        Guid operationId,
+        long expectedVersion,
+        string fingerprint,
+        CancellationToken cancellationToken) => this.InspectAsync(
+            propertyId,
+            InventoryManagementResourceKind.BlockGroup,
+            blockGroupId,
+            operationId,
+            InventoryManagementMutationKind.ManualBlockGroupReplace,
+            expectedVersion,
+            fingerprint,
+            static operation => operation.ToBlockGroupReceipt(),
+            cancellationToken);
+
+    public Task<InventoryManagementReplayDecision<
+        ManualInventoryBlockGroupMutationReceiptDto>> InspectBlockGroupReleaseV2Async(
+        Guid propertyId,
+        Guid blockGroupId,
+        Guid operationId,
+        long expectedVersion,
+        string fingerprint,
+        CancellationToken cancellationToken) => this.InspectAsync(
+            propertyId,
+            InventoryManagementResourceKind.BlockGroup,
+            blockGroupId,
+            operationId,
+            InventoryManagementMutationKind.ManualBlockGroupReleaseV2,
+            expectedVersion,
             fingerprint,
             static operation => operation.ToBlockGroupReceipt(),
             cancellationToken);
@@ -469,6 +522,23 @@ internal sealed class InventoryManagementOperationJournal(
         return receipt;
     }
 
+    public Task<ManualInventoryBlockGroupMutationReceiptDto> RecordBlockGroupCreateV2Async(
+        ManualInventoryBlockCreationResult result,
+        Guid operationId,
+        string fingerprint,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken) => this.RecordBlockGroupV2Async(
+            result.Group.ScopeId,
+            InventoryManagementResourceKind.Property,
+            result.Group.PropertyId,
+            InventoryManagementMutationKind.ManualBlockGroupCreateV2,
+            expectedVersion: 0,
+            result.ToMutationReceipt(),
+            operationId,
+            fingerprint,
+            completedAtUtc,
+            cancellationToken);
+
     public async Task<ManualInventoryBlockMutationReceiptDto>
         RecordBlockReleaseAsync(
         ManualInventoryBlock block,
@@ -512,6 +582,72 @@ internal sealed class InventoryManagementOperationJournal(
                 InventoryManagementResourceKind.BlockGroup,
                 receipt.BlockGroupId,
                 InventoryManagementMutationKind.ManualBlockGroupRelease,
+                fingerprint,
+                receipt,
+                completedAtUtc),
+            cancellationToken).ConfigureAwait(false);
+        return receipt;
+    }
+
+    public Task<ManualInventoryBlockGroupMutationReceiptDto> RecordBlockGroupReplaceAsync(
+        string scopeId,
+        Guid requestedBlockGroupId,
+        long expectedVersion,
+        ManualInventoryBlockGroupMutationReceiptDto receipt,
+        Guid operationId,
+        string fingerprint,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken) => this.RecordBlockGroupV2Async(
+            scopeId,
+            InventoryManagementResourceKind.BlockGroup,
+            requestedBlockGroupId,
+            InventoryManagementMutationKind.ManualBlockGroupReplace,
+            expectedVersion,
+            receipt,
+            operationId,
+            fingerprint,
+            completedAtUtc,
+            cancellationToken);
+
+    public Task<ManualInventoryBlockGroupMutationReceiptDto> RecordBlockGroupReleaseV2Async(
+        string scopeId,
+        long expectedVersion,
+        ManualInventoryBlockGroupMutationReceiptDto receipt,
+        Guid operationId,
+        string fingerprint,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken) => this.RecordBlockGroupV2Async(
+            scopeId,
+            InventoryManagementResourceKind.BlockGroup,
+            receipt.BlockGroupId,
+            InventoryManagementMutationKind.ManualBlockGroupReleaseV2,
+            expectedVersion,
+            receipt,
+            operationId,
+            fingerprint,
+            completedAtUtc,
+            cancellationToken);
+
+    private async Task<ManualInventoryBlockGroupMutationReceiptDto> RecordBlockGroupV2Async(
+        string scopeId,
+        InventoryManagementResourceKind resourceKind,
+        Guid resourceId,
+        InventoryManagementMutationKind kind,
+        long expectedVersion,
+        ManualInventoryBlockGroupMutationReceiptDto receipt,
+        Guid operationId,
+        string fingerprint,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        await operations.AddAsync(
+            InventoryManagementOperationRecord.ForBlockGroupV2(
+                operationId,
+                scopeId,
+                resourceKind,
+                resourceId,
+                kind,
+                expectedVersion,
                 fingerprint,
                 receipt,
                 completedAtUtc),

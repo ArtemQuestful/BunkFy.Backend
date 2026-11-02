@@ -15,6 +15,9 @@ internal sealed class InventoryPropertyTopologyConfiguration : IEntityTypeConfig
         builder.Property(property => property.Code).HasMaxLength(PropertiesContractLimits.PropertyCodeMaxLength).IsRequired();
         builder.Property(property => property.TimeZoneId).HasMaxLength(PropertiesContractLimits.TimeZoneIdMaxLength).IsRequired();
         builder.Property(property => property.Status).HasConversion<int>();
+        builder.Property(property => property.AvailabilitySelectionVersion)
+            .HasDefaultValue(1L)
+            .IsConcurrencyToken();
         builder.Property(property => property.ProjectionOrdinal).ValueGeneratedOnAdd();
         builder.HasIndex(property => new { property.ScopeId, property.Code });
         builder.HasIndex(property => property.ProjectionOrdinal).IsUnique();
