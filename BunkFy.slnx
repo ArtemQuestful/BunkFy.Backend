@@ -294,6 +294,7 @@
   </Folder>
   <Folder Name="/eng/">
     <File Path="eng/add-migration.ps1" />
+    <File Path="eng/build-provider-images.ps1" />
     <File Path="eng/build.ps1" />
     <File Path="eng/check-migrations.ps1" />
     <File Path="eng/check-repository-release.ps1" />
@@ -320,6 +321,9 @@
     <File Path="eng/test-ingestion-runtime.ps1" />
     <File Path="eng/update-solutions.ps1" />
     <File Path="eng/verify.ps1" />
+  </Folder>
+  <Folder Name="/eng/fixtures/minio/">
+    <File Path="eng/fixtures/minio/README.md" />
   </Folder>
   <Folder Name="/gma/extensions/src/">
     <Project Path="gma/extensions/src/Gma.Extensions.Auth.Notifications/Gma.Extensions.Auth.Notifications.csproj" />

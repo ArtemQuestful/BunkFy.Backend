@@ -135,7 +135,7 @@ public sealed class FileStorageIntegrationTests
         const string secretKey = "minioadmin";
         string bucketName = $"gma-file-tests-{Guid.NewGuid():N}";
 
-        await using IContainer minio = new ContainerBuilder("quay.io/minio/minio:latest")
+        await using IContainer minio = ProviderTestContainers.Minio()
             .WithEnvironment("MINIO_ROOT_USER", accessKey)
             .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
             .WithPortBinding(9000, assignRandomHostPort: true)

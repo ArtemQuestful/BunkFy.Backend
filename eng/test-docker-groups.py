@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PurePosixPath
 import subprocess
 import tempfile
+import uuid
 import xml.etree.ElementTree as ET
 
 
@@ -68,11 +69,24 @@ def run_group(repository, name, projects):
         results = repository / 'artifacts/test-results/docker' / name
         results.mkdir(parents=True, exist_ok=True)
         print(json.dumps({'group': name, 'projects': projects}), flush=True)
+        if name == 'product-integration':
+            subprocess.run(['pwsh', '-NoProfile', '-File', str(repository / 'eng/build-provider-images.ps1')],
+                           cwd=repository, check=True)
         subprocess.run(['dotnet', 'restore', str(solution)], cwd=repository, check=True)
         subprocess.run(['dotnet', 'build', str(solution), '--no-restore', '-m:1', '-nr:false'],
                        cwd=repository, check=True)
         environment = os.environ.copy()
         environment['GMA_REQUIRE_DOCKER_TESTS'] = 'true'
+        if name == 'product-integration':
+            environment['BFX_CMP_VARIANT'] = 'candidate'
+            environment['BFX_CMP_EVIDENCE_DIR'] = str(results / 'ordinary' / uuid.uuid4().hex / 'candidate')
+            source_head = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'], cwd=repository, check=True,
+                capture_output=True, text=True).stdout.strip()
+            source_changes = subprocess.run(['git', 'status', '--porcelain'], cwd=repository,
+                                            check=True, capture_output=True, text=True).stdout.strip()
+            environment['BFX_CMP_BUILD_FINGERPRINT'] = (
+                'working-tree-based-on:' + source_head if source_changes else source_head)
         failed = []
         for project in projects:
             result = subprocess.run(

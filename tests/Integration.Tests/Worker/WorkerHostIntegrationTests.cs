@@ -577,7 +577,7 @@ public sealed class WorkerHostIntegrationTests
         await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bunkfy_file_drop_worker_tests")
             .Build();
-        await using IContainer minio = new ContainerBuilder("quay.io/minio/minio:latest")
+        await using IContainer minio = ProviderTestContainers.Minio()
             .WithEnvironment("MINIO_ROOT_USER", "minioadmin")
             .WithEnvironment("MINIO_ROOT_PASSWORD", "minioadmin")
             .WithPortBinding(9000, assignRandomHostPort: true)

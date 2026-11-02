@@ -9,6 +9,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using BunkFy.Modules.Inventory.Contracts;
+using BunkFy.Modules.Inventory.Application.Ports;
 using BunkFy.Modules.Inventory.Domain.Aggregates;
 using BunkFy.Modules.Inventory.Persistence;
 using BunkFy.Modules.Properties.Contracts;
@@ -505,6 +506,11 @@ public sealed class StationHttpFirstJobIntegrationTests
         const string roomName = "Synthetic recovery room";
         DateOnly arrival = new(2026, 9, 20);
         InventoryDbContext inventory = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        await using var inventoryTransaction = await inventory.Database.BeginTransactionAsync();
+        var selectionFence = scope.ServiceProvider.GetRequiredService<IInventoryAvailabilitySelectionFence>();
+        await selectionFence.AcquireAsync(propertyId, CancellationToken.None);
+        await selectionFence.AdvanceAsync(propertyId, CancellationToken.None);
+        await inventory.SaveChangesAsync();
         InventoryRoomTopology room = InventoryRoomTopology.Create(roomId, Tenant, propertyId);
         room.Apply(propertyId, roomName, null, null, RoomStatus.Active, 1);
         InventoryUnit unit = InventoryUnit.CreateRoom(roomId, Tenant, propertyId);
@@ -514,6 +520,7 @@ public sealed class StationHttpFirstJobIntegrationTests
         configuration.ClearDomainEvents();
         inventory.AddRange(room, unit, configuration);
         await inventory.SaveChangesAsync();
+        await inventoryTransaction.CommitAsync();
 
         Reservation reservation = Reservation.Create(Guid.NewGuid(), Tenant, propertyId, Guid.NewGuid(),
             arrival, arrival.AddDays(3), [roomId], "Synthetic recovery guest", "recovery@example.test", null,
@@ -613,6 +620,16 @@ public sealed class StationHttpFirstJobIntegrationTests
                 "station", "America/New_York", PropertyStatus.Active, 1), token);
             await CountryPolicyIntegrationTestData.ApplyActivationAsync(scope.ServiceProvider,
                 ReservationsModuleMetadata.Name, Tenant, device.Property, 2, token);
+        });
+        var inventory = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(inventory, async token =>
+        {
+            IntegrationEventSubscription subscription = scope.ServiceProvider
+                .GetRequiredService<IIntegrationEventSubscriptionRegistry>().Subscriptions.Single(item =>
+                    item.ConsumerModule == InventoryModuleMetadata.Name && item.EventType == typeof(PropertyCreatedIntegrationEvent));
+            var handler = (IIntegrationEventHandler<PropertyCreatedIntegrationEvent>)scope.ServiceProvider.GetRequiredService(subscription.HandlerType);
+            await handler.HandleAsync(new(Guid.NewGuid(), Tenant, now, device.Property, "Synthetic station property",
+                "station", "America/New_York", PropertyStatus.Active, 1), token);
         });
     }
 

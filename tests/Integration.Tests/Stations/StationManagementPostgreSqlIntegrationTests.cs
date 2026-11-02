@@ -726,8 +726,7 @@ public sealed class StationManagementPostgreSqlIntegrationTests
         await sp.GetRequiredService<AccessControlDbContext>().Database.MigrateAsync();
         var stations = sp.GetRequiredService<StationsDbContext>();
         await stations.Database.MigrateAsync();
-        Assert.Equal(4, (await stations.Database.GetAppliedMigrationsAsync()).Count());
-        Assert.False(stations.Database.HasPendingModelChanges());
+        await Integration.Tests.Support.StationMigrationTestData.AssertCurrentAsync(stations);
         Assert.Empty(await stations.Stations.ToArrayAsync());
     }
     private static Device Paired(Device device, StationPairingHandoff result)

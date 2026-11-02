@@ -45,7 +45,7 @@ public sealed class DataRightsProtectedExportIntegrationTests
                 .WithDatabase("bunkfy_data_rights_protected_export_tests")
                 .Build();
         await using IContainer minio =
-            new ContainerBuilder("quay.io/minio/minio:latest")
+            ProviderTestContainers.Minio()
                 .WithEnvironment("MINIO_ROOT_USER", accessKey)
                 .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
                 .WithPortBinding(9000, assignRandomHostPort: true)

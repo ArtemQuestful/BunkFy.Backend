@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.groups.outputs.matrix }}
+      control-sha: ${{ steps.baseline.outputs.sha }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -42,7 +43,22 @@ jobs:
         shell: bash
         run: |
           python3 eng/test-docker-groups.tests.py
+          python3 eng/compare-ordinary-behavior.tests.py
           echo "matrix=$(python3 eng/test-docker-groups.py --matrix)" >> "$GITHUB_OUTPUT"
+      - id: baseline
+        name: Resolve the live target branch for the control
+        shell: pwsh
+        env:
+          CONTROL_REF: ${{ github.base_ref || github.event.repository.default_branch }}
+        run: |
+          $controlRef = "refs/heads/$env:CONTROL_REF"
+          & git check-ref-format $controlRef
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid control branch.' }
+          $controlMatches = @(& git ls-remote --exit-code origin $controlRef)
+          if ($LASTEXITCODE -ne 0 -or $controlMatches.Count -ne 1) { throw 'Cannot resolve the live control branch.' }
+          $controlSha = ($controlMatches[0] -split '\s+')[0]
+          if ($controlSha -notmatch '^[a-f0-9]{40}$') { throw 'Invalid control source identity.' }
+          "sha=$controlSha" >> $env:GITHUB_OUTPUT
 
   provider-tests:
     needs: plan
@@ -76,18 +92,111 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bunkfy-provider-${{ matrix.group }}-${{ github.run_attempt }}
-          path: artifacts/test-results/docker
+          path: |
+            artifacts/test-results/docker
+            artifacts/provider-images
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Retain candidate ordinary behavior evidence
+        if: always() && matrix.group == 'product-integration'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bunkfy-ordinary-candidate-${{ github.run_attempt }}
+          path: artifacts/test-results/docker/product-integration/ordinary
+          if-no-files-found: error
+          retention-days: 30
+
+  ordinary-control:
+    needs: [plan, provider-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout the exact control source and its committed dependencies
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.plan.outputs.control-sha }}
+          path: control
+          submodules: recursive
+          token: ${{ secrets.GMA_CI_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.303
+      - shell: pwsh
+        working-directory: control
+        run: ./eng/gma-bootstrap.ps1 -Force
+      - name: Exercise the same ordinary contract on the actual control
+        working-directory: control
+        env:
+          BFX_CMP_VARIANT: control
+          BFX_CMP_BUILD_FINGERPRINT: ${{ needs.plan.outputs.control-sha }}
+          BFX_CMP_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/ordinary/control
+        run: >-
+          dotnet test tests/Integration.Tests/Integration.Tests.csproj -c Release
+          --filter 'Category=Docker&FullyQualifiedName~OrdinaryBehaviorComparisonIntegrationTests'
+          --logger 'trx;LogFileName=ordinary-control.trx'
+          --results-directory artifacts/test-results/ordinary-control -m:1 -nr:false
+      - name: Retain control evidence and test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bunkfy-ordinary-control-${{ github.run_attempt }}
+          path: |
+            artifacts/ordinary/control
+            control/artifacts/test-results/ordinary-control
+          if-no-files-found: error
+          retention-days: 30
+
+  ordinary-compare:
+    needs: [plan, provider-tests, ordinary-control]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bunkfy-ordinary-candidate-${{ github.run_attempt }}
+          path: artifacts/comparison/candidate
+          digest-mismatch: error
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bunkfy-ordinary-control-${{ github.run_attempt }}
+          path: artifacts/comparison/control
+          digest-mismatch: error
+      - name: Require exact canonical parity across all 26 operations
+        env:
+          CONTROL_FINGERPRINT: ${{ needs.plan.outputs.control-sha }}
+          CANDIDATE_FINGERPRINT: ${{ github.sha }}
+        run: >-
+          python3 eng/compare-ordinary-behavior.py
+          --control-directory artifacts/comparison/control
+          --candidate-directory artifacts/comparison/candidate
+          --control-fingerprint "$CONTROL_FINGERPRINT"
+          --candidate-fingerprint "$CANDIDATE_FINGERPRINT"
+          --output artifacts/comparison/report.json
+      - name: Retain the comparison report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bunkfy-ordinary-comparison-${{ github.run_attempt }}
+          path: artifacts/comparison/report.json
           if-no-files-found: ignore
           retention-days: 30
 
   docker:
     name: Docker integration tests
     if: always()
-    needs: [plan, provider-tests]
+    needs: [plan, provider-tests, ordinary-control, ordinary-compare]
     runs-on: ubuntu-latest
     steps:
       - name: Require every provider group
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           PROVIDER_RESULT: ${{ needs.provider-tests.result }}
-        run: test "$PLAN_RESULT" = success && test "$PROVIDER_RESULT" = success
+          CONTROL_RESULT: ${{ needs.ordinary-control.result }}
+          COMPARISON_RESULT: ${{ needs.ordinary-compare.result }}
+        run: >-
+          test "$PLAN_RESULT" = success && test "$PROVIDER_RESULT" = success &&
+          test "$CONTROL_RESULT" = success && test "$COMPARISON_RESULT" = success

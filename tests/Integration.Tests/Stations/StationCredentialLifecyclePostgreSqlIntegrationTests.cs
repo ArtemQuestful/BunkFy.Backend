@@ -81,8 +81,7 @@ public sealed class StationCredentialLifecyclePostgreSqlIntegrationTests
             await sp.GetRequiredService<AccessControlDbContext>().Database.MigrateAsync();
             var stations = sp.GetRequiredService<StationsDbContext>();
             await stations.Database.MigrateAsync();
-            Assert.Equal(4, (await stations.Database.GetAppliedMigrationsAsync()).Count());
-            Assert.False(stations.Database.HasPendingModelChanges());
+            await Integration.Tests.Support.StationMigrationTestData.AssertCurrentAsync(stations);
         }
         Guid accountA = Guid.NewGuid(), accountB = Guid.NewGuid();
         await SeedAccount(services, accountA);
