@@ -224,11 +224,12 @@ public static class MigrationsProductionAdmission
             "RollbackEvidenceReference",
             failures);
 
-        if (admission.ExistingHistoryDisposition !=
-            MigrationsExistingHistoryDisposition.ApplyCompatiblePrefix)
+        if (admission.ExistingHistoryDisposition is not (
+            MigrationsExistingHistoryDisposition.ApplyCompatiblePrefix or
+            MigrationsExistingHistoryDisposition.ApplyInventoryConvergenceV1))
         {
             failures.Add(
-                $"{MigrationsProductionAdmissionOptions.SectionName}:ExistingHistoryDisposition must be ApplyCompatiblePrefix for Production Apply.");
+                $"{MigrationsProductionAdmissionOptions.SectionName}:ExistingHistoryDisposition must be ApplyCompatiblePrefix or ApplyInventoryConvergenceV1 for Production Apply.");
         }
     }
 

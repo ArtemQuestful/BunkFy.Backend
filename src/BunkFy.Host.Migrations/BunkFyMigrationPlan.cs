@@ -12,7 +12,10 @@ public sealed record BunkFyMigrationModulePlan(
     string ModuleName,
     IReadOnlyList<string> TargetMigrations,
     IReadOnlyList<string> AppliedMigrations,
-    IReadOnlyList<string> PendingMigrations);
+    IReadOnlyList<string> PendingMigrations)
+{
+    public string? HistoryTransition { get; init; }
+}
 
 public sealed record BunkFyMigrationPlan(
     IReadOnlyList<BunkFyMigrationModulePlan> Modules,
@@ -24,9 +27,18 @@ public sealed record BunkFyMigrationPlan(
     int PendingMigrationCount)
 {
     public static BunkFyMigrationPlan Create(
-        IEnumerable<BunkFyMigrationHistory> histories)
+        IEnumerable<BunkFyMigrationHistory> histories) =>
+        Create(histories, MigrationsExistingHistoryDisposition.ApplyCompatiblePrefix);
+
+    public static BunkFyMigrationPlan Create(
+        IEnumerable<BunkFyMigrationHistory> histories,
+        MigrationsExistingHistoryDisposition disposition)
     {
         ArgumentNullException.ThrowIfNull(histories);
+        if (!Enum.IsDefined(disposition))
+        {
+            throw new InvalidOperationException("The migration history disposition is invalid.");
+        }
         BunkFyMigrationHistory[] materialized = [.. histories];
         if (materialized.Length == 0)
         {
@@ -41,8 +53,12 @@ public sealed record BunkFyMigrationPlan(
             ValidateHistory(history, moduleNames);
             string[] target = [.. history.TargetMigrations];
             string[] applied = [.. history.AppliedMigrations];
-            if (applied.Length > target.Length ||
-                !target.AsSpan(0, applied.Length).SequenceEqual(applied))
+            bool compatiblePrefix = applied.Length <= target.Length &&
+                target.AsSpan(0, applied.Length).SequenceEqual(applied);
+            bool inventoryTransition = !compatiblePrefix &&
+                disposition == MigrationsExistingHistoryDisposition.ApplyInventoryConvergenceV1 &&
+                InventoryConvergenceHistoryTransition.Matches(history);
+            if (!compatiblePrefix && !inventoryTransition)
             {
                 throw new InvalidOperationException(
                     $"Applied migration history for module '{history.ModuleName}' is not an exact prefix of the loaded target catalogue.");
@@ -52,7 +68,14 @@ public sealed record BunkFyMigrationPlan(
                 history.ModuleName,
                 target,
                 applied,
-                target[applied.Length..]));
+                inventoryTransition
+                    ? [InventoryConvergenceHistoryTransition.MigrationId]
+                    : target[applied.Length..])
+            {
+                HistoryTransition = inventoryTransition
+                    ? InventoryConvergenceHistoryTransition.Name
+                    : null
+            });
         }
 
         return new BunkFyMigrationPlan(

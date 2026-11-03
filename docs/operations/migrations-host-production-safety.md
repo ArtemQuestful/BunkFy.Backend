@@ -76,6 +76,46 @@ The release identity and database identity required for `Plan` remain required
 for `Apply`. Evidence references are identifiers, never credentials or evidence
 payloads.
 
+## Existing Inventory convergence history
+
+The published `20260812082324_AddInventoryManualBlockGroupConvergence`
+migration sorts before the two canonical Inventory integrity migrations dated
+21 August. A database that already applied the complete 15-migration Inventory
+catalogue from `315acadb49e4842ed63529a26bb47efb6643bfc9` consequently needs
+an explicit, qualified history transition. The ordinary exact-prefix mode
+refuses this shape before applying any module. Direct EF upgrade evidence
+alone does not qualify the application migration host.
+
+For this transition, select the following disposition for both `Plan` and
+`Apply` on the migration job:
+
+```text
+Migrations__ProductionAdmission__ExistingHistoryDisposition=ApplyInventoryConvergenceV1
+```
+
+The host recognizes only the exact canonical `inventory` module name, all 15
+published predecessor IDs in their original order, and the exact 16-ID target
+catalogue. Its pending plan contains only the convergence migration and reports
+`inventory-convergence-v1`. Missing or unknown history, another module, reordered
+IDs, or a different target catalogue still fail before mutation. The host does
+not edit, rename, delete, or synthesize any previously applied history record.
+
+Use the same immutable release and database target throughout the operation.
+Quiesce API, Worker, CLI and maintenance writers; rehearse against an isolated
+restored database and retain actual backup/restore and forward-recovery
+evidence. Production still requires every release, target, approval, backup and
+rollback admission value above. Selecting this disposition supplies no approval
+and changes no runtime-host configuration or access-profile assignment.
+
+After `Apply`, verify the target digest is unchanged, no migrations remain
+pending, old history records and retained block rows are preserved, both
+canonical integrity constraints remain, and the unrelated tenants' revisions
+are unchanged. Reacquire affected tenants' export coordinates. Repeating
+`Apply` reaches the same complete history without further work. Return to
+`ApplyCompatiblePrefix` for ordinary future releases. If a later Inventory
+catalogue needs this old history reconciled, first use the qualified 16-ID
+transition release; this fixed adapter does not admit arbitrary future gaps.
+
 ## Shared-station PIN qualification (28 September 2026)
 
 Select `Stations:Http:Enabled=true` explicitly in the migration executable to

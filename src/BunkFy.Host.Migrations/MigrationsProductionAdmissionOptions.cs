@@ -25,7 +25,8 @@ public enum MigrationsRuntimeKind
 public enum MigrationsExistingHistoryDisposition
 {
     Unspecified = 0,
-    ApplyCompatiblePrefix = 1
+    ApplyCompatiblePrefix = 1,
+    ApplyInventoryConvergenceV1 = 2
 }
 
 public sealed record MigrationsProductionAdmissionOptions
