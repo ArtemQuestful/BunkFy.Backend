@@ -130,9 +130,16 @@ the new management UI. Do not replace customized assignments with seed roles.
 The combined Inventory owner catalogue is version **8**, the personal-data
 catalogue is version **9**, and tenant export schema is version **6**. The
 convergence migration advances affected tenant revisions, so a previously
-captured export coordinate must be reacquired. The upgrade test also covers a
-database with both later canonical integrity migrations already applied and
-only the earlier-dated convergence migration pending.
+captured export coordinate must be reacquired. The upgrade test exercises the
+actual application coordinator with both later canonical integrity migrations
+already applied and only the earlier-dated convergence migration pending.
+Ordinary exact-prefix mode refuses this history. The explicit
+`ApplyInventoryConvergenceV1` disposition recognizes only ordered prefixes of
+the published 15-ID history and the exact 16-ID target, retaining pending work
+from an interrupted predecessor run. It uses the existing host lock and Production
+admission. See [migration-host safety](../operations/migrations-host-production-safety.md#existing-inventory-convergence-history)
+for the controlled Plan/Apply/replay procedure. The prior direct-EF test alone
+did not establish this application-host compatibility.
 
 Upgrade takes fail-fast exclusive locks and refuses inconsistent legacy rows
 or an active tenant destruction. Rehearse it against an isolated restored
