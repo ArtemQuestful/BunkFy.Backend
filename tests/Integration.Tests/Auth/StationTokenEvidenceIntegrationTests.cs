@@ -65,6 +65,8 @@ public sealed class StationTokenEvidenceIntegrationTests
         "K0TOK-020-A-admin-audit-test-server",
         "K0TOK-020-A-admin-auth-members-test-server",
         "K0TOK-020-A-public-auth-account-methods-test-server",
+        "K0TOK-020-A-public-auth-browser-mfa-step-up-test-server",
+        "K0TOK-020-A-public-auth-mfa-step-up-test-server",
         "K0TOK-020-A-public-auth-mfa-test-server",
         "K0TOK-020-A-public-auth-oidc-link-test-server",
         "K0TOK-020-A-public-auth-recovery-codes-test-server",
@@ -534,14 +536,16 @@ public sealed class StationTokenEvidenceIntegrationTests
             "public",
             "Integration",
             "standard",
-            expectedEndpointCount: 316,
-            expectedCanonicalSha256: "e9f994dddc67cccc4b300d9f53e978a6564537ff0f3965e37eaf588f925572f7"));
+            expectedEndpointCount: 318,
+            expectedCanonicalSha256: "985ce10b2cedfaa14e536eb491f21a4bc4d24db0bf8d561dff95c892139c8c2a"));
 
         (string Subcase, HttpMethod Method, string Path)[] protectedPublic =
         [
             ("public-auth-sessions", HttpMethod.Get, "/api/auth/sessions"),
             ("public-auth-account-methods", HttpMethod.Get, "/api/auth/methods"),
             ("public-auth-mfa", HttpMethod.Get, "/api/auth/mfa"),
+            ("public-auth-mfa-step-up", HttpMethod.Post, "/api/auth/step-up/mfa"),
+            ("public-auth-browser-mfa-step-up", HttpMethod.Post, "/api/auth/browser/step-up/mfa"),
             ("public-auth-recovery-codes", HttpMethod.Post, "/api/auth/mfa/recovery-codes/regenerate"),
             ("public-auth-oidc-link", HttpMethod.Get, "/api/auth/external/test/link"),
             ("public-notification-stream", HttpMethod.Get, "/api/notifications/stream")
@@ -731,7 +735,7 @@ public sealed class StationTokenEvidenceIntegrationTests
             "public",
             "Development",
             "prometheus-enabled",
-            expectedEndpointCount: 317,
+            expectedEndpointCount: 319,
             expectedCanonicalSha256: null));
         observations.Add(await CaptureFullHostAsync(
             "K0TOK-020",
@@ -1418,8 +1422,8 @@ public sealed class StationTokenEvidenceIntegrationTests
         Assert.Contains(compositionInventories, static item =>
             item.Host == "public" &&
             item.ConfigurationVariant == "standard" &&
-            item.EndpointCount == 316 &&
-            item.ProtectedEndpointCount == 286);
+            item.EndpointCount == 318 &&
+            item.ProtectedEndpointCount == 288);
         Assert.Contains(compositionInventories, static item =>
             item.Host == "admin" &&
             item.ConfigurationVariant == "standard" &&
@@ -1428,7 +1432,7 @@ public sealed class StationTokenEvidenceIntegrationTests
         Assert.Contains(compositionInventories, static item =>
             item.Host == "public" &&
             item.ConfigurationVariant == "prometheus-enabled" &&
-            item.EndpointCount == 317);
+            item.EndpointCount == 319);
         Assert.All(compositionInventories, static item =>
         {
             Assert.Equal(0, item.EligibleEndpointCount);
