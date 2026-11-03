@@ -31,8 +31,9 @@ internal static class InventoryConvergenceHistoryTransition
     private static readonly string[] TargetHistory =
         [.. PublishedHistory.Append(MigrationId).Order(StringComparer.Ordinal)];
 
-    internal static bool Matches(BunkFyMigrationHistory history) =>
-        string.Equals(history.ModuleName, "inventory", StringComparison.Ordinal) &&
-        PublishedHistory.SequenceEqual(history.AppliedMigrations, StringComparer.Ordinal) &&
-        TargetHistory.SequenceEqual(history.TargetMigrations, StringComparer.Ordinal);
+    internal static bool Matches(string moduleName, string[] target, string[] applied) =>
+        string.Equals(moduleName, "inventory", StringComparison.Ordinal) &&
+        applied.Length <= PublishedHistory.Length &&
+        PublishedHistory.AsSpan(0, applied.Length).SequenceEqual(applied) &&
+        TargetHistory.SequenceEqual(target, StringComparer.Ordinal);
 }

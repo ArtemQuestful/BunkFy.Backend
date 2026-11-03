@@ -57,7 +57,7 @@ public sealed record BunkFyMigrationPlan(
                 target.AsSpan(0, applied.Length).SequenceEqual(applied);
             bool inventoryTransition = !compatiblePrefix &&
                 disposition == MigrationsExistingHistoryDisposition.ApplyInventoryConvergenceV1 &&
-                InventoryConvergenceHistoryTransition.Matches(history);
+                InventoryConvergenceHistoryTransition.Matches(history.ModuleName, target, applied);
             if (!compatiblePrefix && !inventoryTransition)
             {
                 throw new InvalidOperationException(
@@ -69,7 +69,7 @@ public sealed record BunkFyMigrationPlan(
                 target,
                 applied,
                 inventoryTransition
-                    ? [InventoryConvergenceHistoryTransition.MigrationId]
+                    ? target.Where(id => !applied.Contains(id, StringComparer.Ordinal)).ToArray()
                     : target[applied.Length..])
             {
                 HistoryTransition = inventoryTransition

@@ -93,11 +93,13 @@ For this transition, select the following disposition for both `Plan` and
 Migrations__ProductionAdmission__ExistingHistoryDisposition=ApplyInventoryConvergenceV1
 ```
 
-The host recognizes only the exact canonical `inventory` module name, all 15
-published predecessor IDs in their original order, and the exact 16-ID target
-catalogue. Its pending plan contains only the convergence migration and reports
-`inventory-convergence-v1`. Missing or unknown history, another module, reordered
-IDs, or a different target catalogue still fail before mutation. The host does
+The host recognizes only the exact canonical `inventory` module name, an exact
+ordered prefix of the published 15-ID predecessor catalogue, and the exact
+16-ID target catalogue. With all 15 predecessors applied, only convergence is
+pending. An interrupted predecessor run with 14 applied IDs also retains the
+remaining canonical integrity migration in its plan. These transitions report
+`inventory-convergence-v1`. Arbitrary gaps, unknown history, another module,
+reordered IDs, or a different target catalogue still fail before mutation. The host does
 not edit, rename, delete, or synthesize any previously applied history record.
 
 Use the same immutable release and database target throughout the operation.

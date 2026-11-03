@@ -15,10 +15,19 @@ public sealed partial class InventoryManualBlockGroupMigrationIntegrationTests
     [DockerFact]
     [Trait("Category", "Docker")]
     [Trait("Category", "Integration")]
-    public async Task Pending_convergence_preserves_later_canonical_integrity_and_retained_rows()
+    public Task Pending_convergence_preserves_later_canonical_integrity_and_retained_rows() =>
+        AssertCanonicalUpgradeAsync(2);
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public Task Interrupted_predecessor_upgrade_resumes_both_convergence_and_remaining_integrity() =>
+        AssertCanonicalUpgradeAsync(1);
+
+    private static async Task AssertCanonicalUpgradeAsync(int canonicalCount)
     {
         await using PostgreSqlContainer postgres = await StartAsync(
-            "bunkfy_inventory_canonical_upgrade");
+            $"bunkfy_inventory_canonical_upgrade_{canonicalCount}");
         string connectionString = postgres.GetConnectionString();
         await MigrateAsync(connectionString, PreviousMigration);
         await SeedLegacyTopologyAndBlocksAsync(connectionString);
@@ -27,8 +36,8 @@ public sealed partial class InventoryManualBlockGroupMigrationIntegrationTests
             VALUES ('tenant-a', 7, 1), ('unrelated-tenant', 9, 1);
             """);
 
-        // Current dev already applied these unchanged migrations. Reproduce their
-        // actual operations before applying the older pending convergence migration.
+        // Reproduce complete or interrupted predecessor progress with the
+        // unchanged canonical operations before upgrading through the real host.
         await using var context = CreateDbContext(connectionString);
         IHistoryRepository history = context.Database.GetService<IHistoryRepository>();
         string[] laterCanonicalMigrations =
@@ -37,14 +46,19 @@ public sealed partial class InventoryManualBlockGroupMigrationIntegrationTests
             "20260821195120_AddInventoryAllocationAmendmentDecisionTenantIntegrity"
         ];
         await InventoryMigrationHistoryTestData.ApplyUnchangedMigrationsAsync(
-            context, laterCanonicalMigrations);
+            context, laterCanonicalMigrations.Take(canonicalCount).ToArray());
 
         string[] beforeHistory = (await history.GetAppliedMigrationsAsync())
             .Select(row => row.MigrationId + ":" + row.ProductVersion)
             .ToArray();
+        string[] beforeIds = (await history.GetAppliedMigrationsAsync())
+            .Select(row => row.MigrationId).ToArray();
         string[] pending = (await context.Database.GetPendingMigrationsAsync()).ToArray();
-        Assert.Equal([CurrentMigration], pending);
-        Assert.Equal(laterCanonicalMigrations[^1],
+        string[] expectedPending = canonicalCount == 2
+            ? [CurrentMigration]
+            : [CurrentMigration, laterCanonicalMigrations[1]];
+        Assert.Equal(expectedPending, pending);
+        Assert.Equal(laterCanonicalMigrations[canonicalCount - 1],
             (await history.GetAppliedMigrationsAsync())[^1].MigrationId);
         const string retainedBlocksSql = """
             SELECT string_agg(row_to_json(block)::text, '|' ORDER BY block."Id")
@@ -81,8 +95,8 @@ public sealed partial class InventoryManualBlockGroupMigrationIntegrationTests
             NullLogger.Instance, runtime with { Mode = mode }, transition, isProduction: false);
         BunkFyMigrationPlan plan = await Coordinator(MigrationExecutionMode.Plan)
             .RunAsync(modules, CancellationToken.None);
-        Assert.Equal(1, plan.PendingMigrationCount);
-        Assert.Equal([CurrentMigration], plan.Modules[0].PendingMigrations);
+        Assert.Equal(pending.Length, plan.PendingMigrationCount);
+        Assert.Equal(pending, plan.Modules[0].PendingMigrations);
         Assert.Equal("inventory-convergence-v1", plan.Modules[0].HistoryTransition);
         Assert.Equal(beforeBlocks, await ScalarAsync<string>(connectionString, retainedBlocksSql));
 
@@ -93,10 +107,12 @@ public sealed partial class InventoryManualBlockGroupMigrationIntegrationTests
 
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());
         string[] afterExistingHistory = (await history.GetAppliedMigrationsAsync())
-            .Where(row => row.MigrationId != CurrentMigration)
+            .Where(row => beforeIds.Contains(row.MigrationId, StringComparer.Ordinal))
             .Select(row => row.MigrationId + ":" + row.ProductVersion)
             .ToArray();
         Assert.Equal(beforeHistory, afterExistingHistory);
+        Assert.Equal(context.Database.GetMigrations(),
+            (await history.GetAppliedMigrationsAsync()).Select(row => row.MigrationId));
         Assert.Equal(beforeBlocks, await ScalarAsync<string>(connectionString, retainedBlocksSql));
         Assert.Equal(1L, await ScalarAsync<long>(connectionString,
             "SELECT count(*) FROM inventory.manual_block_groups;"));

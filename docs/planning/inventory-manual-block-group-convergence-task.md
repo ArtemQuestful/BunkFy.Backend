@@ -134,8 +134,9 @@ captured export coordinate must be reacquired. The upgrade test exercises the
 actual application coordinator with both later canonical integrity migrations
 already applied and only the earlier-dated convergence migration pending.
 Ordinary exact-prefix mode refuses this history. The explicit
-`ApplyInventoryConvergenceV1` disposition recognizes only the exact published
-15-ID history and 16-ID target, and uses the existing host lock and Production
+`ApplyInventoryConvergenceV1` disposition recognizes only ordered prefixes of
+the published 15-ID history and the exact 16-ID target, retaining pending work
+from an interrupted predecessor run. It uses the existing host lock and Production
 admission. See [migration-host safety](../operations/migrations-host-production-safety.md#existing-inventory-convergence-history)
 for the controlled Plan/Apply/replay procedure. The prior direct-EF test alone
 did not establish this application-host compatibility.

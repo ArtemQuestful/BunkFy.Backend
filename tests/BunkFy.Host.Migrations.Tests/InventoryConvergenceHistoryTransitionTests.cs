@@ -48,6 +48,54 @@ public sealed class InventoryConvergenceHistoryTransitionTests
         Assert.NotEqual(before.PendingPlanSha256, after.PendingPlanSha256);
     }
 
+    public static TheoryData<int> PublishedHistoryPrefixes
+    {
+        get
+        {
+            TheoryData<int> prefixes = [];
+            for (int count = 0; count < 16; count++)
+            {
+                prefixes.Add(count);
+            }
+
+            return prefixes;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(PublishedHistoryPrefixes))]
+    public void Every_valid_predecessor_prefix_can_continue_without_losing_pending_work(int appliedCount)
+    {
+        BunkFyMigrationHistory published = PublishedInventoryHistory();
+        string[] applied = published.AppliedMigrations.Take(appliedCount).ToArray();
+        BunkFyMigrationPlan oldRelease = BunkFyMigrationPlan.Create(
+            [new("inventory", published.AppliedMigrations, applied)]);
+        Assert.Equal(15 - appliedCount, oldRelease.PendingMigrationCount);
+        BunkFyMigrationHistory current = published with { AppliedMigrations = applied };
+
+        BunkFyMigrationPlan upgraded = BunkFyMigrationPlan.Create(
+            [current], MigrationsExistingHistoryDisposition.ApplyInventoryConvergenceV1);
+
+        Assert.Equal(16 - appliedCount, upgraded.PendingMigrationCount);
+        Assert.Equal(applied, upgraded.Modules[0].AppliedMigrations);
+        if (appliedCount == 14)
+        {
+            Assert.Equal([Convergence, "20260821195120_AddInventoryAllocationAmendmentDecisionTenantIntegrity"],
+                upgraded.Modules[0].PendingMigrations);
+        }
+
+        if (appliedCount >= 14)
+        {
+            Assert.Equal("inventory-convergence-v1", upgraded.Modules[0].HistoryTransition);
+            Assert.Throws<InvalidOperationException>(() => BunkFyMigrationPlan.Create([current]));
+        }
+        else
+        {
+            Assert.Null(upgraded.Modules[0].HistoryTransition);
+            Assert.Equal(BunkFyMigrationPlan.Create([current]).PendingPlanSha256, upgraded.PendingPlanSha256);
+        }
+    }
+
     [Theory]
     [InlineData("other-module")]
     [InlineData("wrong-module-case")]
