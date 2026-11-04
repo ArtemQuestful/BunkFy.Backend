@@ -63,7 +63,6 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
             .WithEnvironment("MINIO_ROOT_PASSWORD", SecretKey)
             .WithPortBinding(9000, assignRandomHostPort: true)
             .WithCommand("server", "/data", "--console-address", ":9001")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(9000))
             .Build();
 
         await Task.WhenAll(nats.StartAsync(), postgreSql.StartAsync(), minio.StartAsync()).ConfigureAwait(false);

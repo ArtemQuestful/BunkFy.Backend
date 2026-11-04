@@ -1,36 +1,47 @@
-# Isolated MinIO provider fixture
+# Isolated S3 provider fixture
 
-`../../build-provider-images.ps1` builds the last upstream community security
-release from checksum-pinned source, with pinned Go and Alpine image digests.
-There is no floating upstream binary or mirror fallback. The Dockerfile name
-refers specifically to the upstream STS/service-account policy fix; it does not
-mean every dependency is free of known vulnerabilities.
+`../../build-provider-images.ps1` prepares the reviewed PGSTY Silo binary from
+an immutable Linux amd64 image. Its single additional filesystem layer only
+creates/chowns `/data`; the resulting image runs as UID/GID 10001. It preserves
+the upstream entrypoint and source label. No archived Go source is compiled.
+The build script verifies the base configuration digest, every inherited
+filesystem layer, recipe hash, platform, source revision and non-root user.
 
-This image is for the six owned integration fixtures covering S3 round trips,
-protected exports and ingestion/worker recovery. `ProviderTestContainers.Minio`
-requires the local image, binds published ports to loopback, limits it to 512 MiB
-and one CPU, and runs the non-root image with updates disabled. Do not use it for
-production storage, shared credentials, real customer data or public endpoints.
+The six existing integration fixtures keep using the Minio S3 adapter. Their
+server uses an owned data volume, loopback published ports, 512 MiB memory with
+no additional swap, one CPU, a 128-PID limit, no Linux capabilities and no new
+privileges. The ordinary file-storage round trip also stops/restarts the
+actual provider and reads the committed object before deletion. These are
+synthetic test accounts and objects; never attach customer data or use the
+fixture as a production storage image.
 
-The 2026-11-02 govulncheck v1.9.0 binary scan found known advisory matches in the
-archived release's dependencies, including x/crypto, x/net, gRPC and AMQP.
-Affected symbols are present; binary scanning does not establish whether these
-test flows can reach them. Updating the Go toolchain does not update those
-modules. x/crypto/openpgp also has an advisory with no fixed version.
+Before the expensive provider matrix starts, its storage job scans the actual
+local image with checksum-verified Trivy 0.76.1, records an SBOM, and runs 38
+bounded S3/security/restart controls under the same non-root user and memory
+limit. It verifies the actual process UID and data-volume ownership. Raw
+findings, scanner identity, exact image configuration, recipe/source evidence,
+cleanup results and a scoped consumer OpenVEX assessment are retained.
 
-Production storage qualification remains unresolved. It requires a maintained
-implementation or a separately reviewed and tested dependency/source repair,
-fresh Go and operating-system advisory scans, and application-level S3 contract
-and recovery checks. Passing the isolated provider suite is not that admission.
+The fork retains the upstream MinIO Go module name. Its inherited
+CVE-2026-39414 advisory match is classified as fixed only after the current
+source-byte checks, reviewed base/recipe, fresh raw scan and all runtime
+controls pass for that exact built configuration. Different findings or
+subjects, missing coverage, stale scans and an expired review fail before the
+native suites are allocated. No global advisory ignore or GMA security
+exception is added. The current review expires 2026-12-04 and must be renewed
+with fresh source, binary and scanner evidence.
 
-For a repeatable scan, build the Dockerfile's `builder` target and run
-`govulncheck -mode=binary /out/minio` using a pinned scanner version. Preserve the
-image identity, source/recipe hash, scanner version, database timestamp and raw
-findings. If using `-json`, explicitly inspect findings: that mode returns exit
-code zero even when vulnerabilities are reported.
+The local image has no published registry-manifest digest. Its assessment names
+its actual Docker configuration digest and retained inherited rootfs IDs;
+it does not reuse the base image's OCI identity as the derived image's identity.
+
+The qualified fixture platform is Linux amd64. Other platforms need their own
+binary/scan assessment. Existing MinIO data formats, distributed durability,
+whole-application recovery and production admission are separate qualifications.
 
 Primary references:
 
-- [Archived upstream and source release](https://github.com/minio/minio)
-- [govulncheck usage, binary limitations and JSON exit behavior](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
-- [Unmaintained OpenPGP advisory](https://pkg.go.dev/vuln/GO-2026-5932)
+- [Pinned Silo release](https://github.com/pgsty/silo/releases/tag/RELEASE.2026-10-26T00-00-00Z)
+- [Silo compatibility and migration notes](https://silo.pgsty.com/compatibility/)
+- [Upstream advisory](https://github.com/minio/minio/security/advisories/GHSA-h749-fxx7-pwpg)
+- [Supplier fix disclosure](https://silo.pigsty.cc/blog/security/cve-2026-39414/)

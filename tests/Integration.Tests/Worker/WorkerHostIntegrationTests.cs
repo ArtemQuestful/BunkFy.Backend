@@ -582,7 +582,6 @@ public sealed class WorkerHostIntegrationTests
             .WithEnvironment("MINIO_ROOT_PASSWORD", "minioadmin")
             .WithPortBinding(9000, assignRandomHostPort: true)
             .WithCommand("server", "/data", "--console-address", ":9001")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(9000))
             .Build();
         await using IContainer redis = new ContainerBuilder("redis:7.4-alpine")
             .WithPortBinding(6379, assignRandomHostPort: true)

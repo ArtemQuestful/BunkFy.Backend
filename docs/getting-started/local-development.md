@@ -35,6 +35,37 @@ For backend-only composition, run:
 .\eng\run-aspire.ps1
 ```
 
+The original MinIO profile remains the default for existing Aspire data. Its
+retired `quay.io/minio/minio:latest` image is unavailable for a fresh public pull;
+keep the original environment and any retained image with existing data.
+For a **fresh development environment**, explicitly select the reviewed Silo
+provider before starting either the backend or root AppHost:
+
+```powershell
+$env:AppHost__Storage__Provider = 'Silo'
+.\eng\run-aspire.ps1
+```
+
+This uses the immutable reviewed Linux amd64 image and the separate
+`bunkfy-silo-data` volume. A read-only pre-start check rejects this selection if
+`bunkfy-minio-data` exists, before starting infrastructure or migrations. It
+never mounts or converts that legacy volume. Do not rename/relabel old volumes
+to bypass the check; existing deployments need a separately qualified migration.
+Returning to the original profile uses `AppHost__Storage__Provider=Minio`.
+
+Silo receives a generated secret of at least 32 characters, persisted in the
+AppHost's existing user-secrets store; API, Admin API and Worker share that same
+parameter. Preserve that store with the development environment. An explicit
+`Parameters:silo-password` configuration can supply an existing managed secret.
+The legacy profile retains its previous default credentials unless its new
+`Parameters:minio-password` parameter is configured. These are development
+profiles, not production storage admission.
+
+All host projects now receive the actual allocated storage host/port from
+Aspire, and wait for its readiness endpoint. The previous literal `minio:9000`
+address belongs to a container network and does not describe the endpoint of
+projects launched on the developer host.
+
 An independently deployed polling adapter normally uses a `RemotePolling` Ingestion connection and `AdapterHost__CoordinationMode=server-lease`. Give each process a stable non-empty `AdapterHost__WorkerId`, supply the remaining `AdapterHost__*` configuration, keep the one-time ingress token in the configured environment variable or secret file, and run:
 
 ```powershell

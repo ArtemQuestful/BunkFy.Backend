@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Consumer assessment for the exact Linux amd64 engineering Preview storage fixture; not supplier-issued attestation or Production approval.",
+  "image": "pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7",
+  "imageConfigDigest": "sha256:43b7367262b22f39522b1ea41a1cf643c130e76210ef75a0dc41c6fa97d2fb20",
+  "platformManifestDigest": "sha256:003925ecebdcd659494621de84984f20aac2ca0ce88684ba23bb1e38b8e0db3c",
+  "sourceCommit": "c3ad836aed0d8a7d23c2e44a5eaa3009d08525e3",
+  "platform": "linux/amd64",
+  "reviewedAt": "2026-11-04T08:31:17.705484+00:00",
+  "reviewExpiresAt": "2026-12-04T08:31:17.705484+00:00",
+  "vulnerability": "CVE-2026-39414",
+  "status": "fixed",
+  "packagePurl": "pkg:golang/github.com/minio/minio@v0.0.0-20261026165113-c3ad836aed0d",
+  "binaryTarget": "usr/bin/silo",
+  "primaryAdvisory": "https://github.com/minio/minio/security/advisories/GHSA-h749-fxx7-pwpg",
+  "supplierDisclosure": "https://silo.pigsty.cc/blog/security/cve-2026-39414/",
+  "sourceFilesSha256": {
+    "internal/s3select/json/preader.go": "830f14a0bb379e1ee51395f4e2feceffcb40d0b85fa675ab42578ed6cbad473d",
+    "internal/s3select/select.go": "4b8912bebe7c0bb1bcaf93eb3380aac3339b39cafa282e0dc39534f8f8088ab0",
+    "internal/s3select/csv/reader.go": "51cece44627f51103893c5e8f84eda642523b415040e89e660d3802da773e496"
+  },
+  "assessment": "The fork retains the upstream Go module identity, whose advisory has an open-ended affected range. Reviewed immutable source uses ReadSlice with 1MiB checks before append in CSV and JSON Lines, and selects the bounded PReader independently of SIMD availability. The exact published image passed positive and oversized plainCSV, gzipCSV and JSONLines Select cases, continued readiness, private signed S3, range/ETag/listing, restart persistence and cleanup. Only this exact finding/package/image/platform is classified fixed; raw findings remain retained.",
+  "originalBinaryProof": {
+    "run": 41798631892,
+    "artifact": 13307295067,
+    "artifactSha256": "e8fa558fe5a276b3d3affad9c18f7366ae720c6ebe2d54594532b8ac63c3c654",
+    "observations": 38,
+    "positiveSelectControls": 3,
+    "oversizedRecordRejections": 3
+  },
+  "limits": [
+    "Bounded1.1MiB cases and source control-flow review are not a peak-memory benchmark or distributed/storage recovery acceptance.",
+    "Existing MinIO data, full product runtime, production storage custody and production admission remain outside this fixture assessment.",
+    "Any new unresolved finding, subject mismatch, incomplete runtime evidence or expired review fails the gate. No global CVE ignore or GMA source/image exception."
+  ],
+  "baseLayers": [
+    "sha256:76a101b85b66bbdf48f47beed620127a6d2c1c3657c52920db691d63ce81df99",
+    "sha256:4db3f564c2077b46856a571e8fb931fb2b56b3127c76a0a8cc926ec2e8dfaa9b",
+    "sha256:199b21d8b92c571094889f314e06b6f5098cd1ac1fb4b6da09c799fda0e95a79",
+    "sha256:b674e56322ada58cdbc95ecc98e6b0f3f6549964570c9f13dd8f63f079feeebf",
+    "sha256:23e05c9feb8f4de096f668ab78887bd748e1badc64bbaaa8b3f1ce8b7bd96e69",
+    "sha256:4ac90f5ecf56e00d7bce143e75c41bf584e408d4d1a0a21942b53da3fde33a89",
+    "sha256:35227faffe1f75547781b8e11acfaad6c36c9a74d42e0cccdfbf46ff71a8045e",
+    "sha256:c9e6ce046e569626c7a0687fb69fd80b989f08fc848ab0ea1b1bc618ce90d81d",
+    "sha256:b466fafb6819f96376059fbf8f9b36d662044ed3da8c358b869ab22657b83234",
+    "sha256:dc2858dca0ffdb183faa6a24727fcbb4a212ae83cb060bf662350da0ac35011b",
+    "sha256:8ff27124031e2e5e62a6c52c655ee170b31fb4e85c667478faca4a4fd72ee1b0"
+  ],
+  "fixtureImage": "bunkfy-provider-silo:c3ad836aed0d-nonroot-v1",
+  "fixtureRecipeSha256": "b8208740ff4decd3dff1ca3f91f9d9d83d410aa1010c84fb6e17b4af52d7f03e"
+}

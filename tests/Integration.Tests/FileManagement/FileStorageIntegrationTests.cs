@@ -140,7 +140,6 @@ public sealed class FileStorageIntegrationTests
             .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
             .WithPortBinding(9000, assignRandomHostPort: true)
             .WithCommand("server", "/data", "--console-address", ":9001")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(9000))
             .Build();
 
         await minio.StartAsync().ConfigureAwait(false);
@@ -177,8 +176,28 @@ public sealed class FileStorageIntegrationTests
         await read.CopyToAsync(output);
 
         Assert.Equal(payload, output.ToArray());
-        Assert.True(await storage.DeleteAsync(key));
-        Assert.Null(await storage.GetPropertiesAsync(key));
+
+        // Restart the actual provider with its own existing data volume. The
+        // maintained fixture must preserve objects under the previous UID.
+        await minio.StopAsync().ConfigureAwait(false);
+        await minio.StartAsync().ConfigureAwait(false);
+        using ServiceProvider restartedProvider = BuildMinioProvider(
+            $"localhost:{minio.GetMappedPublicPort(9000)}",
+            accessKey,
+            secretKey,
+            bucketName);
+        IFileStorage restartedStorage = restartedProvider.GetRequiredService<IFileStorage>();
+        FileStorageReadResult? persisted = await restartedStorage.OpenReadAsync(key);
+        Assert.NotNull(persisted);
+        Assert.Equal(payload.Length, persisted.Properties.ContentLength);
+        Assert.Equal("text/plain", persisted.Properties.ContentType);
+        Assert.Equal("minio.txt", persisted.Properties.FileName);
+        Assert.Equal("integration-tests", persisted.Properties.Metadata["module"]);
+        await using MemoryStream restored = new();
+        await persisted.CopyToAsync(restored);
+        Assert.Equal(payload, restored.ToArray());
+        Assert.True(await restartedStorage.DeleteAsync(key));
+        Assert.Null(await restartedStorage.GetPropertiesAsync(key));
     }
 
     private static ServiceProvider BuildFilesProvider(string root)
