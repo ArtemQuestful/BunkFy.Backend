@@ -14,6 +14,40 @@ import xml.etree.ElementTree as ET
 GROUPS = ('framework-extensions', 'gma-access-administration', 'gma-auth-files',
           'gma-services', 'product-core', 'product-services', 'host-architecture', 'product-integration')
 
+# Minimums from the qualified provider suite. Review intentional coverage reductions.
+MINIMUM_NATIVE_CASES = {
+    'framework-extensions': 4, 'gma-access-administration': 29, 'gma-auth-files': 5,
+    'gma-services': 56, 'product-core': 1, 'product-services': 0,
+    'host-architecture': 0, 'product-integration': 214,
+}
+
+
+def verify_native_evidence(name, reports):
+    if not reports or len(set(reports)) != len(reports):
+        raise RuntimeError('Native test reports must have unique output paths.')
+    passed = 0
+    for report in reports:
+        try:
+            counters = ET.parse(report).findall('.//{*}ResultSummary/{*}Counters')
+            if len(counters) != 1:
+                raise ValueError('Expected one test result summary.')
+            values = {key: int(value) for key, value in counters[0].attrib.items()}
+            required = ('total', 'executed', 'passed', 'failed', 'notExecuted')
+            if any(key not in values for key in required) or any(value < 0 for value in values.values()):
+                raise ValueError('Test result counters are missing or invalid.')
+        except (OSError, ET.ParseError, ValueError) as error:
+            raise RuntimeError(f'Native test report is missing or invalid: {report}') from error
+        unsuccessful = ('failed', 'notExecuted', 'error', 'timeout', 'aborted', 'inconclusive',
+                        'notRunnable', 'disconnected', 'inProgress', 'pending', 'warning', 'passedButRunAborted')
+        if (values['total'] != values['executed'] or values['executed'] != values['passed'] or
+                any(values.get(key, 0) for key in unsuccessful)):
+            raise RuntimeError(f'Native test report contains skipped, failed or incomplete cases: {report}')
+        passed += values['passed']
+    minimum = MINIMUM_NATIVE_CASES[name]
+    if passed < minimum:
+        raise RuntimeError(f'Native group {name} executed {passed} cases; expected at least {minimum}.')
+    return {'group': name, 'passed': passed, 'minimumNativeCases': minimum, 'reports': len(reports)}
+
 
 def group_for(project):
     if project.startswith(('gma/framework/', 'gma/extensions/')):
@@ -88,7 +122,11 @@ def run_group(repository, name, projects):
             environment['BFX_CMP_BUILD_FINGERPRINT'] = (
                 'working-tree-based-on:' + source_head if source_changes else source_head)
         failed = []
+        reports = []
         for project in projects:
+            report = results / (Path(project).stem + '.trx')
+            report.unlink(missing_ok=True)
+            reports.append(report)
             result = subprocess.run(
                 ['dotnet', 'test', project, '--no-build', '--filter', 'Category=Docker',
                  '--logger', 'console;verbosity=minimal',
@@ -99,6 +137,7 @@ def run_group(repository, name, projects):
                 failed.append(project)
         if failed:
             raise RuntimeError('Provider test projects failed: ' + ', '.join(failed))
+        print(json.dumps(verify_native_evidence(name, reports)), flush=True)
 
 
 
