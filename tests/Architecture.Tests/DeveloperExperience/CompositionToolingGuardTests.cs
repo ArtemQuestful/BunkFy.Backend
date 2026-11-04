@@ -69,9 +69,9 @@ public sealed class CompositionToolingGuardTests
             RepositoryPaths.EnumerateFiles(".github/workflows", "*.yml").Select(File.ReadAllText));
         string[] requiredTokens =
         [
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
-            "actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1",
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73",
+            "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
             "persist-credentials: false",
             "./eng/export-source-set.ps1 -RequireClean",
         ];
