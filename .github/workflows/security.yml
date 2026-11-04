@@ -39,7 +39,7 @@ jobs:
         run: ./eng/check-repository-release.ps1
 
       - name: Run repository security baseline
-        uses: SadPossum/GMA-Skeleton/.github/actions/security-baseline@02210e3379976fd342251ffd6d967bbb541b7384
+        uses: SadPossum/GMA-Skeleton/.github/actions/security-baseline@76417a1d9b2cb9bca9df11e667537d32fe4fb8cf
         with:
           exception-file: .gma/security-exceptions.json
 
