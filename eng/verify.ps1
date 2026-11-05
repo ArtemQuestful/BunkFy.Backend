@@ -20,7 +20,7 @@ if (-not $SkipRestore) {
 }
 
 if (-not $SkipBuild) {
-    Invoke-GmaDotNet -Arguments @('build', (Join-GmaPath 'BunkFy.slnx'), '--no-restore', '-m:1')
+    Invoke-GmaDotNet -Arguments @('build', (Join-GmaPath 'BunkFy.slnx'), '--no-restore', '-warnaserror:MSB3277', '-m:1')
 }
 
 if (-not $SkipMigrationCheck) {
