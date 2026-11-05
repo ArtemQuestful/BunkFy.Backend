@@ -14,10 +14,14 @@ spec = importlib.util.spec_from_file_location('provider_groups', Path(__file__).
 groups = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(groups)
 
+REDIS_CONTRACT = ('Gma.Framework.Tests.RateLimiting.RedisProviderContractTests.'
+                  'Resp2_and_default_resp3_preserve_cache_isolation_atomic_limits_and_outage_contracts')
+
 
 class ProviderGroupingTests(unittest.TestCase):
-    def run_fixture(self, passed=4, skipped=0, failed=0, mode='valid', stale=False,
-                    group='framework-extensions', process_exit=0):
+    def run_fixture(self, passed=5, skipped=0, failed=0, mode='valid', stale=False,
+                    group='framework-extensions', process_exit=0,
+                    required_results=((REDIS_CONTRACT, 'Passed'),), require_strict_build=False):
         with tempfile.TemporaryDirectory(prefix='native-evidence-test-') as directory:
             repository = Path(directory)
             project = 'gma/framework/tests/Framework.Tests/Framework.Tests.csproj'
@@ -35,11 +39,19 @@ class ProviderGroupingTests(unittest.TestCase):
             def invoke(arguments, **kwargs):
                 self.assertEqual('dotnet', arguments[0])
                 calls.append(arguments[1])
+                if arguments[1] == 'build' and require_strict_build:
+                    self.assertIn('-warnaserror:MSB3277', arguments)
                 if arguments[1] != 'test':
                     return SimpleNamespace(returncode=0)
                 self.assertEqual('true', kwargs['env']['GMA_REQUIRE_DOCKER_TESTS'])
                 if mode == 'valid':
                     root = ET.Element('TestRun', xmlns='http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
+                    results_node = ET.SubElement(root, 'Results')
+                    named_results = list(required_results) if group == 'framework-extensions' and passed else []
+                    named_results.extend((f'Other.Provider.Case{index}', 'Passed')
+                                         for index in range(max(0, passed - len(named_results))))
+                    for name, outcome in named_results:
+                        ET.SubElement(results_node, 'UnitTestResult', testName=name, outcome=outcome)
                     summary = ET.SubElement(root, 'ResultSummary')
                     ET.SubElement(summary, 'Counters', total=str(passed + skipped + failed),
                                   executed=str(passed + failed), passed=str(passed),
@@ -81,6 +93,23 @@ class ProviderGroupingTests(unittest.TestCase):
     def test_a_failed_test_process_still_fails_with_a_passing_report(self):
         with self.assertRaisesRegex(RuntimeError, 'Provider test projects failed'):
             self.run_fixture(process_exit=1)
+
+    def test_four_old_cases_cannot_satisfy_the_adopted_five_case_minimum(self):
+        with self.assertRaisesRegex(RuntimeError, 'expected at least'):
+            self.run_fixture(passed=4)
+
+    def test_dependency_assembly_conflicts_fail_the_provider_build(self):
+        self.run_fixture(require_strict_build=True)
+
+    def test_five_other_cases_cannot_replace_the_required_redis_contract(self):
+        with self.assertRaisesRegex(RuntimeError, 'Required native case'):
+            self.run_fixture(required_results=(('Other.Provider.Case', 'Passed'),))
+
+    def test_required_redis_contract_must_not_be_duplicated_or_unsuccessful(self):
+        for results in [((REDIS_CONTRACT, 'Passed'), (REDIS_CONTRACT, 'Passed')),
+                        ((REDIS_CONTRACT, 'Failed'),), ((REDIS_CONTRACT, 'NotExecuted'),)]:
+            with self.subTest(results=results), self.assertRaisesRegex(RuntimeError, 'Required native case'):
+                self.run_fixture(required_results=results)
 
     def partition(self, paths):
         with tempfile.TemporaryDirectory(prefix='provider-plan-test-') as directory:

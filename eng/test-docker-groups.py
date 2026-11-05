@@ -16,9 +16,16 @@ GROUPS = ('framework-extensions', 'gma-access-administration', 'gma-auth-files',
 
 # Minimums from the qualified provider suite. Review intentional coverage reductions.
 MINIMUM_NATIVE_CASES = {
-    'framework-extensions': 4, 'gma-access-administration': 29, 'gma-auth-files': 5,
+    'framework-extensions': 5, 'gma-access-administration': 29, 'gma-auth-files': 5,
     'gma-services': 56, 'product-core': 1, 'product-services': 0,
     'host-architecture': 0, 'product-integration': 214,
+}
+
+REQUIRED_NATIVE_CASES = {
+    'framework-extensions': {
+        'Gma.Framework.Tests.RateLimiting.RedisProviderContractTests.'
+        'Resp2_and_default_resp3_preserve_cache_isolation_atomic_limits_and_outage_contracts',
+    },
 }
 
 
@@ -26,9 +33,11 @@ def verify_native_evidence(name, reports):
     if not reports or len(set(reports)) != len(reports):
         raise RuntimeError('Native test reports must have unique output paths.')
     passed = 0
+    required_results = {case: [] for case in REQUIRED_NATIVE_CASES.get(name, ())}
     for report in reports:
         try:
-            counters = ET.parse(report).findall('.//{*}ResultSummary/{*}Counters')
+            document = ET.parse(report)
+            counters = document.findall('.//{*}ResultSummary/{*}Counters')
             if len(counters) != 1:
                 raise ValueError('Expected one test result summary.')
             values = {key: int(value) for key, value in counters[0].attrib.items()}
@@ -43,9 +52,16 @@ def verify_native_evidence(name, reports):
                 any(values.get(key, 0) for key in unsuccessful)):
             raise RuntimeError(f'Native test report contains skipped, failed or incomplete cases: {report}')
         passed += values['passed']
+        for result in document.findall('.//{*}UnitTestResult'):
+            test_name = result.attrib.get('testName')
+            if test_name in required_results:
+                required_results[test_name].append(result.attrib.get('outcome'))
     minimum = MINIMUM_NATIVE_CASES[name]
     if passed < minimum:
         raise RuntimeError(f'Native group {name} executed {passed} cases; expected at least {minimum}.')
+    for case, outcomes in required_results.items():
+        if outcomes != ['Passed']:
+            raise RuntimeError(f'Required native case must pass exactly once: {case}')
     return {'group': name, 'passed': passed, 'minimumNativeCases': minimum, 'reports': len(reports)}
 
 
@@ -107,7 +123,7 @@ def run_group(repository, name, projects):
             subprocess.run(['pwsh', '-NoProfile', '-File', str(repository / 'eng/build-provider-images.ps1')],
                            cwd=repository, check=True)
         subprocess.run(['dotnet', 'restore', str(solution)], cwd=repository, check=True)
-        subprocess.run(['dotnet', 'build', str(solution), '--no-restore', '-m:1', '-nr:false'],
+        subprocess.run(['dotnet', 'build', str(solution), '--no-restore', '-warnaserror:MSB3277', '-m:1', '-nr:false'],
                        cwd=repository, check=True)
         environment = os.environ.copy()
         environment['GMA_REQUIRE_DOCKER_TESTS'] = 'true'
