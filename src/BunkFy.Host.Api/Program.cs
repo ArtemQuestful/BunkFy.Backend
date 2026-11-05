@@ -129,6 +129,7 @@ if (builder.Configuration.GetValue<bool>("Ingestion:AdapterIngress:Enabled") ||
 builder.AddCachingCqrs();
 builder.AddGmaInfrastructure();
 builder.AddGmaProductionDataProtection();
+builder.Services.AddSingleton<WorkspaceJoinBrowserContinuation>();
 builder.AddBunkFyCountryPolicies();
 builder.AddTenantSerilogRequestLogging();
 builder.AddTenantCaching();
@@ -270,6 +271,11 @@ builder.AddGmaOpenApi();
 builder.Services.AddSwaggerGen(options => options.SchemaFilter<RetirementContextSchemaFilter>());
 builder.Services.AddSwaggerGen(options => options.SchemaFilter<StationPinSchemaFilter>());
 builder.Services.AddSwaggerGen(options => options.SchemaFilter<RememberedBrowserSchemaFilter>());
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SchemaFilter<WorkspaceJoinBrowserOpenApiFilter>();
+    options.OperationFilter<WorkspaceJoinBrowserOpenApiFilter>();
+});
 builder.ValidateModuleComposition();
 
 WebApplication app = builder.Build();
@@ -297,6 +303,7 @@ app.MapGet("/api/smoke", (IOptions<BunkFyDeploymentOptions> deployment) => Resul
 app.MapBunkFyProductCapabilities();
 app.MapModules();
 app.MapBunkFyAccessPermissionEndpoints();
+app.MapWorkspaceJoinBrowserEndpoints();
 app.MapBunkFyReservationGuestRecordEndpoints();
 app.MapUserNotificationServerSentEvents();
 app.MapUserNotificationSignalR();
