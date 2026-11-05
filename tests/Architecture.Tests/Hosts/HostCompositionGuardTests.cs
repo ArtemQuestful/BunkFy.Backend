@@ -756,6 +756,7 @@ public sealed class HostCompositionGuardTests
             [
                 "/api/organization-invitations",
                 "/api/organization-enrollment",
+                "/api/workspace-join",
                 "/api/workspace-staff-enrollment"
             ]);
     }

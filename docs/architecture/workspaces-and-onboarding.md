@@ -230,3 +230,18 @@ The migration and the steady-state schema must be covered against PostgreSQL. Pr
 - Trust the tenant header after global login: lets selection masquerade as authorization.
 - Store roles in invitation JWTs: makes revocation, single-use claims, delegation policy, and server-side corrections unsafe.
 - Treat reusable QR as a normal invitation: hides materially different risk and lifecycle rules.
+
+
+## Browser join credential custody
+
+The app API exposes `/api/workspace-join/{contextId}` as a browser transport facade. The context ID and source kind are public recovery metadata, not permission or membership authority. Every operation requires `X-BunkFy-Join-Context` to match the route; the host's configured CORS policy and the existing workspace-join write-rate policy also apply.
+
+Preparation receives the original link credential, validates it through Organizations preview and places it in a Data Protection envelope in a host-only, HttpOnly, SameSite=Strict browser-session cookie. The cookie path belongs to one context so independent tabs do not overwrite each other or send every join credential on ordinary API requests. Production requires HTTPS. Development, Preview and Integration retain their existing local HTTP workflows. The existing application name and durable/shared Data Protection key ring remain required for restart and replica continuity.
+
+The browser proves that it retained the cookie before clearing the link fragment or migrating an existing raw `bunkfy.join.secret.v1` entry. New client storage contains only the public context metadata. A pending-enrollment hint contains the public source ID and is keyed by immutable subject ID; it never contains the credential. Failed custody or metadata persistence retains the original recovery input for retry. External sign-in and MFA resume a pending join without changing account-link destinations.
+
+Preview, Staff-profile submission and joining forward the original Organizations queries/commands and Workspaces authoritative-scope submitter. Their owning APIs supply their existing HTTP error mappings. Authenticated user identity, verification, source validity, expiry, revocation, capacity, frozen proposal, journal, role/property constraints and membership decisions remain with the same owners. An expired source can still preview an existing pending application; cookie custody supplies no admission decision or extended token lifetime. The original API routes remain available for existing clients and CLI operations.
+
+Leaving, successful activation and terminal withdrawal/expiry clear local recovery and request deletion of the context cookie. The active page keeps public metadata in memory to show its terminal result. A reload then requires the complete link again. If cookie cleanup cannot reach the API, the residual cookie remains HttpOnly/session-only and the source owner's validity and membership checks continue to apply.
+
+Before release, qualify the paired browser/API source, legacy migration, password/external/MFA return paths, verified-email recovery, account changes, independent tabs, withdrawal/expiry display, restart with the same key ring and the existing genuine onboarding/booking/restore rehearsal. Focused transport tests use controlled business-owner responses and do not replace native Auth/Organizations/Staff or deployment qualification.
