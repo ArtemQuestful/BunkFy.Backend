@@ -5,3 +5,6 @@
 **/obj
 TestResults
 artifacts
+# Recipe-only changes must not invalidate the application publish cache.
+Dockerfile
+.dockerignore

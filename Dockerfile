@@ -14,8 +14,9 @@ RUN --mount=type=cache,id=bunkfy-nuget,target=/root/.nuget/packages \
     && dotnet publish src/BunkFy.Host.Migrations/BunkFy.Host.Migrations.csproj -c Release -o /out/migrations --nologo
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.14@sha256:de0ee358cdd672f7017a003bed21e9ac9ed48a27c922a59b18175b6e82fa7fee AS runtime-base
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+RUN apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install -y --no-install-recommends \
+        apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/lib/bunkfy/data-protection /var/lib/bunkfy/file-drop /var/lib/bunkfy/data-rights-ledger-delta \
     && chown -R app:app /var/lib/bunkfy
