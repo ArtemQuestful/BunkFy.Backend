@@ -9,6 +9,13 @@ public static class InventoryDomainErrors
     public static readonly Error InventoryUnitIdRequired = new("Inventory.InventoryUnitIdRequired", "Inventory unit id is required.");
     public static readonly Error BlockIdRequired = new("Inventory.BlockIdRequired", "Block id is required.");
     public static readonly Error BlockGroupIdRequired = new("Inventory.BlockGroupIdRequired", "Block group id is required.");
+    public static readonly Error BlockGroupIdentityInvalid = new("Inventory.BlockGroupIdentityInvalid", "The manual inventory block group identity is invalid.");
+    public static readonly Error BlockGroupTargetInvalid = new("Inventory.BlockGroupTargetInvalid", "The manual inventory block group target is invalid.");
+    public static readonly Error BlockGroupSelectionInvalid = new("Inventory.BlockGroupSelectionInvalid", "The manual inventory block group selection must have a SHA-256 digest and contain between 1 and 500 members.");
+    public static readonly Error BlockGroupMemberCountInvalid = new("Inventory.BlockGroupMemberCountInvalid", "The manual inventory block group member count is inconsistent with its active children.");
+    public static readonly Error BlockGroupActorInvalid = new("Inventory.BlockGroupActorInvalid", "The manual inventory block group actor id is required and must be a control-free value of 200 characters or fewer.");
+    public static readonly Error BlockGroupAlreadyTerminal = new("Inventory.BlockGroupAlreadyTerminal", "The manual inventory block group is already released or replaced.");
+    public static readonly Error BlockGroupTimestampInvalid = new("Inventory.BlockGroupTimestampInvalid", "The manual inventory block group timestamp is invalid or moves backwards.");
     public static readonly Error RoomNotFound = new("Inventory.RoomNotFound", "The inventory room was not found.");
     public static readonly Error RoomRetired = new("Inventory.RoomRetired", "Retired room topology cannot be configured.");
     public static readonly Error BedLevelRequiresBeds = new("Inventory.BedLevelRequiresBeds", "Bed-level sales require at least one active bed.");

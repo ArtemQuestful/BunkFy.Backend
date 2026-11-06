@@ -42,6 +42,9 @@ public static class DependencyInjection
             provider.GetRequiredService<RetentionScheduleStateRepository>());
         builder.Services.TryAddScoped<IRetentionScheduleHealthReader>(provider =>
             provider.GetRequiredService<RetentionScheduleStateRepository>());
+        builder.Services.TryAddScoped<
+            IRetentionRunRetryRequestRepository,
+            RetentionRunRetryRequestRepository>();
         RetentionTenantTerminationExportSchema.EnsureValid();
         builder.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<
@@ -59,6 +62,10 @@ public static class DependencyInjection
             ServiceDescriptor.Scoped<IUnitOfWork, RetentionUnitOfWork>());
         builder.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IInboxStore, RetentionInboxStore>());
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IOutboxWriter, RetentionOutboxWriter>());
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IOutboxStore, RetentionOutboxStore>());
         return builder;
     }
 }

@@ -16707,6 +16707,12 @@
         },
         {
           "assembly": "BunkFy.Modules.Ingestion.Application",
+          "type": "BunkFy.Modules.Ingestion.Application.Commands.ClaimExpiredRawPayloadsCommand",
+          "member": "RetentionExecutionId",
+          "surface": "application-command"
+        },
+        {
+          "assembly": "BunkFy.Modules.Ingestion.Application",
           "type": "BunkFy.Modules.Ingestion.Application.Commands.CompleteIngestionRetentionExecutionCommand",
           "member": "ExecutionId",
           "surface": "application-command"
@@ -16772,6 +16778,30 @@
       ],
       "approvalState": "engineering-default",
       "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Ingestion.Application",
+          "type": "BunkFy.Modules.Ingestion.Application.Commands.ClaimExpiredRawPayloadsCommand",
+          "member": "RetentionAttempt",
+          "surface": "application-command"
+        },
+        {
+          "assembly": "BunkFy.Modules.Ingestion.Application",
+          "type": "BunkFy.Modules.Ingestion.Application.Commands.CompleteIngestionRetentionExecutionCommand",
+          "member": "Attempt",
+          "surface": "application-command"
+        },
+        {
+          "assembly": "BunkFy.Modules.Ingestion.Application",
+          "type": "BunkFy.Modules.Ingestion.Application.Commands.CompleteRawPayloadPurgeCommand",
+          "member": "RetentionAttempt",
+          "surface": "application-command"
+        },
+        {
+          "assembly": "BunkFy.Modules.Ingestion.Application",
+          "type": "BunkFy.Modules.Ingestion.Application.Commands.RedactExpiredSensitiveHistoryCommand",
+          "member": "RetentionAttempt",
+          "surface": "application-command"
+        },
         {
           "assembly": "BunkFy.Modules.Ingestion.Application",
           "type": "BunkFy.Modules.Ingestion.Application.Commands.CompleteIngestionRetentionExecutionCommand",

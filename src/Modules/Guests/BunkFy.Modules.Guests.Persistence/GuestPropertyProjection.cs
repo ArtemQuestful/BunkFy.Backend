@@ -1,8 +1,10 @@
 namespace BunkFy.Modules.Guests.Persistence;
 
+using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Properties.Contracts;
+using Gma.Framework.Domain;
 
-public sealed class GuestPropertyProjection
+public sealed class GuestPropertyProjection : IScopedEntity
 {
     private GuestPropertyProjection() { }
 
@@ -36,6 +38,13 @@ public sealed class GuestPropertyProjection
         this.TimeZoneId = string.IsNullOrWhiteSpace(timeZoneId)
             ? null
             : timeZoneId.Trim();
+        if (this.TimeZoneId is not null)
+        {
+            this.TimeZoneEvidenceSource =
+                GuestPropertyTimeZoneEvidenceSource.Legacy;
+            this.TimeZoneEvidenceSourceVersion = Math.Max(0, version);
+        }
+
         this.Status = status;
         this.IsKnown = version > 0 && status != PropertyStatus.Unknown;
         this.TopologySourceVersion = version;
@@ -45,6 +54,11 @@ public sealed class GuestPropertyProjection
     public Guid Id { get; private set; }
     public string? Name { get; private set; }
     public string? TimeZoneId { get; private set; }
+    public string? CanonicalTimeZoneId { get; private set; }
+    public PropertyTimeZoneStatus TimeZoneStatus { get; private set; }
+    public string? TimeZoneCatalogVersion { get; private set; }
+    public GuestPropertyTimeZoneEvidenceSource TimeZoneEvidenceSource { get; private set; }
+    public long TimeZoneEvidenceSourceVersion { get; private set; }
     public PropertyStatus Status { get; private set; }
     public bool IsKnown { get; private set; }
     public PropertyProcessingStatus ProcessingStatus { get; private set; } = PropertyProcessingStatus.Unconfigured;
@@ -68,19 +82,164 @@ public sealed class GuestPropertyProjection
             return;
         }
 
+        string? rawTimeZoneId = string.IsNullOrWhiteSpace(timeZoneId)
+            ? null
+            : timeZoneId.Trim();
+        bool hasProjectedEvidence =
+            EvidencePrecedence(this.TimeZoneEvidenceSource) > 0;
+        if (rawTimeZoneId is not null &&
+            hasProjectedEvidence &&
+            sourceVersion == this.TimeZoneEvidenceSourceVersion &&
+            !string.Equals(
+                this.TimeZoneId,
+                rawTimeZoneId,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Equal-version property time-zone evidence conflicts with the topology projection.");
+        }
+
         if (!string.IsNullOrWhiteSpace(name))
         {
             this.Name = name.Trim();
         }
 
-        if (!string.IsNullOrWhiteSpace(timeZoneId))
+        if (rawTimeZoneId is not null)
         {
-            this.TimeZoneId = timeZoneId.Trim();
+            if (!hasProjectedEvidence ||
+                sourceVersion >= this.TimeZoneEvidenceSourceVersion)
+            {
+                this.TimeZoneId = rawTimeZoneId;
+                if (sourceVersion > this.TimeZoneEvidenceSourceVersion)
+                {
+                    this.CanonicalTimeZoneId = null;
+                    this.TimeZoneStatus = PropertyTimeZoneStatus.Unknown;
+                    this.TimeZoneCatalogVersion = null;
+                    this.TimeZoneEvidenceSource =
+                        GuestPropertyTimeZoneEvidenceSource.Unknown;
+                    this.TimeZoneEvidenceSourceVersion = 0;
+                }
+            }
         }
 
         this.Status = status;
         this.IsKnown = true;
         this.TopologySourceVersion = sourceVersion;
+    }
+
+    public void ApplyTimeZone(
+        string timeZoneId,
+        string? canonicalTimeZoneId,
+        PropertyTimeZoneStatus timeZoneStatus,
+        string? timeZoneCatalogVersion,
+        GuestPropertyTimeZoneEvidenceSource evidenceSource,
+        long sourceVersion)
+    {
+        if (sourceVersion < this.TopologySourceVersion ||
+            sourceVersion < this.TimeZoneEvidenceSourceVersion)
+        {
+            return;
+        }
+
+        string raw = timeZoneId?.Trim() ?? string.Empty;
+        string? canonical = string.IsNullOrWhiteSpace(canonicalTimeZoneId)
+            ? null
+            : canonicalTimeZoneId.Trim();
+        string? catalog = string.IsNullOrWhiteSpace(timeZoneCatalogVersion)
+            ? null
+            : timeZoneCatalogVersion.Trim();
+        bool sourceSupported = evidenceSource is
+            GuestPropertyTimeZoneEvidenceSource.Generic or
+            GuestPropertyTimeZoneEvidenceSource.Dedicated or
+            GuestPropertyTimeZoneEvidenceSource.Rebuild;
+        bool canonicalProof = timeZoneStatus ==
+                PropertyTimeZoneStatus.Canonical &&
+            string.Equals(raw, canonical, StringComparison.Ordinal) &&
+            catalog is not null;
+        bool aliasProof = timeZoneStatus == PropertyTimeZoneStatus.Alias &&
+            canonical is not null &&
+            !string.Equals(raw, canonical, StringComparison.Ordinal) &&
+            catalog is not null;
+        bool unresolvedClassification = timeZoneStatus is
+                PropertyTimeZoneStatus.Legacy or
+                PropertyTimeZoneStatus.Unrecognized or
+                PropertyTimeZoneStatus.RuntimeUnavailable &&
+            canonical is null &&
+            catalog is null;
+        bool boundedClassification = timeZoneStatus is
+            PropertyTimeZoneStatus.Canonical or
+            PropertyTimeZoneStatus.Alias or
+            PropertyTimeZoneStatus.Legacy or
+            PropertyTimeZoneStatus.Unrecognized or
+            PropertyTimeZoneStatus.RuntimeUnavailable;
+        if (raw.Length == 0 ||
+            raw.Length > PropertiesContractLimits.TimeZoneIdMaxLength ||
+            canonical?.Length > PropertiesContractLimits.TimeZoneIdMaxLength ||
+            catalog?.Length >
+                PropertiesContractLimits.TimeZoneCatalogVersionMaxLength ||
+            !sourceSupported ||
+            sourceVersion < 1 ||
+            !boundedClassification ||
+            HasControlCharacter(raw) ||
+            (canonical is not null && HasControlCharacter(canonical)) ||
+            (catalog is not null && HasControlCharacter(catalog)) ||
+            !(canonicalProof || aliasProof || unresolvedClassification) ||
+            (evidenceSource ==
+                GuestPropertyTimeZoneEvidenceSource.Dedicated &&
+             !canonicalProof))
+        {
+            throw new ArgumentException(
+                "The projected property time-zone evidence is inconsistent.",
+                nameof(timeZoneId));
+        }
+
+        if (sourceVersion == this.TimeZoneEvidenceSourceVersion)
+        {
+            if (this.HasSameTimeZoneEvidence(
+                    raw,
+                    canonical,
+                    timeZoneStatus,
+                    catalog,
+                    evidenceSource))
+            {
+                return;
+            }
+
+            int incomingPrecedence = EvidencePrecedence(evidenceSource);
+            int currentPrecedence =
+                EvidencePrecedence(this.TimeZoneEvidenceSource);
+            if (!string.Equals(
+                    this.TimeZoneId,
+                    raw,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Equal-version property time-zone evidence conflicts with the existing projection.");
+            }
+
+            if (incomingPrecedence < currentPrecedence)
+            {
+                return;
+            }
+
+            bool rebuildRefresh = evidenceSource ==
+                    GuestPropertyTimeZoneEvidenceSource.Rebuild &&
+                this.TimeZoneEvidenceSource ==
+                    GuestPropertyTimeZoneEvidenceSource.Rebuild;
+            if (incomingPrecedence == currentPrecedence && !rebuildRefresh)
+            {
+                throw new InvalidOperationException(
+                    "Equal-version property time-zone evidence conflicts with the existing projection.");
+            }
+        }
+
+        this.TimeZoneId = raw;
+        this.CanonicalTimeZoneId = canonical;
+        this.TimeZoneStatus = timeZoneStatus;
+        this.TimeZoneCatalogVersion = catalog;
+        this.TimeZoneEvidenceSource = evidenceSource;
+        this.TimeZoneEvidenceSourceVersion = sourceVersion;
+        this.IsKnown = true;
     }
 
     public void ApplyPolicy(
@@ -104,6 +263,39 @@ public sealed class GuestPropertyProjection
         this.IsKnown = true;
         this.PolicySourceVersion = sourceVersion;
     }
+
+    private static int EvidencePrecedence(
+        GuestPropertyTimeZoneEvidenceSource source) => source switch
+        {
+            GuestPropertyTimeZoneEvidenceSource.Rebuild => 3,
+            GuestPropertyTimeZoneEvidenceSource.Dedicated => 2,
+            GuestPropertyTimeZoneEvidenceSource.Generic => 1,
+            _ => 0
+        };
+
+    private static bool HasControlCharacter(string value) =>
+        value.Any(char.IsControl);
+
+    private bool HasSameTimeZoneEvidence(
+        string rawTimeZoneId,
+        string? canonicalTimeZoneId,
+        PropertyTimeZoneStatus timeZoneStatus,
+        string? catalogVersion,
+        GuestPropertyTimeZoneEvidenceSource evidenceSource) =>
+        string.Equals(
+            this.TimeZoneId,
+            rawTimeZoneId,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            this.CanonicalTimeZoneId,
+            canonicalTimeZoneId,
+            StringComparison.Ordinal) &&
+        this.TimeZoneStatus == timeZoneStatus &&
+        string.Equals(
+            this.TimeZoneCatalogVersion,
+            catalogVersion,
+            StringComparison.Ordinal) &&
+        this.TimeZoneEvidenceSource == evidenceSource;
 }
 
 public sealed class GuestPropertyPolicyBinding

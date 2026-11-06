@@ -77,6 +77,42 @@ internal static class DataRightsExportEndpoints
                 DataRightsPropertyAccessScopeResolver.ResolverName);
         requestExport.RequireAssuranceWhenConfigured(generationAssurance);
 
+        RouteHandlerBuilder retryExport = group.MapPost(
+            "/{caseId:guid}/export/{artifactId:guid}/retry",
+            async (
+                Guid propertyId,
+                Guid caseId,
+                Guid artifactId,
+                RetryDataRightsExportRequest request,
+                HttpContext context,
+                IAccessHttpSubjectResolver subjectResolver,
+                IRequestDispatcher dispatcher,
+                CancellationToken cancellationToken) =>
+            {
+                DataRightsSensitiveResponseHeaders.Apply(context.Response);
+                string? actor = DataRightsEndpointSupport.ResolveActor(
+                    context,
+                    subjectResolver);
+                return actor is null
+                    ? Results.Unauthorized()
+                    : (await dispatcher.SendAsync(
+                        new RetryDataRightsExportCommand(
+                            DataRightsCaseScope.ForProperty(propertyId),
+                            caseId,
+                            artifactId,
+                            request.ExpectedCaseVersion,
+                            request.ExpectedArtifactVersion,
+                            actor),
+                        cancellationToken).ConfigureAwait(false))
+                        .ToHttpResult(DataRightsEndpointSupport.ErrorStatusCodes);
+            })
+            .Produces<DataRightsExportArtifactDto>()
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                DataRightsAdminPermissionCodes.Export,
+                DataRightsPropertyAccessScopeResolver.ResolverName);
+        retryExport.RequireAssuranceWhenConfigured(generationAssurance);
+
         RouteHandlerBuilder download = group.MapGet(
             "/{caseId:guid}/export/{artifactId:guid}/download",
             async (
@@ -159,6 +195,39 @@ internal static class DataRightsExportEndpoints
             .RequireTenantPermission(DataRightsAdminPermissionCodes.Export);
         requestExport.RequireAssuranceWhenConfigured(generationAssurance);
 
+        RouteHandlerBuilder retryExport = group.MapPost(
+            "/{caseId:guid}/export/{artifactId:guid}/retry",
+            async (
+                Guid caseId,
+                Guid artifactId,
+                RetryDataRightsExportRequest request,
+                HttpContext context,
+                IAccessHttpSubjectResolver subjectResolver,
+                IRequestDispatcher dispatcher,
+                CancellationToken cancellationToken) =>
+            {
+                DataRightsSensitiveResponseHeaders.Apply(context.Response);
+                string? actor = DataRightsEndpointSupport.ResolveActor(
+                    context,
+                    subjectResolver);
+                return actor is null
+                    ? Results.Unauthorized()
+                    : (await dispatcher.SendAsync(
+                        new RetryDataRightsExportCommand(
+                            DataRightsCaseScope.Staff,
+                            caseId,
+                            artifactId,
+                            request.ExpectedCaseVersion,
+                            request.ExpectedArtifactVersion,
+                            actor),
+                        cancellationToken).ConfigureAwait(false))
+                        .ToHttpResult(DataRightsEndpointSupport.ErrorStatusCodes);
+            })
+            .Produces<DataRightsExportArtifactDto>()
+            .RequireTenant()
+            .RequireTenantPermission(DataRightsAdminPermissionCodes.Export);
+        retryExport.RequireAssuranceWhenConfigured(generationAssurance);
+
         RouteHandlerBuilder download = group.MapGet(
             "/{caseId:guid}/export/{artifactId:guid}/download",
             async (
@@ -188,6 +257,10 @@ internal static class DataRightsExportEndpoints
     public sealed record RequestDataRightsExportRequest(
         Guid IdempotencyKey,
         long ExpectedVersion);
+
+    public sealed record RetryDataRightsExportRequest(
+        long ExpectedCaseVersion,
+        long ExpectedArtifactVersion);
 
     private static async Task<IResult> DownloadAsync(
         DataRightsCaseScope scope,

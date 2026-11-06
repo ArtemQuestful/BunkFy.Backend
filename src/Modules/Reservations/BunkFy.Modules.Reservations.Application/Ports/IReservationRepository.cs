@@ -49,4 +49,23 @@ public interface IReservationRepository
         ReservationListOrder order,
         PageRequest pageRequest,
         CancellationToken cancellationToken);
+
+    Task<ReservationListResponse> ListWindowAsync(
+        Guid propertyId,
+        IReadOnlyCollection<ReservationStatus>? statuses,
+        string? search,
+        ReservationListOrder order,
+        PageRequest pageRequest,
+        DateOnly? overlapsFrom,
+        DateOnly? overlapsTo,
+        ReservationListView? view,
+        DateOnly? operatingDate,
+        CancellationToken cancellationToken) =>
+        this.ListAsync(
+            propertyId,
+            statuses,
+            search,
+            order,
+            pageRequest,
+            cancellationToken);
 }

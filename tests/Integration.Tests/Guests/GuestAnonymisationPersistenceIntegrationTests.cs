@@ -50,7 +50,7 @@ public sealed class GuestAnonymisationPersistenceIntegrationTests
             "Private note",
             "staff:creator",
             Guid.NewGuid(),
-            createdAtUtc).Value;
+            createdAtUtc, languageTags: ["en-GB", "fr", "unknown-١"]).Value;
         dbContext.GuestProfiles.Add(profile);
         await dbContext.SaveChangesAsync();
 
@@ -91,6 +91,7 @@ public sealed class GuestAnonymisationPersistenceIntegrationTests
             .AsNoTracking()
             .SingleAsync(item => item.Id == guestId);
         Assert.Equal(GuestProfileState.Anonymised, persisted.Status);
+        Assert.Empty(persisted.LanguageTags);
         Assert.True(persisted.MatchesAnonymisedState(profile.Version, completedAtUtc));
         Assert.True((await dbContext.AnonymisationTombstones
             .AsNoTracking()
@@ -158,9 +159,8 @@ public sealed class GuestAnonymisationPersistenceIntegrationTests
             Assert.False(secondAcquisition.IsCompleted);
 
             await firstTransaction.CommitAsync();
-            await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
-                secondAcquisition.WaitAsync(TimeSpan.FromSeconds(5)));
-            await secondTransaction.RollbackAsync();
+            await secondAcquisition.WaitAsync(TimeSpan.FromSeconds(5));
+            await secondTransaction.CommitAsync();
         }
 
         second.ChangeTracker.Clear();
@@ -175,7 +175,7 @@ public sealed class GuestAnonymisationPersistenceIntegrationTests
 
         await using GuestsDbContext verification = CreateDbContext(connectionString);
         Assert.Equal(
-            3,
+            4,
             await verification.OperationLocks
                 .Where(item => item.ResourceId == guestId)
                 .Select(item => item.Revision)

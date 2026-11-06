@@ -22,7 +22,12 @@ internal sealed partial class RetentionTenantTerminationContributor
             tenantId,
             sink,
             cancellationToken).ConfigureAwait(false);
-        return await this.ExportScheduleStatesAsync(
+        count = await this.ExportScheduleStatesAsync(
+            tenantId,
+            sink,
+            count,
+            cancellationToken).ConfigureAwait(false);
+        return await this.ExportRunRetryRequestsAsync(
             tenantId,
             sink,
             count,
@@ -177,6 +182,69 @@ internal sealed partial class RetentionTenantTerminationContributor
                 row.ExecutionPolicyVersion.ToString(
                     CultureInfo.InvariantCulture)));
 
+    private async Task<long> ExportRunRetryRequestsAsync(
+        string tenantId,
+        IDataRightsExportSink sink,
+        long count,
+        CancellationToken cancellationToken)
+    {
+        await foreach (RunRetryRequestExportRow row in dbContext
+            .RunRetryRequests
+            .AsNoTracking()
+            .Where(request => request.ScopeId == tenantId)
+            .OrderBy(request => request.Id)
+            .Select(request => new RunRetryRequestExportRow(
+                request.ScopeId,
+                request.Id,
+                request.RunId,
+                request.OwnerKey,
+                request.DataClassKey,
+                request.TargetKind,
+                request.PropertyId,
+                request.ExecutionPolicyVersion,
+                request.EvidenceVersion,
+                request.Attempt,
+                request.State,
+                request.RequestedAtUtc,
+                request.ScheduledAtUtc,
+                request.CompletedAtUtc,
+                request.FailureCode,
+                request.Version))
+            .AsAsyncEnumerable()
+            .WithCancellation(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            RetentionRunRetryRequestTenantExport record = new(
+                row.ScopeId,
+                row.PropertyId,
+                new(
+                    row.RequestId,
+                    row.RunId,
+                    row.OwnerKey,
+                    row.DataClassKey,
+                    row.TargetKind,
+                    row.ExecutionPolicyVersion,
+                    row.EvidenceVersion,
+                    row.Attempt,
+                    row.State,
+                    row.RequestedAtUtc,
+                    row.ScheduledAtUtc,
+                    row.CompletedAtUtc,
+                    row.FailureCode,
+                    row.Version));
+            await WriteAsync(
+                RetentionTenantTerminationMetadata.RunRetryRequestRecordType,
+                row.RequestId,
+                row.Version,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        return count;
+    }
+
     private static ValueTask WriteAsync(
         string recordType,
         Guid recordId,
@@ -230,5 +298,23 @@ internal sealed partial class RetentionTenantTerminationContributor
         int? LastRemainingCount,
         string? OutcomeCode,
         DateTimeOffset? HoldReviewDueAtUtc,
+        long Version);
+
+    private sealed record RunRetryRequestExportRow(
+        string ScopeId,
+        Guid RequestId,
+        Guid RunId,
+        string OwnerKey,
+        string DataClassKey,
+        RetentionExecutionTargetKind TargetKind,
+        Guid? PropertyId,
+        int ExecutionPolicyVersion,
+        long EvidenceVersion,
+        int Attempt,
+        RetentionRunRetryRequestState State,
+        DateTimeOffset RequestedAtUtc,
+        DateTimeOffset? ScheduledAtUtc,
+        DateTimeOffset? CompletedAtUtc,
+        string? FailureCode,
         long Version);
 }

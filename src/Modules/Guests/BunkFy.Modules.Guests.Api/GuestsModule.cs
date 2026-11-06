@@ -129,7 +129,8 @@ public sealed class GuestsModule : IModule
                         request.NationalityCountryCode,
                         request.PreferredLanguageTag,
                         request.Notes,
-                        actor),
+                        actor,
+                        LanguageTags: request.LanguageTags),
                     cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
         })
             .Produces<GuestMutationReceiptDto>(StatusCodes.Status200OK)
@@ -165,7 +166,8 @@ public sealed class GuestsModule : IModule
                         request.NationalityCountryCode,
                         request.PreferredLanguageTag,
                         request.Notes,
-                        actor),
+                        actor,
+                        request.LanguageTags),
                     cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
         })
             .Produces<GuestDataRightsCorrectionReceiptDto>(StatusCodes.Status200OK)
@@ -374,7 +376,8 @@ public sealed class GuestsModule : IModule
                         request.PreferredLanguageTag,
                         request.Notes,
                         request.ExpectedVersion,
-                        actor),
+                        actor,
+                        request.LanguageTags),
                     cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
         })
             .Produces<GuestMutationReceiptDto>(StatusCodes.Status200OK)
@@ -423,7 +426,8 @@ public sealed class GuestsModule : IModule
         DateOnly? DateOfBirth,
         string? NationalityCountryCode,
         string? PreferredLanguageTag,
-        string? Notes);
+        string? Notes,
+        string[]? LanguageTags = null);
 
     public sealed record GuestProfileUpdateRequest(
         Guid OperationId,
@@ -435,7 +439,8 @@ public sealed class GuestsModule : IModule
         string? NationalityCountryCode,
         string? PreferredLanguageTag,
         string? Notes,
-        long ExpectedVersion);
+        long ExpectedVersion,
+        string[]? LanguageTags = null);
 
     public sealed record GuestDataRightsCorrectionRequest(
         Guid IdempotencyKey,
@@ -450,7 +455,8 @@ public sealed class GuestsModule : IModule
         DateOnly? DateOfBirth,
         string? NationalityCountryCode,
         string? PreferredLanguageTag,
-        string? Notes);
+        string? Notes,
+        string[]? LanguageTags = null);
 
     public sealed record ApplyGuestProcessingRestrictionRequest(
         Guid IdempotencyKey,

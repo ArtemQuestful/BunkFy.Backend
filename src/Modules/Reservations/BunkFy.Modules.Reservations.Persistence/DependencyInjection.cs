@@ -34,6 +34,11 @@ public static class DependencyInjection
                 ReservationsMigrations.HistoryTable));
 
         builder.Services.TryAddScoped<IReservationRepository, ReservationRepository>();
+        builder.Services.TryAddScoped<IStationDueArrivalRepository, StationDueArrivalRepository>();
+        builder.Services.TryAddScoped<IStationDueDepartureRepository, StationDueDepartureRepository>();
+        builder.Services.TryAddScoped<
+            IReservationOperationsSnapshotReader,
+            ReservationOperationsSnapshotReader>();
         builder.Services.TryAddScoped<
             IReservationGuestRecordLinkProcessRepository,
             ReservationGuestRecordLinkProcessRepository>();
@@ -79,6 +84,9 @@ public static class DependencyInjection
         builder.Services.TryAddScoped<
             IReservationManagementOperationRepository,
             ReservationManagementOperationRepository>();
+        builder.Services.TryAddScoped<
+            IReservationStayAmendmentOperationRepository,
+            ReservationStayAmendmentOperationRepository>();
         builder.Services.TryAddScoped<IInventoryProjectionRepository, InventoryProjectionRepository>();
         builder.Services.TryAddScoped<IReservationGuestProfileProjectionRepository, ReservationGuestProfileProjectionRepository>();
         builder.Services.TryAddScoped<ReservationArrivalReminderRepository>();
@@ -91,7 +99,7 @@ public static class DependencyInjection
         builder.Services.TryAddScoped<
             IProjectionRebuildWriter<GuestProcessingRestrictionProjectionExport>,
             ReservationGuestRestrictionsProjectionRebuildWriter>();
-        builder.Services.TryAddScoped<IProjectionRebuildWriter<PropertyTopologyProjectionExport>, ReservationPropertyProjectionRebuildWriter>();
+        builder.Services.TryAddScoped<IReservationPropertyProjectionRebuildWriter, ReservationPropertyProjectionRebuildWriter>();
         builder.Services.TryAddScoped<
             IProjectionRebuildWriter<
                 ReservationProcessingRestrictionProjectionSnapshot>,

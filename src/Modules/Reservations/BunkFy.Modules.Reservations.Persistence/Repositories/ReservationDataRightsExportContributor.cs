@@ -1,10 +1,13 @@
 namespace BunkFy.Modules.Reservations.Persistence.Repositories;
 
+using System.Data;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
 using BunkFy.Modules.Reservations.Domain.DataRights;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 internal sealed class ReservationDataRightsExportContributor(
     ReservationsDbContext dbContext,
@@ -16,6 +19,8 @@ internal sealed class ReservationDataRightsExportContributor(
     public const string ExternalOperationRecordType = "reservation-external-operation";
     public const string ManagementOperationRecordType =
         "reservation-management-operation";
+    public const string StayAmendmentOperationRecordType =
+        "reservation-stay-amendment-operation";
     public const string ArrivalReminderRecordType = "reservation-arrival-reminder";
     public const string DataRightsCorrectionReceiptRecordType =
         "reservation-data-rights-correction-receipt";
@@ -46,6 +51,33 @@ internal sealed class ReservationDataRightsExportContributor(
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(sink);
 
+        if (!dbContext.Database.IsRelational())
+        {
+            return await this.ExportSnapshotAsync(request, sink, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            return DataRightsSubjectExportResult.ScopeUnavailable();
+        }
+
+        await using IDbContextTransaction transaction = await dbContext.Database
+            .BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken)
+            .ConfigureAwait(false);
+        DataRightsSubjectExportResult result = await this.ExportSnapshotAsync(
+            request,
+            sink,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task<DataRightsSubjectExportResult> ExportSnapshotAsync(
+        DataRightsSubjectExportRequest request,
+        IDataRightsExportSink sink,
+        CancellationToken cancellationToken)
+    {
         if (!this.IsValidScope(request.CaseType, request.TenantId, request.PropertyId))
         {
             return DataRightsSubjectExportResult.ScopeUnavailable();
@@ -102,6 +134,7 @@ internal sealed class ReservationDataRightsExportContributor(
             reservation.ReleaseRequestId,
             reservation.LastReleaseRejectionCode,
             reservation.LastAllocationAmendmentRejectionCode,
+            reservation.PendingInventoryAmendmentRequestId,
             reservation.PendingStayBusinessDate,
             reservation.CheckedInBusinessDate,
             reservation.CheckedInAtUtc,
@@ -540,6 +573,55 @@ internal sealed class ReservationDataRightsExportContributor(
             recordCount = checked(recordCount + 1);
         }
 
+        IQueryable<ReservationStayAmendmentOperation>
+            stayAmendmentOperations = dbContext.StayAmendmentOperations
+                .AsNoTracking()
+                .Where(operation =>
+                    operation.PropertyId == propertyId &&
+                    operation.ReservationId == reservation.Id)
+                .OrderBy(operation => operation.RequestedAtUtc)
+                .ThenBy(operation => operation.Id);
+        await foreach (ReservationStayAmendmentOperation operation in
+                           stayAmendmentOperations
+                               .AsAsyncEnumerable()
+                               .WithCancellation(cancellationToken)
+                               .ConfigureAwait(false))
+        {
+            ReservationStayAmendmentOperationDataRightsExport export = new(
+                operation.Id,
+                operation.PropertyId,
+                operation.ReservationId,
+                operation.InventoryRequestId,
+                operation.RequestSchemaVersion,
+                operation.RequestFingerprint,
+                operation.TargetArrival,
+                operation.TargetDeparture,
+                operation.TargetExpectedArrivalTime,
+                operation.TargetExpectedDepartureTime,
+                operation.TargetInventoryUnitIds is null
+                    ? null
+                    : operation.GetTargetInventoryUnitIds()
+                        .Order()
+                        .ToArray(),
+                operation.ExpectedDetailsRevision,
+                operation.Outcome,
+                operation.OperationVersion,
+                operation.RequestedAtUtc,
+                operation.UpdatedAtUtc,
+                operation.CompletedAtUtc,
+                operation.ResultingDetailsRevision,
+                operation.ResultingReservationVersion,
+                operation.ResultingAllocationVersion,
+                operation.RejectionCode,
+                operation.ReconciliationCount,
+                operation.LastReconciledAtUtc);
+            await sink.WriteAsync(
+                ReservationDataRightsExportSchema
+                    .CreateStayAmendmentOperationRecord(export),
+                cancellationToken).ConfigureAwait(false);
+            recordCount = checked(recordCount + 1);
+        }
+
         IQueryable<ReservationArrivalReminderDataRightsExport> reminders =
             dbContext.ArrivalReminders
                 .AsNoTracking()
@@ -573,7 +655,17 @@ internal sealed class ReservationDataRightsExportContributor(
             recordCount = checked(recordCount + 1);
         }
 
-        return DataRightsSubjectExportResult.Success(recordCount);
+        long? finalReservationVersion = await dbContext.Reservations
+            .AsNoTracking()
+            .Where(candidate =>
+                candidate.PropertyId == propertyId &&
+                candidate.Id == coordinate.RecordId)
+            .Select(candidate => (long?)candidate.Version)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return finalReservationVersion == coordinate.RecordVersion
+            ? DataRightsSubjectExportResult.Success(recordCount)
+            : DataRightsSubjectExportResult.Stale();
     }
 
     private Task<bool> IsKnownPropertyAsync(

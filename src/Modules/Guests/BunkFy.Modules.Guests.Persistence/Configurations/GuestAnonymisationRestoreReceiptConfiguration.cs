@@ -7,6 +7,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 internal sealed class GuestAnonymisationRestoreReceiptConfiguration
     : IEntityTypeConfiguration<GuestAnonymisationRestoreReceipt>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(
         EntityTypeBuilder<GuestAnonymisationRestoreReceipt> builder)
     {
@@ -14,6 +17,11 @@ internal sealed class GuestAnonymisationRestoreReceiptConfiguration
             "guest_anonymisation_restore_receipts",
             table =>
             {
+                table.HasCheckConstraint(
+                    "CK_guest_anonymisation_restore_receipts_coordinates",
+                    $"\"Id\" <> '{EmptyGuid}' AND \"LedgerEntryId\" <> '{EmptyGuid}' AND " +
+                    $"\"GuestId\" <> '{EmptyGuid}' AND \"OwnerReceiptId\" <> '{EmptyGuid}' AND " +
+                    "trim(\"ScopeId\") <> ''");
                 table.HasCheckConstraint(
                     "CK_guest_anonymisation_restore_receipts_contract",
                     $"\"ContractVersion\" = {GuestAnonymisationRestoreReceipt.CurrentContractVersion}");
@@ -24,20 +32,24 @@ internal sealed class GuestAnonymisationRestoreReceiptConfiguration
                     "CK_guest_anonymisation_restore_receipts_versions",
                     "\"OwnerReceiptContractVersion\" >= 1 AND " +
                     "\"ResultingGuestVersion\" >= 1 AND " +
-                    "\"TombstoneRevision\" >= 1");
+                    $"\"TombstoneRevision\" BETWEEN 1 AND " +
+                    $"{GuestAnonymisationTombstone.MaximumRevision}");
                 table.HasCheckConstraint(
                     "CK_guest_anonymisation_restore_receipts_digests",
                     $"char_length(\"OwnerReceiptSha256\") = {GuestAnonymisationReceipt.Sha256Length} AND " +
-                    $"char_length(\"CanonicalSha256\") = {GuestAnonymisationReceipt.Sha256Length}");
+                    "\"OwnerReceiptSha256\" ~ '^[0-9a-f]+$' AND " +
+                    $"char_length(\"CanonicalSha256\") = {GuestAnonymisationReceipt.Sha256Length} AND " +
+                    "\"CanonicalSha256\" ~ '^[0-9a-f]+$'");
+                table.HasCheckConstraint(
+                    "CK_guest_anonymisation_restore_receipts_timestamp",
+                    "\"ReplayedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
             });
 
         builder.HasKey(receipt => receipt.Id);
         builder.Property(receipt => receipt.Id).ValueGeneratedNever();
-        builder.HasAlternateKey(receipt => new
-        {
-            receipt.ScopeId,
-            receipt.Id
-        });
+        builder.Property(receipt => receipt.ScopeId)
+            .HasMaxLength(128)
+            .IsRequired();
         builder.Property(receipt => receipt.OwnerReceiptSha256)
             .HasMaxLength(GuestAnonymisationReceipt.Sha256Length)
             .IsFixedLength()
@@ -49,9 +61,11 @@ internal sealed class GuestAnonymisationRestoreReceiptConfiguration
         builder.HasIndex(receipt => new
         {
             receipt.ScopeId,
-            receipt.GuestId,
-            receipt.LedgerEntryId
-        }).IsUnique();
+            receipt.GuestId
+        })
+            .HasDatabaseName(
+                "UX_guest_anonymisation_restore_receipts_tombstone")
+            .IsUnique();
         builder.HasOne<GuestAnonymisationTombstone>()
             .WithMany()
             .HasForeignKey(receipt => new
@@ -64,6 +78,8 @@ internal sealed class GuestAnonymisationRestoreReceiptConfiguration
                 tombstone.ScopeId,
                 tombstone.Id
             })
+            .HasConstraintName(
+                "FK_guest_anonymisation_restore_receipts_tombstone")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

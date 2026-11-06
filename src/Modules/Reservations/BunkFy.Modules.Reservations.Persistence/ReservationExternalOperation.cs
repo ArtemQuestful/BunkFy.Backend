@@ -2,8 +2,9 @@ namespace BunkFy.Modules.Reservations.Persistence;
 
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Contracts;
+using Gma.Framework.Domain;
 
-public sealed class ReservationExternalOperation
+public sealed class ReservationExternalOperation : IScopedEntity
 {
     public const string RedactedRequestFingerprint =
         "0000000000000000000000000000000000000000000000000000000000000000";

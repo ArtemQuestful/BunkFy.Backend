@@ -92,6 +92,7 @@ internal sealed partial class GuestsTenantTerminationContributor
                     receipt.AffectedPropertyCount,
                     receipt.RetentionDeadlineUtc,
                     receipt.PolicySetSha256,
+                    receipt.TimeZoneCatalogVersion,
                     receipt.EventId,
                     receipt.CompletedAtUtc,
                     receipt.CanonicalSha256),

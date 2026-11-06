@@ -19,7 +19,9 @@ public sealed record DataRightsOperationApprovalRequest(
     long RecordVersion,
     DataRightsRestrictionDirective RestrictionDirective = DataRightsRestrictionDirective.Unknown,
     string? ExecutingActorId = null,
-    DataRightsCaseType CaseType = DataRightsCaseType.GuestRights);
+    DataRightsCaseType CaseType = DataRightsCaseType.GuestRights,
+    Guid? RestrictionTargetOwnerOperationId = null,
+    long? RestrictionTargetOwnerOperationVersion = null);
 
 public sealed record DataRightsOperationApprovalResult(
     bool IsApproved,
@@ -49,5 +51,6 @@ public enum DataRightsOperationApprovalDenial
     RestrictionDirectiveMismatch = 7,
     ApprovalEvidenceMissing = 8,
     ExecutionActorRequired = 9,
-    DecisionActorCannotExecute = 10
+    DecisionActorCannotExecute = 10,
+    RestrictionTargetMismatch = 11
 }

@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Reservations.Application.Handlers;
 
 using BunkFy.Modules.Inventory.Contracts;
+using BunkFy.Modules.Reservations.Application.Policies;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
 
@@ -44,6 +45,9 @@ internal static class ReservationMappings
             ReservationState.CheckedOut => ReservationStatus.CheckedOut,
             _ => ReservationStatus.Unknown
         },
+        ReservationInventoryTruthPolicy.HoldsInventory(
+            reservation.Status,
+            reservation.AllocationId),
         reservation.AllocationRequestId,
         reservation.AllocationId,
         reservation.AllocationVersion,

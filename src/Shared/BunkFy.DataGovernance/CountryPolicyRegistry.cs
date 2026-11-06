@@ -9,13 +9,16 @@ public sealed class CountryPolicyRegistry
     public const int MaximumAcceptedAcknowledgements = 64;
 
     private readonly IReadOnlyDictionary<CountryPolicyIdentity, RegisteredPolicy> policies;
+    private readonly CountryPolicyTimeZoneRules timeZoneRules;
 
     private CountryPolicyRegistry(
         CountryPolicyRuntimeMode runtimeMode,
-        IReadOnlyDictionary<CountryPolicyIdentity, RegisteredPolicy> policies)
+        IReadOnlyDictionary<CountryPolicyIdentity, RegisteredPolicy> policies,
+        CountryPolicyTimeZoneRules timeZoneRules)
     {
         this.RuntimeMode = runtimeMode;
         this.policies = policies;
+        this.timeZoneRules = timeZoneRules;
     }
 
     public CountryPolicyRuntimeMode RuntimeMode { get; }
@@ -23,10 +26,22 @@ public sealed class CountryPolicyRegistry
     public static CountryPolicyRegistry Create(
         IEnumerable<CountryPolicyPackArtifact> artifacts,
         IEnumerable<CountryPolicyAllowlistEntry> allowlist,
-        CountryPolicyRuntimeMode runtimeMode)
+        CountryPolicyRuntimeMode runtimeMode) =>
+        Create(
+            artifacts,
+            allowlist,
+            runtimeMode,
+            CountryPolicyTimeZoneRules.Unavailable);
+
+    public static CountryPolicyRegistry Create(
+        IEnumerable<CountryPolicyPackArtifact> artifacts,
+        IEnumerable<CountryPolicyAllowlistEntry> allowlist,
+        CountryPolicyRuntimeMode runtimeMode,
+        CountryPolicyTimeZoneRules timeZoneRules)
     {
         ArgumentNullException.ThrowIfNull(artifacts);
         ArgumentNullException.ThrowIfNull(allowlist);
+        ArgumentNullException.ThrowIfNull(timeZoneRules);
         if (!Enum.IsDefined(runtimeMode))
         {
             throw new ArgumentOutOfRangeException(nameof(runtimeMode));
@@ -51,7 +66,10 @@ public sealed class CountryPolicyRegistry
             }
 
             CountryPolicyPackArtifact frozenArtifact = Freeze(artifact);
-            IReadOnlyList<string> artifactErrors = CountryPolicyPackValidator.Validate(frozenArtifact.Document);
+            IReadOnlyList<string> artifactErrors =
+                CountryPolicyPackValidator.Validate(
+                    frozenArtifact.Document,
+                    timeZoneRules);
             if (artifactErrors.Count > 0)
             {
                 errors.AddRange(artifactErrors);
@@ -126,7 +144,7 @@ public sealed class CountryPolicyRegistry
             throw new CountryPolicyRegistryValidationException(errors);
         }
 
-        return new(runtimeMode, registered);
+        return new(runtimeMode, registered, timeZoneRules);
     }
 
     public IReadOnlyList<CountryPolicyDescriptor> ListPolicies() =>
@@ -305,7 +323,10 @@ public sealed class CountryPolicyRegistry
             request.Right == CountryPolicyRight.Unknown ||
             string.IsNullOrWhiteSpace(request.TimeZoneId) ||
             request.TimeZoneId.Length > 128 ||
-            request.TimeZoneId.Any(char.IsControl))
+            request.TimeZoneId.Any(char.IsControl) ||
+            !this.timeZoneRules.TryResolve(
+                request.TimeZoneId,
+                out CountryPolicyTimeZoneResolution resolution))
         {
             return CountryPolicyRightsResponseDecision.Deny(
                 CountryPolicyDecisionReason.InvalidRequest);
@@ -333,7 +354,7 @@ public sealed class CountryPolicyRegistry
         }
 
         if (!rule.AllowedTimeZoneIds.Contains(
-                request.TimeZoneId,
+                resolution.CanonicalTimeZoneId,
                 StringComparer.Ordinal))
         {
             return CountryPolicyRightsResponseDecision.Deny(
@@ -342,8 +363,9 @@ public sealed class CountryPolicyRegistry
 
         if (!CountryPolicyCalendarDeadlineCalculator.TryCalculate(
                 request.ReceivedAtUtc,
-                request.TimeZoneId,
+                resolution.CanonicalTimeZoneId,
                 rule.Period,
+                this.timeZoneRules,
                 out DateTimeOffset dueAtUtc))
         {
             return CountryPolicyRightsResponseDecision.Deny(
@@ -362,11 +384,57 @@ public sealed class CountryPolicyRegistry
                 rule.Period.Years,
                 rule.Period.Months,
                 rule.Period.Days,
-                request.TimeZoneId,
+                resolution.CanonicalTimeZoneId,
                 pack.EffectiveAtUtc,
                 pack.ExpiresAtUtc,
                 request.ReceivedAtUtc,
                 dueAtUtc));
+    }
+
+    public CountryPolicyTimeZoneDecision EvaluateTimeZoneCompatibility(
+        CountryPolicyTimeZoneRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Binding is null)
+        {
+            return CountryPolicyTimeZoneDecision.Deny(
+                CountryPolicyDecisionReason.MissingBinding);
+        }
+
+        if (!this.timeZoneRules.TryResolve(
+                request.TimeZoneId,
+                out CountryPolicyTimeZoneResolution resolution) ||
+            resolution.Kind !=
+                CountryPolicyTimeZoneResolutionKind.Canonical)
+        {
+            return CountryPolicyTimeZoneDecision.Deny(
+                CountryPolicyDecisionReason.InvalidRequest);
+        }
+
+        if (!this.TryEvaluateBoundPolicy(
+                request.Binding,
+                request.AccommodationType,
+                request.ObservedAtUtc,
+                requireBindingDigest: true,
+                out BoundPolicyContext context,
+                out CountryPolicyDecisionReason reason))
+        {
+            return CountryPolicyTimeZoneDecision.Deny(reason);
+        }
+
+        CountryPolicyRightsResponseRule[]? rules =
+            context.Pack.RightsRule.ResponseRules;
+        if (rules is { Length: > 0 } &&
+            rules.Any(rule => !rule.AllowedTimeZoneIds.Contains(
+                resolution.CanonicalTimeZoneId,
+                StringComparer.Ordinal)))
+        {
+            return CountryPolicyTimeZoneDecision.Deny(
+                CountryPolicyDecisionReason.TimeZoneNotPermitted);
+        }
+
+        return CountryPolicyTimeZoneDecision.Allow(
+            resolution.CanonicalTimeZoneId);
     }
 
     private CountryPolicyDecision Evaluate(
@@ -817,6 +885,12 @@ public sealed record CountryPolicyRightsResponseRequest(
     string TimeZoneId,
     DateTimeOffset ReceivedAtUtc);
 
+public sealed record CountryPolicyTimeZoneRequest(
+    CountryPolicyBinding? Binding,
+    string AccommodationType,
+    string TimeZoneId,
+    DateTimeOffset ObservedAtUtc);
+
 public sealed record CountryPolicyBinding(
     string OperatingCountryCode,
     string PolicyId,
@@ -983,6 +1057,45 @@ public sealed record CountryPolicyRightsResponseDecision
             evidence ?? throw new ArgumentNullException(nameof(evidence)));
 
     public static CountryPolicyRightsResponseDecision Deny(
+        CountryPolicyDecisionReason reason)
+    {
+        if (!Enum.IsDefined(reason) ||
+            reason is CountryPolicyDecisionReason.Unknown or
+                CountryPolicyDecisionReason.Allowed)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
+
+        return new(false, reason, null);
+    }
+}
+
+public sealed record CountryPolicyTimeZoneDecision
+{
+    private CountryPolicyTimeZoneDecision(
+        bool isAllowed,
+        CountryPolicyDecisionReason reason,
+        string? timeZoneId)
+    {
+        this.IsAllowed = isAllowed;
+        this.Reason = reason;
+        this.TimeZoneId = timeZoneId;
+    }
+
+    public bool IsAllowed { get; }
+    public CountryPolicyDecisionReason Reason { get; }
+    public string? TimeZoneId { get; }
+
+    public static CountryPolicyTimeZoneDecision Allow(string timeZoneId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(timeZoneId);
+        return new(
+            true,
+            CountryPolicyDecisionReason.Allowed,
+            timeZoneId);
+    }
+
+    public static CountryPolicyTimeZoneDecision Deny(
         CountryPolicyDecisionReason reason)
     {
         if (!Enum.IsDefined(reason) ||

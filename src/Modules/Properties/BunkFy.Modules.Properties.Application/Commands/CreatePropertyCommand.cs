@@ -7,5 +7,6 @@ public sealed record CreatePropertyCommand(
     Guid OperationId,
     string Name,
     string Code,
-    string TimeZoneId)
+    string TimeZoneId,
+    string ActorId)
     : ITransactionalCommand<PropertyMutationReceiptDto>;

@@ -141,7 +141,7 @@ internal sealed class PropertiesTenantDestroyOperation : IScopedEntity
         PropertiesTenantDestroyStage stage)
     {
         if (stage is < PropertiesTenantDestroyStage.OutboxMessages or
-            > PropertiesTenantDestroyStage.PropertyMutationOperations or
+            > PropertiesTenantDestroyStage.PropertyTimeZoneOperations or
             PropertiesTenantDestroyStage.Completed)
         {
             throw new InvalidOperationException(
@@ -153,6 +153,8 @@ internal sealed class PropertiesTenantDestroyOperation : IScopedEntity
             PropertiesTenantDestroyStage.Rooms =>
                 PropertiesTenantDestroyStage.PropertyMutationOperations,
             PropertiesTenantDestroyStage.PropertyMutationOperations =>
+                PropertiesTenantDestroyStage.PropertyTimeZoneOperations,
+            PropertiesTenantDestroyStage.PropertyTimeZoneOperations =>
                 PropertiesTenantDestroyStage.Properties,
             _ => (PropertiesTenantDestroyStage)((int)stage + 1)
         };
@@ -172,5 +174,6 @@ internal enum PropertiesTenantDestroyStage
     PropertyOperationLocks = 8,
     RoomOperationLocks = 9,
     Completed = 10,
-    PropertyMutationOperations = 11
+    PropertyMutationOperations = 11,
+    PropertyTimeZoneOperations = 12
 }

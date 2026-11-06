@@ -38,6 +38,11 @@ internal static class TestIngestionExecution
             int taskAttempt,
             CancellationToken cancellationToken) => Task.CompletedTask;
 
+        public Task AcquireRetentionExecutionAsync(
+            string tenantId,
+            Guid executionId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task AcquireConnectionReadAsync(
             string tenantId,
             Guid connectionId,

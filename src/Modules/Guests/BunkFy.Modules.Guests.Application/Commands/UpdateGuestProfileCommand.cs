@@ -17,6 +17,7 @@ public sealed record UpdateGuestProfileCommand(
     string? PreferredLanguageTag,
     string? Notes,
     long ExpectedVersion,
-    string ActorId) :
+    string ActorId,
+    string[]? LanguageTags = null) :
     ITransactionalCommand<GuestMutationReceiptDto>,
     IGuestsPersistenceRetryableCommand;

@@ -86,19 +86,118 @@ public sealed class DataRightsPropertyProjectionRepositoryTests
         Assert.Equal(6, snapshot.TopologySourceVersion);
     }
 
+    [Fact]
+    public async Task Same_property_id_is_filtered_and_mutated_only_inside_the_active_tenant()
+    {
+        Guid propertyId = Guid.NewGuid();
+        string databaseName = $"data-rights-property-scope-{Guid.NewGuid():N}";
+        InMemoryDatabaseRoot root = new();
+        await using (DataRightsDbContext seed = CreateDbContext(
+            root,
+            databaseName,
+            scopeId: string.Empty,
+            scopeEnabled: false))
+        {
+            seed.PropertyProjections.AddRange(
+                new DataRightsPropertyProjection(
+                    "tenant-b",
+                    propertyId,
+                    "Tenant B",
+                    "America/Toronto",
+                    PropertyStatus.Retired,
+                    1),
+                new DataRightsPropertyProjection(
+                    "tenant-a",
+                    propertyId,
+                    "Tenant A",
+                    "Europe/London",
+                    PropertyStatus.Active,
+                    1));
+            await seed.SaveChangesAsync();
+        }
+
+        await using (DataRightsDbContext tenantA = CreateDbContext(
+            root,
+            databaseName,
+            "tenant-a",
+            scopeEnabled: true))
+        {
+            DataRightsPropertyProjectionRepository repository = new(tenantA);
+            DataRightsPropertyPolicySnapshot snapshot = Assert.IsType<
+                DataRightsPropertyPolicySnapshot>(
+                    await repository.GetPolicyAsync(propertyId, CancellationToken.None));
+            Assert.Equal(PropertyStatus.Active, snapshot.Status);
+            Assert.Equal("Europe/London", snapshot.TimeZoneId);
+
+            await repository.ApplyTopologyAsync(
+                new(
+                    "tenant-a",
+                    propertyId,
+                    "Tenant A updated",
+                    "Europe/Paris",
+                    PropertyStatus.Active,
+                    2),
+                CancellationToken.None);
+            await tenantA.SaveChangesAsync();
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                repository.ApplyTopologyAsync(
+                    new(
+                        "tenant-b",
+                        propertyId,
+                        "Foreign update",
+                        "UTC",
+                        PropertyStatus.Active,
+                        3),
+                    CancellationToken.None));
+        }
+
+        await using DataRightsDbContext verify = CreateDbContext(
+            root,
+            databaseName,
+            scopeId: string.Empty,
+            scopeEnabled: false);
+        DataRightsPropertyProjection tenantARow = await verify.PropertyProjections
+            .SingleAsync(property => property.ScopeId == "tenant-a");
+        DataRightsPropertyProjection tenantBRow = await verify.PropertyProjections
+            .SingleAsync(property => property.ScopeId == "tenant-b");
+        Assert.Equal("Tenant A updated", tenantARow.Name);
+        Assert.Equal("Europe/Paris", tenantARow.TimeZoneId);
+        Assert.Equal(2, tenantARow.TopologySourceVersion);
+        Assert.Equal("Tenant B", tenantBRow.Name);
+        Assert.Equal("America/Toronto", tenantBRow.TimeZoneId);
+        Assert.Equal(1, tenantBRow.TopologySourceVersion);
+
+        DataRightsPropertyProjectionRepository unscopedRepository = new(verify);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            unscopedRepository.GetPolicyAsync(propertyId, CancellationToken.None));
+    }
+
     private static DataRightsDbContext CreateDbContext(
         InMemoryDatabaseRoot root)
+        => CreateDbContext(
+            root,
+            $"data-rights-property-{Guid.NewGuid():N}",
+            "tenant-a",
+            scopeEnabled: true);
+
+    private static DataRightsDbContext CreateDbContext(
+        InMemoryDatabaseRoot root,
+        string databaseName,
+        string scopeId,
+        bool scopeEnabled)
     {
         DbContextOptions<DataRightsDbContext> options =
             new DbContextOptionsBuilder<DataRightsDbContext>()
-                .UseInMemoryDatabase($"data-rights-property-{Guid.NewGuid():N}", root)
+                .UseInMemoryDatabase(databaseName, root)
                 .Options;
-        return new(options, new TestScopeContext());
+        return new(options, new TestScopeContext(scopeId, scopeEnabled));
     }
 
-    private sealed class TestScopeContext : IScopeContext
+    private sealed class TestScopeContext(string scopeId, bool scopeEnabled)
+        : IScopeContext
     {
-        public bool IsEnabled => true;
-        public string ScopeId => "tenant-a";
+        public bool IsEnabled { get; } = scopeEnabled;
+        public string ScopeId { get; } = scopeId;
     }
 }

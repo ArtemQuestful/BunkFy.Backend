@@ -106,7 +106,16 @@ internal sealed class TenantTerminationStartCoordinator(
         }
 
         TenantTerminationProcess? existingProcess = state!.Process;
-        string actor = command.ActorId?.Trim() ?? string.Empty;
+        string recoveryActor = command.ActorId?.Trim() ?? string.Empty;
+        if (!IsActor(recoveryActor))
+        {
+            return Result.Failure<TenantTerminationStartDto>(
+                DataRightsApplicationErrors.TransitionInvalid);
+        }
+
+        string executionActor = requireProtectedIntent && existingIntent is not null
+            ? existingIntent.ExecutingActorId
+            : recoveryActor;
         if (existingProcess is not null)
         {
             if (requiredProcessPresence is false ||
@@ -124,7 +133,7 @@ internal sealed class TenantTerminationStartCoordinator(
                     normalizedEvidence.Value,
                     idempotencyKey,
                     terminationEpoch,
-                    actor)
+                    executionActor)
                     ? Success(dataRightsCase, existingProcess)
                     : Result.Failure<TenantTerminationStartDto>(
                         DataRightsApplicationErrors
@@ -141,7 +150,7 @@ internal sealed class TenantTerminationStartCoordinator(
         Result startable = ValidateStartableCase(
             dataRightsCase,
             command.ExpectedCaseVersion,
-            actor,
+            executionActor,
             clock.UtcNow);
         if (startable.IsFailure)
         {
@@ -192,7 +201,7 @@ internal sealed class TenantTerminationStartCoordinator(
                 normalizedEvidence.Value.OwnerCatalogSha256,
                 idempotencyKey,
                 terminationEpoch,
-                actor,
+                executionActor,
                 clock.UtcNow);
         if (!MatchesIntent(
                 intent,
@@ -200,7 +209,7 @@ internal sealed class TenantTerminationStartCoordinator(
                 normalizedEvidence.Value.OwnerCatalogSha256,
                 idempotencyKey,
                 terminationEpoch,
-                actor,
+                executionActor,
                 requireCaseExecution: false))
         {
             return Result.Failure<TenantTerminationStartDto>(
@@ -222,7 +231,7 @@ internal sealed class TenantTerminationStartCoordinator(
 
         Result began = dataRightsCase.BeginTenantTerminationExecution(
             command.ExpectedCaseVersion,
-            actor,
+            executionActor,
             intent.ExecutionStartedAtUtc);
         if (began.IsFailure)
         {
@@ -241,7 +250,7 @@ internal sealed class TenantTerminationStartCoordinator(
                 intent.PolicyEvidenceSha256,
                 intent.ApprovedBy,
                 intent.ApprovedAtUtc,
-                actor,
+                executionActor,
                 intent.ExecutionStartedAtUtc);
         if (prepared.IsFailure)
         {
@@ -276,19 +285,8 @@ internal sealed class TenantTerminationStartCoordinator(
             TenantTerminationReplayAppendReceipt receipt =
                 await replayStore.AppendAsync(entry, cancellationToken)
                     .ConfigureAwait(false);
-            return receipt.ContractVersion ==
-                    TenantTerminationReplayAppendReceipt
-                        .CurrentContractVersion &&
-                receipt.Kind == TenantTerminationReplayEntryKind.Intent &&
-                string.Equals(
-                    receipt.LogicalEntryId,
-                    entry.LogicalEntryId,
-                    StringComparison.Ordinal) &&
-                receipt.Cursor.Sequence > 0 &&
-                TenantTerminationReplayProof.IsSha256(
-                    receipt.Cursor.RecordSha256) &&
-                TenantTerminationReplayProof.IsSha256(
-                    receipt.DurabilityProofSha256)
+            cancellationToken.ThrowIfCancellationRequested();
+            return TenantTerminationReplayDurability.Matches(receipt, entry)
                     ? Result.Success()
                     : Result.Failure(
                         DataRightsApplicationErrors
@@ -350,6 +348,9 @@ internal sealed class TenantTerminationStartCoordinator(
                 : Result.Failure(
                     DataRightsApplicationErrors.TransitionInvalid);
     }
+
+    private static bool IsActor(string actor) =>
+        actor.Length is > 0 and <= DataRightsCase.ActorIdMaxLength;
 
     private static TenantTerminationReplayIntent CreateIntent(
         DataRightsCase dataRightsCase,

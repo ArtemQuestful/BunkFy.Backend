@@ -1,5 +1,6 @@
 namespace BunkFy.Modules.Reservations.Tests;
 
+using Gma.Framework.Domain;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -15,6 +16,85 @@ using Xunit;
 [Trait("Category", "Unit")]
 public sealed class ReservationsModelTests
 {
+    [Fact]
+    public void Every_reservations_scope_shaped_entity_is_scoped_and_filtered()
+    {
+        using ReservationsDbContext dbContext = CreateDbContext();
+
+        IEntityType[] scopeShapedEntities = dbContext.Model.GetEntityTypes()
+            .Where(entity =>
+                !entity.IsOwned() &&
+                entity.ClrType.Namespace?.StartsWith(
+                    "BunkFy.Modules.Reservations.",
+                    StringComparison.Ordinal) == true &&
+                entity.FindProperty(nameof(IScopedEntity.ScopeId)) is not null)
+            .ToArray();
+        Assert.NotEmpty(scopeShapedEntities);
+
+        string[] invalidEntities = scopeShapedEntities
+            .Where(entity =>
+                !typeof(IScopedEntity).IsAssignableFrom(entity.ClrType) ||
+                entity.GetDeclaredQueryFilters().Count == 0)
+            .Select(entity => entity.ClrType.FullName ?? entity.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(invalidEntities);
+    }
+
+    [Fact]
+    public void Every_reservations_tenant_relationship_is_scope_qualified()
+    {
+        using ReservationsDbContext dbContext = CreateDbContext();
+
+        IEntityType[] scopedEntities = dbContext.Model.GetEntityTypes()
+            .Where(entity =>
+                !entity.IsOwned() &&
+                entity.ClrType.Namespace?.StartsWith(
+                    "BunkFy.Modules.Reservations.",
+                    StringComparison.Ordinal) == true &&
+                typeof(IScopedEntity).IsAssignableFrom(entity.ClrType))
+            .ToArray();
+        Assert.NotEmpty(scopedEntities);
+
+        string[] unqualifiedRelationships = scopedEntities
+            .SelectMany(entity => entity.GetForeignKeys())
+            .Where(foreignKey =>
+                typeof(IScopedEntity).IsAssignableFrom(
+                    foreignKey.PrincipalEntityType.ClrType))
+            .Where(foreignKey =>
+                !foreignKey.Properties.Any(property =>
+                    property.Name == nameof(IScopedEntity.ScopeId)) ||
+                !foreignKey.PrincipalKey.Properties.Any(property =>
+                    property.Name == nameof(IScopedEntity.ScopeId)))
+            .Select(foreignKey =>
+                $"{foreignKey.DeclaringEntityType.ClrType.FullName} -> " +
+                foreignKey.PrincipalEntityType.ClrType.FullName)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(unqualifiedRelationships);
+    }
+
+    [Fact]
+    public void Tenant_owned_operation_history_and_guest_projection_are_query_scoped()
+    {
+        using ReservationsDbContext dbContext = CreateDbContext();
+
+        Type[] scopedTypes =
+        [
+            typeof(ReservationManagementOperation),
+            typeof(ReservationExternalOperation),
+            typeof(ReservationDetailsHistoryEntry),
+            typeof(ReservationGuestProfileProjection)
+        ];
+
+        Assert.All(
+            scopedTypes,
+            type => Assert.NotEmpty(
+                dbContext.Model.FindEntityType(type)!.GetDeclaredQueryFilters()));
+    }
+
     [Fact]
     public void Tenant_revision_is_scope_keyed_and_concurrency_guarded()
     {
@@ -256,6 +336,17 @@ public sealed class ReservationsModelTests
             constraint => Assert.Contains(
                 operation.GetCheckConstraints(),
                 candidate => candidate.Name == constraint));
+        Assert.Contains(
+            "1, 2, 3, 4, 5, 6, 7",
+            operation.GetCheckConstraints().Single(constraint =>
+                constraint.Name == "CK_management_operations_kind").Sql,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "IN (6, 7)",
+            operation.GetCheckConstraints().Single(constraint =>
+                constraint.Name ==
+                    "CK_management_operations_request_fingerprint").Sql,
+            StringComparison.Ordinal);
     }
 
     [Fact]

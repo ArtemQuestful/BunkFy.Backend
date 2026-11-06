@@ -77,7 +77,13 @@ internal sealed class ReleaseStaffProcessingRestrictionCommandHandler(
                     command.ExpectedStaffVersion,
                     DataRightsRestrictionDirective.Release,
                     ExecutingActorId: actorId,
-                    DataRightsCaseType.StaffRights),
+                    CaseType: DataRightsCaseType.StaffRights,
+                    RestrictionTargetOwnerOperationId:
+                        command.LegacyUnboundTarget ? null : command.RestrictionId,
+                    RestrictionTargetOwnerOperationVersion:
+                        command.LegacyUnboundTarget
+                            ? null
+                            : command.ExpectedRestrictionVersion),
                 cancellationToken).ConfigureAwait(false);
         if (!approval.IsApproved)
         {

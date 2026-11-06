@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664 AS source
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b AS source
+ENV DOTNET_PROCESSOR_COUNT=2
 WORKDIR /src
 COPY . .
 
@@ -12,9 +13,10 @@ RUN --mount=type=cache,id=bunkfy-nuget,target=/root/.nuget/packages \
     && dotnet publish src/BunkFy.AdapterHost/BunkFy.AdapterHost.csproj -c Release -o /out/adapter-host --nologo \
     && dotnet publish src/BunkFy.Host.Migrations/BunkFy.Host.Migrations.csproj -c Release -o /out/migrations --nologo
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:1fa23fc4872d95fd71c2833ebe65d7e84a43b2d51a31d119516852f13d9505a7 AS runtime-base
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14@sha256:de0ee358cdd672f7017a003bed21e9ac9ed48a27c922a59b18175b6e82fa7fee AS runtime-base
+RUN apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install -y --no-install-recommends \
+        apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/lib/bunkfy/data-protection /var/lib/bunkfy/file-drop /var/lib/bunkfy/data-rights-ledger-delta \
     && chown -R app:app /var/lib/bunkfy

@@ -1,9 +1,9 @@
 # Secure Staff Enrollment Task
 
-Status: implementation and deployed API smoke complete; browser and
-real-provider proof pending
+Status: implementation, deployed API, and trusted-HTTPS Preview browser proof
+complete; real-provider and hosted-orchestrator proof pending
 Date: 2026-07-21
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 ## Goal
 
@@ -116,11 +116,12 @@ review.
 
 ## Remaining Deployment Gate
 
-Before production launch, complete the browser- and environment-owned portion
-with separate owner and applicant accounts against the hosted Auth redirect and
-web origins. Cover browser continuation, QR rendering, every enabled external
-identity provider, real-provider mail delivery, deployment-controlled Worker
-restart, and operator recovery. Expiry, capacity, rotation, replay, suspension,
-and failed-provisioning recovery remain covered by deterministic repository
-tests and must be sampled again where the private release policy requires it.
-This evidence boundary is not a reason to move product policy into GMA.
+The trusted-HTTPS Preview rehearsal now covers separate owner and applicant
+accounts, browser continuation, invitation and QR rendering, pending denial,
+and a guarded Preview Worker restart. Before production launch, repeat the
+environment-owned portions against the hosted candidate: every enabled external
+identity provider, real-provider mail delivery, hosted orchestrator restart,
+and operator recovery. Expiry, capacity, rotation, replay, suspension, and
+failed-provisioning recovery remain covered by deterministic repository tests
+and must be sampled again where the private release policy requires it. This
+evidence boundary is not a reason to move product policy into GMA.

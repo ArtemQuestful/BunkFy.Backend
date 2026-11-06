@@ -80,6 +80,15 @@ profile is anonymised. Workspace onboarding profile provisioning remains a
 separate integration contract: it may create a missing profile or update an
 active one, but it cannot alter employment lifecycle.
 
+Authoritative Staff member and property-assignment rows are also protected by
+named relational checks. They enforce valid coordinates, normalized profile
+and search-field pairs, anonymised profile scrubbing, lifecycle and assignment
+time ordering, and non-blank actor evidence. Filtered unique indexes permit at
+most one current assignment per member and property and at most one current
+primary assignment per member. These constraints complement aggregate guards,
+member locks, optimistic versions, and idempotency journals; they do not move
+property identity or access authority into Staff.
+
 ## Processing restrictions
 
 Approved tenant-scoped Staff data-rights cases can apply or release processing restrictions. Staff owns the reference-counted effective state and append-only transition receipts; Data Rights owns approval and orchestration. Missing or future projection contracts fail closed.
@@ -102,7 +111,7 @@ companion without reading Staff persistence or placing Auth identifiers in Data
 Rights coordinates.
 
 The
-[Staff anonymisation flow](../../../docs/planning/staff-data-rights-anonymisation-task.md)
+[Staff anonymisation flow](../../../../docs/planning/staff-data-rights-anonymisation-task.md)
 uses explicit employment-governance evidence, independently releasable Staff
 holds, per-member operation serialization, immutable owner receipts, and an
 authority-bound tombstone. Protected restore applies only to Data
@@ -118,8 +127,17 @@ departure access process and idempotently re-deny access. Staff then records
 its own append-only receipt and a `Retention`-authority tombstone; Retention
 receives only counts and stable outcome codes.
 
-The executable delivery contract is
-[Staff record automatic retention](../../../docs/planning/staff-record-retention-task.md).
+Staff carries the active Retention attempt through mutation and completion.
+Failed attempts leave the fair-scan checkpoint untouched, later attempts
+resume from the exact failed cursor, and stale workers cannot mutate or
+terminalize newer work. PostgreSQL independently rejects unreachable control
+state, malformed proof, duplicate event/cursor markers, and receipts missing
+their same-tenant execution, Staff member, or tombstone.
+
+The executable delivery contracts are
+[Staff record automatic retention](../../../../docs/planning/staff-record-retention-task.md)
+and
+[Staff retention control and proof audit integrity](../../../../docs/planning/staff-retention-control-proof-audit-integrity-task.md).
 
 ## Tenant termination export
 
@@ -168,11 +186,19 @@ controls, and final production admission are complete.
 
 ## Runtime
 
-The module is composed in public API, Admin API, Admin CLI, and the optional worker group. PostgreSQL migrations live in `BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations`. The worker consumes Properties lifecycle facts and runs `rebuild-staff-properties` to repair the local projection.
+The module is composed in public API, Admin API, Admin CLI, and the optional worker group. PostgreSQL migrations live in `BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations`. `AddStaffAuthoritativeStateIntegrity` adds the member and assignment fail-closed database contract. The worker consumes Properties lifecycle facts and runs `rebuild-staff-properties` to repair the local projection.
+
+The root superproject's deployed Staff employment verifier, specified by the
+[Staff deployment-proof task](../../../../docs/planning/staff-deployed-employment-lifecycle-proof-task.md),
+exercises the public contracts for one minimal unlinked profile: idempotent and
+optimistic profile changes, property assignment, suspension and resume, and
+departure with atomic current-assignment closure. Its minimized evidence is a
+required production-admission input. Account linking, membership, roles, and
+session lifecycle remain independent invitation, enrollment, and access proofs.
 
 General integration events carry only tenant, staff, lifecycle, Auth-correlation, assignment, effective-date, and version facts. They exclude names, contact details, employee numbers, job labels, departments, and reasons.
 
 [`personal-data-catalog.v1.json`](personal-data-catalog.v1.json) is the executable Staff data contract. [`personal-data-inventory.v1.md`](personal-data-inventory.v1.md) is generated from it and checked by reflection tests against persistence, search copies, public/admin boundaries, cross-module requests, domain events, and integration events.
 
 Broader deferred work is tracked in
-[the Staff Profiles task](../../../docs/planning/staff-profiles-module-task.md).
+[the Staff Profiles task](../../../../docs/planning/staff-profiles-module-task.md).

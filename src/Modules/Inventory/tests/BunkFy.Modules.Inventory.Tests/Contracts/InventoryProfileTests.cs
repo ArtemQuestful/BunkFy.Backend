@@ -33,7 +33,11 @@ public sealed class InventoryProfileTests
         Assert.Single(InventoryModuleMetadata.Descriptor.GetCompositionProfiles());
         IReadOnlyCollection<ModulePermissionDescriptor> permissions = InventoryModuleMetadata.Descriptor.GetPermissions();
 
-        Assert.Equal(4, permissions.Count);
+        Assert.Equal(5, permissions.Count);
+        Assert.Contains(
+            permissions,
+            permission => permission.Code ==
+                InventoryAdminPermissionCodes.BlockGroupsManage);
         Assert.Contains(
             permissions,
             permission => permission.Code == InventoryAdminPermissionCodes.Retire);

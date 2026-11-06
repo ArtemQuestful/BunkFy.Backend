@@ -1,12 +1,14 @@
 namespace BunkFy.Modules.Inventory.Tests;
 
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Inventory.Contracts;
 using BunkFy.Modules.Inventory.Domain.Aggregates;
 using BunkFy.Modules.Inventory.Persistence;
 using BunkFy.Modules.Inventory.Persistence.Repositories;
 using BunkFy.Modules.Inventory.Persistence.TenantTermination;
 using Gma.Framework.Messaging.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 public sealed partial class InventoryTenantTerminationExportContributorTests
@@ -34,7 +36,7 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("inventory.termination.destroyed", result.ResultCode);
-        Assert.Equal(12, result.AffectedCount);
+        Assert.Equal(13, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(2, result.ResultingProofRevision);
         Assert.Empty(await context.TenantDestroyOperations.ToListAsync());
@@ -79,6 +81,65 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
         Assert.False(await context.TryAdmitMessageMutationAsync(
             TenantId,
             CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Destroy_preserves_foreign_same_id_amendment_decision()
+    {
+        const string foreignTenantId =
+            "10000000-0000-0000-0000-000000000002";
+        Guid sharedDecisionId =
+            Guid.Parse("8a000000-0000-0000-0000-000000000001");
+        InMemoryDatabaseRoot root = new();
+        string databaseName = Guid.NewGuid().ToString("N");
+        MutableFenceReader fences = new();
+        await using InventoryDbContext context = CreateContext(
+            fences,
+            new TestScopeContext(),
+            databaseName,
+            root);
+        SeedGraph(context);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        await using InventoryDbContext foreign = CreateContext(
+            fences,
+            new TestScopeContext(foreignTenantId),
+            databaseName,
+            root);
+        foreign.AllocationAmendmentDecisions.Add(new(new(
+            sharedDecisionId,
+            foreignTenantId,
+            AllocationId,
+            Guid.Parse("83000000-0000-0000-0000-000000000001"),
+            PropertyId,
+            new string('b', 64),
+            Confirmed: false,
+            InventoryAllocationRejectionReason.AllocationConflict,
+            AllocationVersion: null,
+            FrozenAtUtc.AddDays(-1))));
+        await foreign.SaveChangesAsync();
+        foreign.ChangeTracker.Clear();
+
+        fences.Current = FrozenFence();
+        InventoryTenantTerminationContributor contributor = new(
+            context,
+            new TestScopeContext(),
+            new TestClock(),
+            fences);
+
+        TenantTerminationContributionResult result =
+            await CompleteDestroyAsync(contributor, DestroyRequest());
+
+        Assert.Equal(TenantTerminationContributionStatus.Completed, result.Status);
+        Assert.Equal(13, result.AffectedCount);
+        Assert.Empty(await context.ManualBlockGroups.ToArrayAsync());
+        Assert.Empty(await context.AllocationAmendmentDecisions.ToArrayAsync());
+        InventoryAllocationAmendmentDecision preserved = await foreign
+            .AllocationAmendmentDecisions
+            .SingleAsync();
+        Assert.Equal(foreignTenantId, preserved.ScopeId);
+        Assert.Equal(sharedDecisionId, preserved.Id);
     }
 
     [Fact]
@@ -168,6 +229,84 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
         Assert.Equal(1, operation.CompletedBatchCount);
     }
 
+    [Fact]
+    public async Task Destroy_drains_block_group_replacement_chains_leaf_first()
+    {
+        MutableFenceReader fences = new();
+        await using InventoryDbContext context = CreateContext(fences);
+        ManualInventoryBlockGroup predecessor = CreateGroup(
+            Guid.Parse("91000000-0000-0000-0000-000000000001"),
+            replacesGroupId: null,
+            Now);
+        context.ManualBlockGroups.Add(predecessor);
+        await context.SaveChangesAsync();
+
+        ManualInventoryBlockGroup successor = CreateGroup(
+            Guid.Parse("92000000-0000-0000-0000-000000000001"),
+            predecessor.Id,
+            Now.AddMinutes(1));
+        Assert.True(predecessor.ReplaceWith(
+            predecessor.Version,
+            successor.Id,
+            releasedBlockCount: 1,
+            Now.AddMinutes(1),
+            "user:owner").IsSuccess);
+        context.ManualBlockGroups.Add(successor);
+        await context.SaveChangesAsync();
+
+        ManualInventoryBlockGroup leaf = CreateGroup(
+            Guid.Parse("93000000-0000-0000-0000-000000000001"),
+            successor.Id,
+            Now.AddMinutes(2));
+        Assert.True(successor.ReplaceWith(
+            successor.Version,
+            leaf.Id,
+            releasedBlockCount: 1,
+            Now.AddMinutes(2),
+            "user:owner").IsSuccess);
+        context.ManualBlockGroups.Add(leaf);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        fences.Current = FrozenFence();
+        InventoryTenantTerminationContributor contributor = new(
+            context,
+            new TestScopeContext(),
+            new TestClock(),
+            fences);
+
+        TenantTerminationContributionResult result =
+            await CompleteDestroyAsync(contributor, DestroyRequest());
+
+        Assert.Equal(
+            TenantTerminationContributionStatus.Completed,
+            result.Status);
+        Assert.Equal(3, result.AffectedCount);
+        Assert.Empty(await context.ManualBlockGroups.ToArrayAsync());
+    }
+
+    private static ManualInventoryBlockGroup CreateGroup(
+        Guid id,
+        Guid? replacesGroupId,
+        DateTimeOffset createdAtUtc) => ManualInventoryBlockGroup.Create(
+            id,
+            TenantId,
+            PropertyId,
+            ManualInventoryBlockGroupTargetKind.Property,
+            buildingLabel: null,
+            floorLabel: null,
+            roomId: null,
+            inventoryUnitId: null,
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 2),
+            "maintenance",
+            Digest,
+            Digest,
+            ManualInventoryBlockGroup.CurrentMembershipDigestVersion,
+            initialBlockCount: 1,
+            replacesGroupId,
+            createdAtUtc,
+            "user:owner").Value;
+
     private static async Task<TenantTerminationContributionResult>
         CompleteDestroyAsync(
             InventoryTenantTerminationContributor contributor,
@@ -216,6 +355,7 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
         await context.AllocationUnits.AnyAsync() ||
         await context.Allocations.AnyAsync() ||
         await context.ManualBlocks.AnyAsync() ||
+        await context.ManualBlockGroups.AnyAsync() ||
         await context.AllocationOperationLocks.AnyAsync() ||
         await context.BedRetirements.AnyAsync() ||
         await context.RoomRetirements.AnyAsync() ||

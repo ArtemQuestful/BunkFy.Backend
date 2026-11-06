@@ -49,7 +49,9 @@ internal sealed class StaffIdentityProvisioningAnchorCreatedWorkspacesHandler(
             integrationEvent.StaffMemberId,
             integrationEvent.ResolutionEventId,
             cancellationToken).ConfigureAwait(false);
-        if (processed.IsFailure)
+        if (processed.IsFailure &&
+            !WorkspaceStaffOnboardingProcessor.RequiresOwnerRecovery(
+                application, processed))
         {
             throw new InvalidOperationException(
                 $"Staff identity-anchor convergence failed with '{processed.Error.Code}'.");

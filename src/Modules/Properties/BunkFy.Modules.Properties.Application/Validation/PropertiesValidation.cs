@@ -42,6 +42,10 @@ internal static class PropertiesValidation
         {
             yield return $"Property name cannot exceed {Property.PropertyNameMaxLength} characters.";
         }
+        else if (name.Any(char.IsControl))
+        {
+            yield return "Property name cannot contain control characters.";
+        }
 
         if (string.IsNullOrWhiteSpace(code))
         {
@@ -51,6 +55,10 @@ internal static class PropertiesValidation
         {
             yield return $"Property code cannot exceed {Property.PropertyCodeMaxLength} characters.";
         }
+        else if (code.Any(char.IsControl))
+        {
+            yield return "Property code cannot contain control characters.";
+        }
 
         if (string.IsNullOrWhiteSpace(timeZoneId))
         {
@@ -59,6 +67,33 @@ internal static class PropertiesValidation
         else if (timeZoneId.Trim().Length > Property.TimeZoneIdMaxLength)
         {
             yield return $"Time zone id cannot exceed {Property.TimeZoneIdMaxLength} characters.";
+        }
+        else if (timeZoneId.Any(char.IsControl))
+        {
+            yield return "Time zone id cannot contain control characters.";
+        }
+    }
+
+    public static IEnumerable<string> ValidateOptionalPropertyTimeZone(
+        string? timeZoneId)
+    {
+        if (timeZoneId is null)
+        {
+            yield break;
+        }
+
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            yield return "Time zone id cannot be blank when supplied.";
+        }
+        else if (timeZoneId.Trim().Length > Property.TimeZoneIdMaxLength)
+        {
+            yield return
+                $"Time zone id cannot exceed {Property.TimeZoneIdMaxLength} characters.";
+        }
+        else if (timeZoneId.Any(char.IsControl))
+        {
+            yield return "Time zone id cannot contain control characters.";
         }
     }
 

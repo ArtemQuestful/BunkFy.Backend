@@ -5,6 +5,7 @@ using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Guests.Domain.Aggregates;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.TimeZones;
 
 internal static class GuestRetentionTestData
 {
@@ -55,11 +56,17 @@ internal static class GuestRetentionTestData
                     IsKnown: true,
                     PropertyStatus.Active,
                     PropertyProcessingStatus.Enabled,
-                    "UTC",
+                    "Etc/UTC",
+                    "Etc/UTC",
+                    PropertyTimeZoneStatus.Canonical,
+                    TimeZoneCatalog.Default.CatalogVersion,
+                    GuestPropertyTimeZoneEvidenceSource.Generic,
+                    TimeZoneEvidenceSourceVersion: 3,
                     TopologySourceVersion: 3,
                     PolicySourceVersion: 4,
                     binding)
-            ]);
+            ],
+            AssociationOverflowed: false);
     }
 
     public static GuestRetentionPolicyFixture CreatePolicy()

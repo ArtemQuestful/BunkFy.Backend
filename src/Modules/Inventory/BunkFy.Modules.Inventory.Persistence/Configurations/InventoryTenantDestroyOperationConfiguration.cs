@@ -23,7 +23,7 @@ internal sealed class InventoryTenantDestroyOperationConfiguration
             table.HasCheckConstraint(
                 "CK_inventory_tenant_destroy_operation_progress",
                 $"\"Stage\" BETWEEN 1 AND " +
-                $"{(int)InventoryTenantDestroyStage.ManagementOperations} AND " +
+                $"{(int)InventoryTenantDestroyStage.ManualBlockGroups} AND " +
                 "\"RemovedRecordCount\" >= 0 AND " +
                 "\"CompletedBatchCount\" >= 0 AND " +
                 "\"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");

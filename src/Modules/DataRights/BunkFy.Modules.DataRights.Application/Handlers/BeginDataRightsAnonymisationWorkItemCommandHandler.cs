@@ -96,6 +96,7 @@ internal sealed class BeginDataRightsAnonymisationWorkItemCommandHandler(
                 ExecutingActorId: workItem.CreatedBy,
                 CaseType: command.Scope.CaseType),
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!approval.IsApproved || approval.ApprovalEvidence is null)
         {
             return await this.BlockAsync(

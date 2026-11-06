@@ -382,7 +382,7 @@ public sealed class
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse>
+        public Task<WorkspaceStaffOnboardingSummaryListResponse>
             ListActionableAsync(
                 PageRequest page,
                 CancellationToken cancellationToken) =>

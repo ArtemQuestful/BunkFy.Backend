@@ -3,6 +3,16 @@
 Status: complete
 Date: 2026-08-11
 
+## 2026-09-05 additive context-read amendment
+
+The [context-read task](inventory-retirement-context-read-task.md) adds two
+exact-target GETs using existing scoped inventory.retire, not Configure.
+Request recent-authentication and exact pending replay remain unchanged;
+status/retry/cancel acquire no new assurance policy. Shared inline confirmation
+must explain that completed retirement is terminal with no reopen action in
+the current Spaces workflow, and retain current authority/target checks.
+This amendment does not re-award historical control or hosted evidence.
+
 ## Goal
 
 Protect the rare, potentially immediate room and bed retirement decision without

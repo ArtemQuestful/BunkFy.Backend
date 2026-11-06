@@ -2,6 +2,7 @@ namespace BunkFy.AppHost.Composition;
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using System.Diagnostics;
 
 public static class BunkFyBackendComposition
 {
@@ -34,14 +35,36 @@ public static class BunkFyBackendComposition
             .WithJetStream()
             .WithDataVolume(isReadOnly: false);
 
-        IResourceBuilder<ContainerResource> minio = builder
-            .AddContainer("minio", "quay.io/minio/minio", "latest")
-            .WithEnvironment("MINIO_ROOT_USER", MinioAccessKey)
-            .WithEnvironment("MINIO_ROOT_PASSWORD", MinioSecretKey)
+        string? storageProvider = builder.Configuration["AppHost:Storage:Provider"];
+        bool useSilo = string.Equals(storageProvider, "Silo", StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(storageProvider) && !useSilo &&
+            !string.Equals(storageProvider, "Minio", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("AppHost:Storage:Provider must be Minio or Silo.");
+        }
+
+        string storageAccessKey = useSilo ? "bunkfy-development" : MinioAccessKey;
+        IResourceBuilder<ParameterResource> storagePassword = useSilo
+            ? builder.AddParameter("silo-password", new GenerateParameterDefault { MinLength = 32, Special = false }, secret: true, persist: true)
+            : builder.AddParameter("minio-password", MinioSecretKey, secret: true);
+        IResourceBuilder<ContainerResource> minio = useSilo
+            ? builder.AddContainer("minio", "pgsty/silo", "RELEASE.2026-10-26T00-00-00Z")
+                .WithImageSHA256("7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7")
+                .WithContainerRuntimeArgs("--platform=linux/amd64")
+            : builder.AddContainer("minio", "quay.io/minio/minio", "latest");
+        minio
+            .WithEnvironment("MINIO_ROOT_USER", storageAccessKey)
+            .WithEnvironment("MINIO_ROOT_PASSWORD", storagePassword)
             .WithArgs("server", "/data", "--console-address", ":9001")
             .WithHttpEndpoint(targetPort: 9000, name: "api")
             .WithHttpEndpoint(targetPort: 9001, name: "console")
-            .WithVolume("bunkfy-minio-data", "/data");
+            .WithHttpHealthCheck("/minio/health/ready", endpointName: "api")
+            .WithVolume(useSilo ? "bunkfy-silo-data" : "bunkfy-minio-data", "/data");
+        if (useSilo && builder.ExecutionContext.IsRunMode)
+        {
+            builder.Eventing.Subscribe<BeforeStartEvent>((_, cancellationToken) =>
+                AssertNoLegacyStorageVolumeAsync(cancellationToken));
+        }
 
         IResourceBuilder<ProjectResource> migrations = builder
             .AddProject("bunkfy-host-migrations", projectPaths.Migrations)
@@ -58,7 +81,7 @@ public static class BunkFyBackendComposition
             .WaitFor(nats)
             .WaitFor(minio)
             .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
-            .WithMinioFileStorage()
+            .WithMinioFileStorage(minio, storageAccessKey, storagePassword)
             .WithEnvironment("Notifications__Enabled", "true")
             .WithEnvironment("NatsJetStream__Enabled", workerEnabled ? "false" : "true")
             .WithHttpHealthCheck("/health");
@@ -75,6 +98,8 @@ public static class BunkFyBackendComposition
             postgreSql,
             nats,
             minio,
+            storageAccessKey,
+            storagePassword,
             migrations,
             sqlServer);
         IResourceBuilder<ProjectResource>? worker = AddWorker(
@@ -84,6 +109,8 @@ public static class BunkFyBackendComposition
             postgreSql,
             nats,
             minio,
+            storageAccessKey,
+            storagePassword,
             migrations,
             sqlServer);
 
@@ -105,6 +132,8 @@ public static class BunkFyBackendComposition
         IResourceBuilder<PostgresDatabaseResource> postgreSql,
         IResourceBuilder<NatsServerResource> nats,
         IResourceBuilder<ContainerResource> minio,
+        string storageAccessKey,
+        IResourceBuilder<ParameterResource> storagePassword,
         IResourceBuilder<ProjectResource> migrations,
         IResourceBuilder<SqlServerDatabaseResource>? sqlServer)
     {
@@ -122,7 +151,7 @@ public static class BunkFyBackendComposition
             .WaitFor(nats)
             .WaitFor(minio)
             .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
-            .WithMinioFileStorage()
+            .WithMinioFileStorage(minio, storageAccessKey, storagePassword)
             .WithEnvironment("NatsJetStream__Enabled", workerEnabled ? "false" : "true")
             .WithHttpHealthCheck("/health");
         if (sqlServer is { } configuredSqlServer)
@@ -140,6 +169,8 @@ public static class BunkFyBackendComposition
         IResourceBuilder<PostgresDatabaseResource> postgreSql,
         IResourceBuilder<NatsServerResource> nats,
         IResourceBuilder<ContainerResource> minio,
+        string storageAccessKey,
+        IResourceBuilder<ParameterResource> storagePassword,
         IResourceBuilder<ProjectResource> migrations,
         IResourceBuilder<SqlServerDatabaseResource>? sqlServer)
     {
@@ -157,7 +188,7 @@ public static class BunkFyBackendComposition
             .WaitFor(nats)
             .WaitFor(minio)
             .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
-            .WithMinioFileStorage()
+            .WithMinioFileStorage(minio, storageAccessKey, storagePassword)
             .WithEnvironment("NatsJetStream__Enabled", "true")
             .WithEnvironment("NatsConsumers__Enabled", "true")
             .WithEnvironment("Tasks__Worker__Enabled", "true")
@@ -186,9 +217,8 @@ public static class BunkFyBackendComposition
             .WithEnvironment("Tasks__Worker__WorkerGroups__5", "data-rights-workers")
             .WithEnvironment("Tasks__Worker__WorkerGroups__6", "retention-workers")
             .WithEnvironment("Tasks__Worker__WorkerGroups__7", "tenant-termination-workers")
-            .WithEnvironment(
-                "Tasks__Worker__WorkerGroups__8",
-                "workspaces-maintenance-workers");
+            .WithEnvironment("Tasks__Worker__WorkerGroups__8", "guest-record-link-workers")
+            .WithEnvironment("Tasks__Worker__WorkerGroups__9", "workspaces-maintenance-workers");
         if (sqlServer is { } configuredSqlServer)
         {
             worker.WithReference(configuredSqlServer).WaitFor(configuredSqlServer);
@@ -197,12 +227,16 @@ public static class BunkFyBackendComposition
         return worker;
     }
 
-    private static IResourceBuilder<T> WithMinioFileStorage<T>(this IResourceBuilder<T> resource)
+    private static IResourceBuilder<T> WithMinioFileStorage<T>(
+        this IResourceBuilder<T> resource,
+        IResourceBuilder<ContainerResource> minio,
+        string storageAccessKey,
+        IResourceBuilder<ParameterResource> storagePassword)
         where T : IResourceWithEnvironment => resource
         .WithEnvironment("FileManagement__Provider", "Minio")
-        .WithEnvironment("FileManagement__Minio__Endpoint", "minio:9000")
-        .WithEnvironment("FileManagement__Minio__AccessKey", MinioAccessKey)
-        .WithEnvironment("FileManagement__Minio__SecretKey", MinioSecretKey)
+        .WithEnvironment("FileManagement__Minio__Endpoint", minio.GetEndpoint("api").Property(EndpointProperty.HostAndPort))
+        .WithEnvironment("FileManagement__Minio__AccessKey", storageAccessKey)
+        .WithEnvironment("FileManagement__Minio__SecretKey", storagePassword)
         .WithEnvironment("FileManagement__Minio__BucketName", FilesBucketName)
         .WithEnvironment("FileManagement__Minio__UseSsl", "false")
         .WithEnvironment("FileManagement__Minio__CreateBucketIfMissing", "true");
@@ -211,6 +245,56 @@ public static class BunkFyBackendComposition
         where T : IResourceWithEnvironment => resource
         .WithEnvironment("Caching__Enabled", "true")
         .WithEnvironment("Caching__Provider", "Redis");
+
+    private static async Task AssertNoLegacyStorageVolumeAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Choosing the new provider is explicit and never mounts the old data.
+        // Stop before any resources/migrations start if this host has legacy
+        // storage; its existing environment needs separate migration review.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("docker")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            }
+        };
+        foreach (string argument in new[] { "volume", "ls", "--filter", "name=^bunkfy-minio-data$", "--format", "{{.Name}}" })
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Cannot inspect the existing development storage volume.");
+        }
+        Task<string> output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+        Task<string> error = process.StandardError.ReadToEndAsync(deadline.Token);
+        try
+        {
+            await Task.WhenAll(output, error, process.WaitForExitAsync(deadline.Token)).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            throw;
+        }
+        if (process.ExitCode != 0 || output.Result.Length > 256)
+        {
+            throw new InvalidOperationException("Cannot verify existing development storage; no resources were started.");
+        }
+        if (!string.IsNullOrWhiteSpace(output.Result))
+        {
+            throw new InvalidOperationException("Existing bunkfy-minio-data requires the original Minio profile. The Silo profile is for a fresh environment; cross-provider migration is not automatic.");
+        }
+    }
 
     private static bool IsEnabled(IDistributedApplicationBuilder builder, string key) =>
         bool.TryParse(builder.Configuration[key], out bool enabled) && enabled;

@@ -16,7 +16,7 @@ using Xunit;
 public sealed class StaffRetentionModelTests
 {
     [Fact]
-    public void Model_enforces_scan_cursor_execution_and_proof_shape()
+    public void Model_enforces_complete_retention_control_and_proof_shape()
     {
         using StaffDbContext dbContext = CreateDbContext();
         IModel designModel =
@@ -46,40 +46,87 @@ public sealed class StaffRetentionModelTests
         Assert.True(execution.FindProperty(
             nameof(StaffRetentionExecution.Version))!
             .IsConcurrencyToken);
+        AssertConstraintNames(
+            execution,
+            "CK_staff_retention_executions_coordinates",
+            "CK_staff_retention_executions_policy",
+            "CK_staff_retention_executions_cursor",
+            "CK_staff_retention_executions_key",
+            "CK_staff_retention_executions_version",
+            "CK_staff_retention_executions_timestamp",
+            "CK_staff_retention_executions_counts",
+            "CK_staff_retention_executions_state");
+        Assert.Equal(2, execution.GetKeys().Count());
         Assert.Contains(
-            execution.GetCheckConstraints(),
-            constraint => constraint.Name ==
-                "CK_staff_retention_executions_state");
+            execution.GetIndexes(),
+            index => index.GetDatabaseName() ==
+                "IX_staff_retention_executions_history");
+
+        Assert.True(checkpoint.FindProperty(
+            nameof(StaffRetentionSweepCheckpoint.Version))!
+            .IsConcurrencyToken);
+        AssertConstraintNames(
+            checkpoint,
+            "CK_staff_retention_checkpoints_coordinates",
+            "CK_staff_retention_checkpoints_cursor",
+            "CK_staff_retention_checkpoints_key",
+            "CK_staff_retention_checkpoints_policy",
+            "CK_staff_retention_checkpoints_version",
+            "CK_staff_retention_checkpoints_lifecycle",
+            "CK_staff_retention_checkpoints_timestamp");
+        Assert.Single(checkpoint.GetKeys());
+        Assert.Empty(checkpoint.GetForeignKeys());
         Assert.Contains(
             checkpoint.GetIndexes(),
             index => index.IsUnique &&
-                index.Properties.Select(property => property.Name)
-                    .SequenceEqual(
-                    [
-                        nameof(StaffRetentionSweepCheckpoint.ScopeId),
-                        nameof(
-                            StaffRetentionSweepCheckpoint
-                                .DataClassKey),
-                        nameof(
-                            StaffRetentionSweepCheckpoint
-                                .ExecutionPolicyVersion)
-                    ]));
+                index.GetDatabaseName() ==
+                    "UX_staff_retention_checkpoints_data_class_policy");
+        Assert.Contains(
+            checkpoint.GetIndexes(),
+            index => index.IsUnique &&
+                index.GetDatabaseName() ==
+                    "UX_staff_retention_checkpoints_last_execution" &&
+                index.GetFilter() == "\"LastExecutionId\" IS NOT NULL");
+
+        AssertConstraintNames(
+            receipt,
+            "CK_staff_retention_receipts_coordinates",
+            "CK_staff_retention_receipts_contract",
+            "CK_staff_retention_receipts_actor",
+            "CK_staff_retention_receipts_versions",
+            "CK_staff_retention_receipts_digests",
+            "CK_staff_retention_receipts_timestamps");
+        Assert.Single(receipt.GetKeys());
         Assert.Equal(
             2,
             receipt.GetForeignKeys().Count(foreignKey =>
                 foreignKey.PrincipalEntityType.ClrType is not null));
-        Assert.Contains(
-            receipt.GetIndexes(),
-            index => index.IsUnique &&
-                index.Properties.Select(property => property.Name)
-                    .SequenceEqual(
-                    [
-                        nameof(
-                            StaffRetentionAnonymisationReceipt.ScopeId),
-                        nameof(
-                            StaffRetentionAnonymisationReceipt
-                                .StaffMemberId)
-                    ]));
+        AssertForeignKey(
+            receipt,
+            typeof(StaffRetentionExecution),
+            "FK_staff_retention_receipts_execution");
+        AssertForeignKey(
+            receipt,
+            typeof(StaffMember),
+            "FK_staff_retention_receipts_staff_member");
+        AssertIndex(
+            receipt,
+            "UX_staff_retention_receipts_staff_member",
+            isUnique: true,
+            nameof(StaffRetentionAnonymisationReceipt.ScopeId),
+            nameof(StaffRetentionAnonymisationReceipt.StaffMemberId));
+        AssertIndex(
+            receipt,
+            "IX_staff_retention_receipts_execution",
+            isUnique: false,
+            nameof(StaffRetentionAnonymisationReceipt.ScopeId),
+            nameof(StaffRetentionAnonymisationReceipt.ExecutionId));
+        AssertIndex(
+            receipt,
+            "UX_staff_retention_receipts_event",
+            isUnique: true,
+            nameof(StaffRetentionAnonymisationReceipt.ScopeId),
+            nameof(StaffRetentionAnonymisationReceipt.EventId));
         Assert.False(tombstone.FindProperty(
             nameof(StaffAnonymisationTombstone.Authority))!
             .IsNullable);
@@ -215,6 +262,43 @@ public sealed class StaffRetentionModelTests
                 $"staff-retention-model-{Guid.NewGuid():N}")
             .Options,
         new TestScopeContext("tenant-a"));
+
+    private static void AssertConstraintNames(
+        IEntityType entityType,
+        params string[] expectedNames)
+    {
+        string[] actualNames = entityType.GetCheckConstraints()
+            .Select(constraint => constraint.Name!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            expectedNames.Order(StringComparer.Ordinal),
+            actualNames);
+    }
+
+    private static void AssertIndex(
+        IEntityType entityType,
+        string databaseName,
+        bool isUnique,
+        params string[] propertyNames) => Assert.Contains(
+        entityType.GetIndexes(),
+        index => index.GetDatabaseName() == databaseName &&
+            index.IsUnique == isUnique &&
+            index.Properties.Select(property => property.Name)
+                .SequenceEqual(propertyNames));
+
+    private static void AssertForeignKey(
+        IEntityType dependent,
+        Type principalType,
+        string constraintName)
+    {
+        IForeignKey foreignKey = Assert.Single(
+            dependent.GetForeignKeys(),
+            candidate => candidate.PrincipalEntityType.ClrType ==
+                principalType);
+        Assert.Equal(constraintName, foreignKey.GetConstraintName());
+        Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior);
+    }
 
     internal sealed class TestScopeContext(string scopeId) : IScopeContext
     {

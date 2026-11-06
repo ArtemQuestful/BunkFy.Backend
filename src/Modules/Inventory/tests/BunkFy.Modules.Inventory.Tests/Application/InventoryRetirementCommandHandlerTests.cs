@@ -127,6 +127,7 @@ public sealed class InventoryRetirementCommandHandlerTests
         Assert.Equal(process.Version, result.Value.Version);
         Assert.Empty(operations.Added);
         Assert.Equal(["Room"], harness.Lock.ResourceKinds);
+        Assert.Equal(["selection", "resource:Room"], harness.LockTrace);
         Assert.Equal(0, harness.Ids.CallCount);
     }
 
@@ -333,6 +334,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         Assert.Empty(harness.Lock.ResourceKinds);
         Assert.Empty(operations.Added);
         Assert.Empty(harness.Outbox.Events);
+        Assert.Equal(0, harness.SelectionFence.AcquireCount);
+        Assert.Equal(0, harness.SelectionFence.AdvanceCount);
         Assert.Equal(InventoryRetirementProcessState.Draining, bed.State);
         Assert.Equal(InventoryRetirementProcessState.Draining, room.State);
     }
@@ -371,6 +374,11 @@ public sealed class InventoryRetirementCommandHandlerTests
         InventoryUnitDefinitionChangedIntegrationEvent definition = Assert.IsType<
             InventoryUnitDefinitionChangedIntegrationEvent>(Assert.Single(harness.Outbox.Events));
         Assert.True(definition.IsSellable);
+        Assert.Equal(1, harness.SelectionFence.AcquireCount);
+        Assert.Equal(1, harness.SelectionFence.AdvanceCount);
+        Assert.Equal(
+            ["selection", "resource:BedRetirement", "resource:Room"],
+            harness.LockTrace);
     }
 
     [Fact]
@@ -402,6 +410,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         Assert.Equal(expectedVersion, stored.ExpectedVersion);
         Assert.Equal(expectedVersion + 1, stored.ResultVersion);
         Assert.Single(harness.Outbox.Events);
+        Assert.Equal(1, harness.SelectionFence.AcquireCount);
+        Assert.Equal(1, harness.SelectionFence.AdvanceCount);
     }
 
     [Fact]
@@ -440,6 +450,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         Assert.Equal(
             ["BedRetirement", "Room", "BedRetirement", "BedRetirement"],
             harness.Lock.ResourceKinds);
+        Assert.Equal(3, harness.SelectionFence.AcquireCount);
+        Assert.Equal(1, harness.SelectionFence.AdvanceCount);
     }
 
     [Fact]
@@ -466,6 +478,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         Assert.Equal(
             ["RoomRetirement", "Room"],
             harness.Lock.ResourceKinds);
+        Assert.Equal(1, harness.SelectionFence.AcquireCount);
+        Assert.Equal(0, harness.SelectionFence.AdvanceCount);
         Assert.Equal(InventoryRetirementProcessState.Draining, process.State);
     }
 
@@ -475,7 +489,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         RecordingOperationRepository operations)
     {
         TestScopeContext scope = new();
-        RecordingManagementLock operationLock = new();
+        List<string> lockTrace = [];
+        RecordingManagementLock operationLock = new(lockTrace);
         InventoryManagementMutationCoordinator mutations = new(
             operationLock,
             scope);
@@ -483,6 +498,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         FakeBedRetirementRepository beds = new(bedProcess);
         FakeRoomRetirementRepository rooms = new(roomProcess);
         FakeAvailabilityRepository availability = new();
+        RecordingSelectionFence selectionFence = new(lockTrace);
+        TestBusinessDateProvider businessDates = new();
         TestClock clock = new();
         TestIdGenerator ids = new();
         RecordingOutbox outbox = new();
@@ -495,12 +512,14 @@ public sealed class InventoryRetirementCommandHandlerTests
             mutations,
             beds,
             availability,
+            businessDates,
             clock,
             ids);
         RoomRetirementCoordinator roomCoordinator = new(
             mutations,
             rooms,
             availability,
+            businessDates,
             clock,
             ids);
         return new(
@@ -511,6 +530,7 @@ public sealed class InventoryRetirementCommandHandlerTests
                 beds,
                 rooms,
                 availability,
+                selectionFence,
                 bedCoordinator,
                 definitions,
                 scope,
@@ -521,6 +541,7 @@ public sealed class InventoryRetirementCommandHandlerTests
                 journal,
                 beds,
                 availability,
+                businessDates,
                 bedCoordinator,
                 clock,
                 ids),
@@ -531,6 +552,8 @@ public sealed class InventoryRetirementCommandHandlerTests
                 null!,
                 rooms,
                 availability,
+                selectionFence,
+                businessDates,
                 roomCoordinator,
                 definitions,
                 scope,
@@ -541,6 +564,7 @@ public sealed class InventoryRetirementCommandHandlerTests
                 journal,
                 rooms,
                 availability,
+                businessDates,
                 roomCoordinator,
                 clock,
                 ids),
@@ -548,6 +572,7 @@ public sealed class InventoryRetirementCommandHandlerTests
                 mutations,
                 journal,
                 beds,
+                selectionFence,
                 bedCoordinator,
                 definitions,
                 clock),
@@ -555,12 +580,15 @@ public sealed class InventoryRetirementCommandHandlerTests
                 mutations,
                 journal,
                 rooms,
+                selectionFence,
                 roomCoordinator,
                 definitions,
                 clock),
             operationLock,
             ids,
-            outbox);
+            outbox,
+            selectionFence,
+            lockTrace);
     }
 
     private static BedRetirementProcess CreateBedProcess() =>
@@ -609,7 +637,9 @@ public sealed class InventoryRetirementCommandHandlerTests
         CancelRoomRetirementCommandHandler RoomCancel,
         RecordingManagementLock Lock,
         TestIdGenerator Ids,
-        RecordingOutbox Outbox);
+        RecordingOutbox Outbox,
+        RecordingSelectionFence SelectionFence,
+        IReadOnlyList<string> LockTrace);
 
     private sealed class RecordingOperationRepository
         : IInventoryManagementOperationRepository
@@ -653,7 +683,8 @@ public sealed class InventoryRetirementCommandHandlerTests
         }
     }
 
-    private sealed class RecordingManagementLock : IInventoryManagementLock
+    private sealed class RecordingManagementLock(List<string>? trace = null)
+        : IInventoryManagementLock
     {
         public List<string> ResourceKinds { get; } = [];
 
@@ -666,6 +697,7 @@ public sealed class InventoryRetirementCommandHandlerTests
             Assert.Equal(TenantId, tenantId);
             Assert.NotEqual(Guid.Empty, resourceId);
             this.ResourceKinds.Add(resourceKind.ToString());
+            trace?.Add($"resource:{resourceKind}");
             return Task.CompletedTask;
         }
 
@@ -677,6 +709,28 @@ public sealed class InventoryRetirementCommandHandlerTests
             CancellationToken cancellationToken) =>
             throw new InvalidOperationException(
                 "Retirement paths use resource locks.");
+    }
+
+    private sealed class RecordingSelectionFence(List<string>? trace = null)
+        : IInventoryAvailabilitySelectionFence
+    {
+        public int AcquireCount { get; private set; }
+        public int AdvanceCount { get; private set; }
+
+        public Task AcquireAsync(Guid propertyId, CancellationToken cancellationToken)
+        {
+            Assert.Equal(PropertyId, propertyId);
+            this.AcquireCount++;
+            trace?.Add("selection");
+            return Task.CompletedTask;
+        }
+
+        public Task AdvanceAsync(Guid propertyId, CancellationToken cancellationToken)
+        {
+            Assert.Equal(PropertyId, propertyId);
+            this.AdvanceCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeBedRetirementRepository(
@@ -835,15 +889,15 @@ public sealed class InventoryRetirementCommandHandlerTests
         BedRetirementProcess? bedProcess,
         RoomRetirementProcess? roomProcess) : IInventoryTopologyRepository
     {
-        public Task ApplyPropertyAsync(
+        public Task<bool> ApplyPropertyAsync(
             InventoryPropertyTopologyWriteModel property,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task ApplyRoomAsync(
+        public Task<bool> ApplyRoomAsync(
             InventoryRoomTopologyWriteModel room,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task ApplyBedAsync(
+        public Task<bool> ApplyBedAsync(
             InventoryBedTopologyWriteModel bed,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -917,6 +971,15 @@ public sealed class InventoryRetirementCommandHandlerTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class TestBusinessDateProvider : IInventoryBusinessDateProvider
+    {
+        public Task<DateOnly?> GetAsync(
+            Guid propertyId,
+            DateTimeOffset nowUtc,
+            CancellationToken cancellationToken) => Task.FromResult<DateOnly?>(
+                DateOnly.FromDateTime(nowUtc.UtcDateTime));
     }
 
     private sealed class TestIdGenerator : IIdGenerator

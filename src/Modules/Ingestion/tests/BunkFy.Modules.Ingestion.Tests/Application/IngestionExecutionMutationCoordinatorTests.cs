@@ -233,6 +233,12 @@ public sealed class IngestionExecutionMutationCoordinatorTests
             return Task.CompletedTask;
         }
 
+        public Task AcquireRetentionExecutionAsync(
+            string tenantId,
+            Guid executionId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task AcquireConnectionReadAsync(
             string tenantId,
             Guid connectionId,

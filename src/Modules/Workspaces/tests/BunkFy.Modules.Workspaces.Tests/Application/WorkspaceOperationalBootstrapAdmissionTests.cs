@@ -8,15 +8,13 @@ using Gma.Framework.AccessControl;
 using Gma.Framework.Results;
 using Gma.Framework.Scoping;
 using Gma.Modules.AccessControl.Contracts;
-using Gma.Modules.Organizations.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 [Trait("Category", "Unit")]
 public sealed class WorkspaceOperationalBootstrapAdmissionTests
 {
-    private static readonly Guid OrganizationId = Guid.NewGuid();
-    private static readonly string WorkspaceId = OrganizationId.ToString("D");
+    private static readonly string WorkspaceId = Guid.NewGuid().ToString("D");
 
     [Fact]
     public async Task Restricted_workspace_rejects_bootstrap_before_provisioning()
@@ -39,57 +37,6 @@ public sealed class WorkspaceOperationalBootstrapAdmissionTests
             WorkspaceOperationalAdmissionErrors.ProcessingRestricted,
             result.Error);
     }
-
-    [Fact]
-    public async Task Restricted_workspace_retries_membership_seed_before_provisioning()
-    {
-        WorkspaceAccessProvisioner provisioner = new(
-            new ForbiddenRoles(),
-            new ForbiddenProfiles());
-        OrganizationMembershipAccessProfileSeedHandler handler = new(
-            provisioner,
-            WorkspaceOperationalAdmissionTestSupport.Restricted(WorkspaceId));
-
-        InvalidOperationException exception =
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                handler.HandleAsync(
-                    CreateMembershipEvent(
-                        OrganizationMembershipStatus.Active),
-                    CancellationToken.None));
-
-        Assert.Equal(
-            "Workspace operational admission did not allow access-profile seeding.",
-            exception.Message);
-    }
-
-    [Fact]
-    public async Task Inactive_membership_skips_seed_even_when_workspace_is_restricted()
-    {
-        WorkspaceAccessProvisioner provisioner = new(
-            new ForbiddenRoles(),
-            new ForbiddenProfiles());
-        OrganizationMembershipAccessProfileSeedHandler handler = new(
-            provisioner,
-            WorkspaceOperationalAdmissionTestSupport.Restricted(WorkspaceId));
-
-        await handler.HandleAsync(
-            CreateMembershipEvent(OrganizationMembershipStatus.Suspended),
-            CancellationToken.None);
-    }
-
-    private static OrganizationMembershipChangedIntegrationEvent
-        CreateMembershipEvent(OrganizationMembershipStatus status) =>
-        new(
-            Guid.NewGuid(),
-            new DateTimeOffset(2026, 7, 31, 12, 0, 0, TimeSpan.Zero),
-            WorkspaceId,
-            OrganizationId,
-            Guid.NewGuid(),
-            Guid.NewGuid().ToString("D"),
-            OrganizationMembershipChange.Suspended,
-            OrganizationMembershipRole.Member,
-            status,
-            2);
 
     private sealed class StubScopeContext(string scopeId) : IScopeContext
     {

@@ -11,7 +11,6 @@ using BunkFy.Modules.DataRights.Domain.Models;
 using BunkFy.Modules.DataRights.Domain.ValueObjects;
 using Gma.Framework.Pagination;
 using Gma.Framework.Results;
-using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Xunit;
@@ -29,15 +28,13 @@ public sealed class CreateDataRightsCaseCommandHandlerTests
     {
         RecordingRepository repository = new();
         StubDeadlinePolicy deadlinePolicy = new();
-        CreateDataRightsCaseCommandHandler handler = new(
+        CreateDataRightsCaseCommandHandler handler = CreateHandler(
             repository,
-            deadlinePolicy,
-            new TestScopeContext(),
-            new TestClock(),
-            new TestIdGenerator());
+            deadlinePolicy);
 
         Result<DataRightsCaseDto> result = await handler.HandleAsync(
             new CreateDataRightsCaseCommand(
+                CaseId,
                 DataRightsCaseScope.Staff,
                 DataRightsOperation.AccessExport,
                 DataRightsRestrictionDirective.Unknown,
@@ -60,15 +57,13 @@ public sealed class CreateDataRightsCaseCommandHandlerTests
     {
         RecordingRepository repository = new();
         StubDeadlinePolicy deadlinePolicy = new();
-        CreateDataRightsCaseCommandHandler handler = new(
+        CreateDataRightsCaseCommandHandler handler = CreateHandler(
             repository,
-            deadlinePolicy,
-            new TestScopeContext(),
-            new TestClock(),
-            new TestIdGenerator());
+            deadlinePolicy);
 
         Result<DataRightsCaseDto> result = await handler.HandleAsync(
             new CreateDataRightsCaseCommand(
+                CaseId,
                 DataRightsCaseScope.ForProperty(Guid.NewGuid()),
                 DataRightsOperation.AccessExport,
                 DataRightsRestrictionDirective.Unknown,
@@ -90,15 +85,13 @@ public sealed class CreateDataRightsCaseCommandHandlerTests
         DataRightsResponseDeadlinePolicyEvidence evidence = CreateEvidence(propertyId);
         RecordingRepository repository = new();
         StubDeadlinePolicy deadlinePolicy = new(Result.Success(evidence));
-        CreateDataRightsCaseCommandHandler handler = new(
+        CreateDataRightsCaseCommandHandler handler = CreateHandler(
             repository,
-            deadlinePolicy,
-            new TestScopeContext(),
-            new TestClock(),
-            new TestIdGenerator());
+            deadlinePolicy);
 
         Result<DataRightsCaseDto> result = await handler.HandleAsync(
             new CreateDataRightsCaseCommand(
+                CaseId,
                 DataRightsCaseScope.ForProperty(propertyId),
                 DataRightsOperation.AccessExport,
                 DataRightsRestrictionDirective.Unknown,
@@ -110,6 +103,140 @@ public sealed class CreateDataRightsCaseCommandHandlerTests
         Assert.Equal(evidence.DueAtUtc, result.Value.DueAtUtc);
         Assert.Equal(2, result.Value.ResponseDeadlineEvidence!.PolicyVersion);
         Assert.Same(evidence, repository.Added!.ResponseDeadlinePolicyEvidence);
+    }
+
+    [Fact]
+    public async Task Exact_retry_returns_current_case_without_recreating_or_resolving_policy()
+    {
+        Guid propertyId = Guid.NewGuid();
+        DataRightsCase existing = CreateExistingCase(propertyId);
+        Assert.True(existing.RecordRequesterVerification(
+            verified: true,
+            expectedVersion: existing.Version,
+            "user:privacy",
+            Now.AddMinutes(1)).IsSuccess);
+        RecordingRepository repository = new(existing);
+        StubDeadlinePolicy deadlinePolicy = new();
+
+        Result<DataRightsCaseDto> result = await CreateHandler(
+            repository,
+            deadlinePolicy).HandleAsync(
+                new CreateDataRightsCaseCommand(
+                    CaseId,
+                    DataRightsCaseScope.ForProperty(propertyId),
+                    DataRightsOperation.AccessExport,
+                    DataRightsRestrictionDirective.Unknown,
+                    DataRightsRequesterRelationship.DataSubject,
+                    "  user:privacy  "),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(existing.Version, result.Value.Version);
+        Assert.Equal(DataRightsVerificationStatus.Verified, result.Value.VerificationStatus);
+        Assert.Null(repository.Added);
+        Assert.Equal(1, repository.IdentityReads);
+        Assert.Equal(0, deadlinePolicy.EvaluationCount);
+    }
+
+    [Fact]
+    public async Task Reused_operation_with_changed_scope_or_intent_conflicts()
+    {
+        Guid propertyId = Guid.NewGuid();
+        RecordingRepository repository = new(CreateExistingCase(propertyId));
+        StubDeadlinePolicy deadlinePolicy = new();
+
+        Result<DataRightsCaseDto> result = await CreateHandler(
+            repository,
+            deadlinePolicy).HandleAsync(
+                new CreateDataRightsCaseCommand(
+                    CaseId,
+                    DataRightsCaseScope.ForProperty(Guid.NewGuid()),
+                    DataRightsOperation.Correction,
+                    DataRightsRestrictionDirective.Unknown,
+                    DataRightsRequesterRelationship.DataSubject,
+                    "user:privacy"),
+                CancellationToken.None);
+
+        Assert.Equal(
+            DataRightsApplicationErrors.CreationOperationConflict,
+            result.Error);
+        Assert.Null(repository.Added);
+        Assert.Equal(0, deadlinePolicy.EvaluationCount);
+    }
+
+    [Fact]
+    public async Task Reused_operation_from_another_actor_conflicts()
+    {
+        Guid propertyId = Guid.NewGuid();
+        RecordingRepository repository = new(CreateExistingCase(propertyId));
+
+        Result<DataRightsCaseDto> result = await CreateHandler(
+            repository,
+            new StubDeadlinePolicy()).HandleAsync(
+                new CreateDataRightsCaseCommand(
+                    CaseId,
+                    DataRightsCaseScope.ForProperty(propertyId),
+                    DataRightsOperation.AccessExport,
+                    DataRightsRestrictionDirective.Unknown,
+                    DataRightsRequesterRelationship.DataSubject,
+                    "user:another-operator"),
+                CancellationToken.None);
+
+        Assert.Equal(
+            DataRightsApplicationErrors.CreationOperationConflict,
+            result.Error);
+        Assert.Null(repository.Added);
+    }
+
+    [Fact]
+    public async Task Empty_operation_is_rejected_before_lock_or_repository_access()
+    {
+        RecordingRepository repository = new();
+        StubDeadlinePolicy deadlinePolicy = new();
+
+        Result<DataRightsCaseDto> result = await CreateHandler(
+            repository,
+            deadlinePolicy).HandleAsync(
+                new CreateDataRightsCaseCommand(
+                    Guid.Empty,
+                    DataRightsCaseScope.Staff,
+                    DataRightsOperation.AccessExport,
+                    DataRightsRestrictionDirective.Unknown,
+                    DataRightsRequesterRelationship.ControllerInitiated,
+                    "user:privacy"),
+                CancellationToken.None);
+
+        Assert.Equal(
+            DataRightsApplicationErrors.CreationOperationInvalid,
+            result.Error);
+        Assert.Equal(0, repository.IdentityReads);
+        Assert.Equal(0, deadlinePolicy.EvaluationCount);
+    }
+
+    private static CreateDataRightsCaseCommandHandler CreateHandler(
+        RecordingRepository repository,
+        IDataRightsResponseDeadlinePolicy deadlinePolicy) => new(
+        repository,
+        DataRightsMutationTestSupport.Case(
+            repository,
+            caseIdentities: repository),
+        deadlinePolicy,
+        new TestScopeContext(),
+        new TestClock());
+
+    private static DataRightsCase CreateExistingCase(Guid propertyId)
+    {
+        DataRightsCaseRequest request = DataRightsCaseRequest.Create(
+            propertyId,
+            DataRightsCaseKind.GuestRights,
+            DataRightsCaseOperation.AccessExport,
+            DataRightsRequesterRelation.DataSubject).Value;
+        return DataRightsCase.Create(
+            CaseId,
+            "tenant-a",
+            request,
+            "user:privacy",
+            Now).Value;
     }
 
     private static DataRightsResponseDeadlinePolicyEvidence CreateEvidence(
@@ -133,16 +260,28 @@ public sealed class CreateDataRightsCaseCommandHandlerTests
             Now,
             Now.AddMonths(1)).Value;
 
-    private sealed class RecordingRepository : IDataRightsCaseRepository
+    private sealed class RecordingRepository(DataRightsCase? existing = null)
+        : IDataRightsCaseRepository, IDataRightsCaseIdentityRepository
     {
         public DataRightsCase? Added { get; private set; }
+        public int IdentityReads { get; private set; }
 
         public Task AddAsync(
             DataRightsCase dataRightsCase,
             CancellationToken cancellationToken)
         {
             this.Added = dataRightsCase;
+            existing = dataRightsCase;
             return Task.CompletedTask;
+        }
+
+        public Task<DataRightsCase?> GetByIdAsync(
+            Guid caseId,
+            CancellationToken cancellationToken)
+        {
+            this.IdentityReads++;
+            return Task.FromResult(
+                existing?.Id == caseId ? existing : null);
         }
 
         public Task<DataRightsCase?> GetAsync(
@@ -168,11 +307,6 @@ public sealed class CreateDataRightsCaseCommandHandlerTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
-    }
-
-    private sealed class TestIdGenerator : IIdGenerator
-    {
-        public Guid NewId() => CaseId;
     }
 
     private sealed class StubDeadlinePolicy(

@@ -62,7 +62,12 @@ internal sealed class ReleaseReservationProcessingRestrictionCommandHandler(
                 cancellationToken).ConfigureAwait(false);
         if (existing is not null)
         {
-            return Replay(existing, command);
+            ReservationProcessingRestriction? replayRestriction =
+                await restrictions.GetAsync(
+                    command.PropertyId,
+                    existing.RestrictionId,
+                    cancellationToken).ConfigureAwait(false);
+            return Replay(existing, replayRestriction, command, actorId);
         }
 
         CountryPolicyDecision policyDecision = await countryPolicy.EvaluateAsync(
@@ -89,7 +94,13 @@ internal sealed class ReleaseReservationProcessingRestrictionCommandHandler(
                 command.ReservationId,
                 command.ExpectedReservationVersion,
                 DataRightsRestrictionDirective.Release,
-                ExecutingActorId: actorId),
+                ExecutingActorId: actorId,
+                RestrictionTargetOwnerOperationId:
+                    command.LegacyUnboundTarget ? null : command.RestrictionId,
+                RestrictionTargetOwnerOperationVersion:
+                    command.LegacyUnboundTarget
+                        ? null
+                        : command.ExpectedRestrictionVersion),
             cancellationToken).ConfigureAwait(false);
         if (!approval.IsApproved)
         {
@@ -219,9 +230,17 @@ internal sealed class ReleaseReservationProcessingRestrictionCommandHandler(
 
     private static Result<ReservationProcessingRestrictionReceiptDto> Replay(
         ReservationProcessingRestrictionReceipt receipt,
-        ReleaseReservationProcessingRestrictionCommand command)
+        ReservationProcessingRestriction? restriction,
+        ReleaseReservationProcessingRestrictionCommand command,
+        string actorId)
     {
         if (receipt.Action != ReservationProcessingRestrictionAction.Release ||
+            restriction is null ||
+            restriction.Id != receipt.RestrictionId ||
+            !string.Equals(
+                restriction.ReleasedBy,
+                actorId,
+                StringComparison.Ordinal) ||
             receipt.RestrictionId != command.RestrictionId ||
             receipt.PropertyId != command.PropertyId ||
             receipt.ReservationId != command.ReservationId ||

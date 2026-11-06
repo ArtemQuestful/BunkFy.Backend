@@ -268,7 +268,6 @@ public sealed class PropertiesAuthorizationIntegrationTests
                        operationId = Guid.NewGuid(),
                        name = "Alpha House Updated",
                        code = "ALPHA",
-                       timeZoneId = "UTC",
                        expectedVersion = 1
                    }).ConfigureAwait(false))
         {

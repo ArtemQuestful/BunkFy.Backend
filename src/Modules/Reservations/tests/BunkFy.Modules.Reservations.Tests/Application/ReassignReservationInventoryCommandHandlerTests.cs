@@ -4,9 +4,11 @@ using BunkFy.Modules.Reservations.Application;
 using BunkFy.Modules.Reservations.Application.Commands;
 using BunkFy.Modules.Reservations.Application.Handlers;
 using BunkFy.Modules.Reservations.Application.Ports;
+using BunkFy.Modules.Reservations.Application.StayAmendments;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
 using BunkFy.Modules.Reservations.Domain.Events;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using Gma.Framework.Pagination;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
@@ -88,13 +90,13 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
         Assert.True(replay.IsSuccess, replay.Error.Code);
         Assert.Equal(first.Value.Version, replay.Value.Version);
         Assert.Equal(1, projection.ValidationCount);
-        Assert.Equal(1, ids.Count);
+        Assert.Equal(2, ids.Count);
         Assert.Single(operations.Items);
         Assert.Empty(reservation.DomainEvents);
     }
 
     [Fact]
-    public async Task Legacy_pending_staff_retry_backfills_journal_without_revalidating_or_republishing()
+    public async Task Legacy_pending_staff_retry_without_durable_evidence_fails_closed()
     {
         Guid targetUnitId = Guid.NewGuid();
         Reservation reservation = CreateConfirmedReservation(Guid.NewGuid());
@@ -104,6 +106,7 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             targetUnitId);
         Assert.True(reservation.BeginAllocationAmendment(
             command.AmendmentRequestId,
+            Guid.NewGuid(),
             Fingerprint(command),
             reservation.Arrival,
             reservation.Departure,
@@ -118,9 +121,9 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             command.ActorId,
             adapterConnectionId: null,
             externalOperationId: null,
-            command.AmendmentRequestId,
-            Guid.NewGuid(),
-            Now).IsSuccess);
+            correlationId: command.AmendmentRequestId,
+            eventId: Guid.NewGuid(),
+            nowUtc: Now).IsSuccess);
         reservation.ClearDomainEvents();
         FakeInventoryProjectionRepository projection = new();
         FakeReservationManagementOperationRepository operations = new();
@@ -135,8 +138,10 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             command,
             CancellationToken.None);
 
-        Assert.True(replay.IsSuccess, replay.Error.Code);
-        Assert.Single(operations.Items);
+        Assert.Equal(
+            ReservationsApplicationErrors.ManagementOperationConflict,
+            replay.Error);
+        Assert.Empty(operations.Items);
         Assert.Equal(0, projection.ValidationCount);
         Assert.Equal(0, ids.Count);
         Assert.Empty(reservation.DomainEvents);
@@ -152,6 +157,7 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             Guid.NewGuid());
         Assert.True(reservation.BeginAllocationAmendment(
             command.AmendmentRequestId,
+            Guid.NewGuid(),
             Fingerprint(command),
             reservation.Arrival,
             reservation.Departure,
@@ -208,8 +214,9 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             Guid.NewGuid(),
             targetUnitId);
         Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
+        Guid inventoryRequestId = reservation.PendingInventoryAmendmentRequestId!.Value;
         Assert.True(reservation.CompleteAllocationAmendment(
-            command.AmendmentRequestId,
+            inventoryRequestId,
             reservation.AllocationId!.Value,
             reservation.Arrival,
             reservation.Departure,
@@ -227,7 +234,7 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
         Assert.Equal(2, replay.Value.DetailsRevision);
         Assert.Equal([targetUnitId], reservation.RequestedUnits.Select(unit => unit.InventoryUnitId));
         Assert.Equal(1, projection.ValidationCount);
-        Assert.Equal(1, ids.Count);
+        Assert.Equal(2, ids.Count);
         Assert.Empty(reservation.DomainEvents);
     }
 
@@ -249,8 +256,9 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             Guid.NewGuid(),
             Guid.NewGuid());
         Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
+        Guid inventoryRequestId = reservation.PendingInventoryAmendmentRequestId!.Value;
         Assert.True(reservation.RejectAllocationAmendment(
-            command.AmendmentRequestId,
+            inventoryRequestId,
             reservation.AllocationId!.Value,
             rejectionCode: 2,
             Now.AddMinutes(1)).IsSuccess);
@@ -263,7 +271,7 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
         Assert.Null(reservation.PendingAllocationAmendmentId);
         Assert.Equal(2, reservation.LastAllocationAmendmentRejectionCode);
         Assert.Equal(1, projection.ValidationCount);
-        Assert.Equal(1, ids.Count);
+        Assert.Equal(2, ids.Count);
         Assert.Single(operations.Items);
     }
 
@@ -311,15 +319,18 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             projection,
             operations);
         Guid operationId = Guid.NewGuid();
+        long originalVersion = reservation.Version;
 
         Result<ReservationMutationReceiptDto> unchanged = await handler.HandleAsync(
             Command(reservation, operationId, currentUnitId),
             CancellationToken.None);
+        long versionAfterNoOp = reservation.Version;
         Result<ReservationMutationReceiptDto> changed = await handler.HandleAsync(
             Command(reservation, operationId, Guid.NewGuid()),
             CancellationToken.None);
 
         Assert.True(unchanged.IsSuccess, unchanged.Error.Code);
+        Assert.Equal(originalVersion, versionAfterNoOp);
         Assert.True(changed.IsSuccess, changed.Error.Code);
         Assert.Single(operations.Items);
         Assert.NotNull(reservation.PendingAllocationAmendmentId);
@@ -349,15 +360,28 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             BusinessDate: null,
             Now,
             fingerprint));
-        ReassignReservationInventoryCommandHandler handler = new(
+        FakeReservationStayAmendmentOperationRepository stayOperations = new();
+        stayOperations.Items.Add(
+            ReservationStayAmendmentOperation.CreateOutcomeUnknown(
+                operationId,
+                reservation.ScopeId,
+                reservation.PropertyId,
+                reservation.Id,
+                ReservationStayAmendmentOperation.LegacyRequestSchemaVersion,
+                fingerprint,
+                reservation.DetailsRevision,
+                Now).Value);
+        ReservationStayAmendmentCoordinator coordinator = new(
             ReservationMutationTestSupport.Create(
                 new FakeReservationRepository(reservation, trace),
                 new RecordingReservationOperationLock(trace),
                 new TestScopeContext()),
             new FakeInventoryProjectionRepository(),
             operations,
+            stayOperations,
             new TestClock(),
             new TestIdGenerator());
+        ReassignReservationInventoryCommandHandler handler = new(coordinator);
 
         Result<ReservationMutationReceiptDto> replay = await handler.HandleAsync(
             command,
@@ -371,12 +395,17 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
         Reservation reservation,
         IInventoryProjectionRepository projection,
         IReservationManagementOperationRepository operations,
-        IIdGenerator? ids = null) => new(
+        IIdGenerator? ids = null)
+    {
+        ReservationStayAmendmentCoordinator coordinator = new(
             ReservationMutationTestSupport.Create(new FakeReservationRepository(reservation)),
             projection,
             operations,
+            new FakeReservationStayAmendmentOperationRepository(),
             new TestClock(),
             ids ?? new TestIdGenerator());
+        return new ReassignReservationInventoryCommandHandler(coordinator);
+    }
 
     private static ReassignReservationInventoryCommand Command(
         Reservation reservation,
@@ -561,6 +590,53 @@ public sealed class ReassignReservationInventoryCommandHandlerTests
             this.Items.Add(operation);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FakeReservationStayAmendmentOperationRepository
+        : IReservationStayAmendmentOperationRepository
+    {
+        public List<ReservationStayAmendmentOperation> Items { get; } = [];
+
+        public Task<ReservationStayAmendmentOperation?> GetAsync(
+            Guid propertyId,
+            Guid reservationId,
+            Guid operationId,
+            CancellationToken cancellationToken) => Task.FromResult(
+                this.Items.SingleOrDefault(item =>
+                    item.PropertyId == propertyId &&
+                    item.ReservationId == reservationId &&
+                    item.Id == operationId));
+
+        public Task<ReservationStayAmendmentOperation?> GetVisibleAsync(
+            Guid propertyId,
+            Guid reservationId,
+            Guid operationId,
+            CancellationToken cancellationToken) =>
+            this.GetAsync(
+                propertyId,
+                reservationId,
+                operationId,
+                cancellationToken);
+
+        public Task<ReservationStayAmendmentOperation?> GetByInventoryRequestIdAsync(
+            Guid inventoryRequestId,
+            CancellationToken cancellationToken) => Task.FromResult(
+                this.Items.SingleOrDefault(item =>
+                    item.InventoryRequestId == inventoryRequestId));
+
+        public Task AddAsync(
+            ReservationStayAmendmentOperation operation,
+            CancellationToken cancellationToken)
+        {
+            this.Items.Add(operation);
+            return Task.CompletedTask;
+        }
+
+        public Task<ReservationStayAmendmentRecoveryPageRecord> ListRecoveryAsync(
+            Guid propertyId,
+            ReservationStayAmendmentRecoveryCursorRecord? cursor,
+            int pageSize,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class RecordingReservationOperationLock(List<string> trace)

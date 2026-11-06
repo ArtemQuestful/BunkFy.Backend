@@ -19,7 +19,10 @@ internal sealed record GuestProfileDataRightsExport(
     long Version,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset LastChangedAtUtc,
-    DateTimeOffset? ArchivedAtUtc);
+    DateTimeOffset? ArchivedAtUtc)
+{
+    public string[] LanguageTags { get; init; } = [];
+}
 
 internal sealed record GuestStayDataRightsExport(
     Guid ReservationId,

@@ -3,6 +3,7 @@ namespace BunkFy.Modules.DataRights.Application.Handlers;
 using BunkFy.Modules.DataRights.Application.Commands;
 using BunkFy.Modules.DataRights.Application.Models;
 using BunkFy.Modules.DataRights.Application.Ports;
+using BunkFy.Modules.DataRights.Application.Tasks;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.DataRights.Domain.Aggregates;
 using BunkFy.Modules.DataRights.Domain.Entities;
@@ -17,6 +18,7 @@ internal sealed class BeginTenantTerminationExportFragmentGenerationCommandHandl
     ITenantTerminationExportFragmentRepository fragments,
     IDataRightsExportArtifactPolicy artifactPolicy,
     TenantTerminationPhasePlanner planner,
+    ITenantTerminationExportRetentionScheduler retentionScheduler,
     ISystemClock clock)
     : ICommandHandler<
         BeginTenantTerminationExportFragmentGenerationCommand,
@@ -108,6 +110,14 @@ internal sealed class BeginTenantTerminationExportFragmentGenerationCommandHandl
         {
             return Invalid();
         }
+
+        await retentionScheduler.EnqueueFragmentCleanupAsync(
+            process.ScopeId,
+            process.Id,
+            fragment.Id,
+            fragment.ExportOperationRevision,
+            fragment.ExpiresAtUtc,
+            cancellationToken).ConfigureAwait(false);
 
         Result begun = fragment.BeginGeneration(
             command.TaskRunId,

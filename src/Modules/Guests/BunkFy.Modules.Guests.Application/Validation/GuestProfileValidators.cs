@@ -4,6 +4,7 @@ using Gma.Framework.Cqrs;
 using BunkFy.Modules.Guests.Application.Commands;
 using BunkFy.Modules.Guests.Application.Queries;
 using BunkFy.Modules.Guests.Contracts;
+using BunkFy.Modules.Guests.Domain.ValueObjects;
 
 internal static class GuestProfileValidation
 {
@@ -18,7 +19,8 @@ internal static class GuestProfileValidation
         string? preferredLanguageTag,
         string? notes,
         long? expectedVersion,
-        string actorId)
+        string actorId,
+        string[]? languageTags = null)
     {
         if (propertyId == Guid.Empty)
         {
@@ -54,6 +56,13 @@ internal static class GuestProfileValidation
             yield return "PreferredLanguageTag exceeds the supported limit.";
         }
 
+        if (languageTags is not null && GuestLanguageTags.Normalize(
+                languageTags,
+                string.IsNullOrWhiteSpace(preferredLanguageTag) ? null : preferredLanguageTag.Trim()).IsFailure)
+        {
+            yield return "LanguageTags must be at most 12 valid tags and include a supplied preferred language.";
+        }
+
         if (expectedVersion.HasValue && expectedVersion.Value <= 0)
         {
             yield return "ExpectedVersion must be greater than zero.";
@@ -87,7 +96,8 @@ internal sealed class CreateGuestProfileCommandValidator : ICommandValidator<Cre
                      command.PreferredLanguageTag,
                      command.Notes,
                      expectedVersion: null,
-                     command.ActorId))
+                     command.ActorId,
+                     command.LanguageTags))
         {
             yield return failure;
         }
@@ -114,7 +124,8 @@ internal sealed class UpdateGuestProfileCommandValidator : ICommandValidator<Upd
                      command.PreferredLanguageTag,
                      command.Notes,
                      command.ExpectedVersion,
-                     command.ActorId))
+                     command.ActorId,
+                     command.LanguageTags))
         {
             yield return failure;
         }

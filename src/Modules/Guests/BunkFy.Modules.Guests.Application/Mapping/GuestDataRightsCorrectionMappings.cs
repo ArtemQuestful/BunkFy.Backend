@@ -27,6 +27,7 @@ internal static class GuestDataRightsCorrectionMappings
         GuestProfileField.DateOfBirth => "guest.profile.date-of-birth",
         GuestProfileField.NationalityCountryCode => "guest.profile.nationality-country-code",
         GuestProfileField.PreferredLanguageTag => "guest.profile.preferred-language-tag",
+        GuestProfileField.LanguageTags => "guest.profile.language-tags",
         GuestProfileField.Notes => "guest.profile.notes",
         _ => throw new InvalidOperationException("The correction receipt contains an unknown field.")
     };

@@ -72,6 +72,11 @@ public static class DependencyInjection
         services.AddIntegrationEventHandler<PropertyUpdatedIntegrationEvent, GuestPropertyUpdatedHandler>(
             GuestsModuleMetadata.Name,
             PropertiesModuleMetadata.Name);
+        services.AddIntegrationEventHandler<
+            PropertyTimeZoneChangedIntegrationEvent,
+            GuestPropertyTimeZoneChangedHandler>(
+                GuestsModuleMetadata.Name,
+                PropertiesModuleMetadata.Name);
         services.AddIntegrationEventHandler<PropertyRetiredIntegrationEvent, GuestPropertyRetiredHandler>(
             GuestsModuleMetadata.Name,
             PropertiesModuleMetadata.Name);

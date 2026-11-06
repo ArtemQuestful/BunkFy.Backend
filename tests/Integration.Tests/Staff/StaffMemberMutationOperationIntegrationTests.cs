@@ -218,7 +218,10 @@ public sealed class StaffMemberMutationOperationIntegrationTests
                 UPDATE staff.staff_members
                 SET "AuthSubjectId" = NULL,
                     "Status" = 2,
-                    "SuspendedAtUtc" = '2026-08-11T12:05:00Z',
+                    "SuspendedAtUtc" = GREATEST(
+                        "CreatedAtUtc", "LastChangedAtUtc", statement_timestamp()),
+                    "LastChangedAtUtc" = GREATEST(
+                        "CreatedAtUtc", "LastChangedAtUtc", statement_timestamp()),
                     "Version" = "Version" + 1
                 WHERE "ScopeId" = '{{TenantId}}'
                   AND "Id" = '{{ownerMemberId:D}}';

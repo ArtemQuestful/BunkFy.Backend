@@ -2,6 +2,7 @@ namespace Integration.Tests;
 
 using System.Net;
 using System.Net.Http.Headers;
+using BunkFy.Host.ServiceDefaults.Security.Stations;
 using Gma.Framework.Notifications;
 using Integration.Tests.Support;
 using Microsoft.AspNetCore.Http.Connections;
@@ -102,12 +103,13 @@ public sealed class NotificationStreamingIntegrationTests
         TaskCompletionSource<UserNotificationMessage> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
         await using HubConnection connection = new HubConnectionBuilder()
             .WithUrl(
-                new Uri(application.Server.BaseAddress, "/hubs/notifications"),
+                new Uri(
+                    application.Server.BaseAddress,
+                    $"/hubs/notifications?access_token={Uri.EscapeDataString(token)}"),
                 options =>
                 {
                     options.Transports = HttpTransportType.LongPolling;
                     options.HttpMessageHandlerFactory = _ => application.Server.CreateHandler();
-                    options.AccessTokenProvider = () => Task.FromResult<string?>(token);
                 })
             .Build();
         connection.On<UserNotificationMessage>(
@@ -128,6 +130,63 @@ public sealed class NotificationStreamingIntegrationTests
         Assert.Equal("tenant-a", message.ScopeId);
         Assert.Equal("user-a", message.UserId);
         Assert.Equal(NotificationSeverity.Success, message.Severity);
+        Assert.Empty(application.StationAuthenticationObservations);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task SignalR_query_token_is_owned_only_by_the_ordinary_bearer_scheme()
+    {
+        await using NotificationStreamingTestApplication application = new();
+        using HttpClient client = application.CreateClient();
+        string ordinaryToken = NotificationStreamingTestApplication.CreateAccessToken("tenant-a", "user-a");
+        string stationToken = NotificationStreamingTestApplication.CreateStationShapedToken();
+
+        using (HttpResponseMessage ordinary = await client.PostAsync(
+                   $"/hubs/notifications/negotiate?negotiateVersion=1&access_token={Uri.EscapeDataString(ordinaryToken)}",
+                   content: null))
+        {
+            Assert.Equal(HttpStatusCode.OK, ordinary.StatusCode);
+            Assert.Empty(application.StationAuthenticationObservations);
+        }
+
+        application.ResetStationAuthenticationObservations();
+        using HttpResponseMessage station = await client.PostAsync(
+            $"/hubs/notifications/negotiate?negotiateVersion=1&access_token={Uri.EscapeDataString(stationToken)}",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, station.StatusCode);
+        Assert.Empty(application.StationAuthenticationObservations);
+        Assert.Contains(
+            station.Headers.WwwAuthenticate,
+            static value => string.Equals(value.Scheme, "Bearer", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            station.Headers.WwwAuthenticate,
+            static value => string.Equals(
+                value.Scheme,
+                StationAuthenticationDefaults.WireScheme,
+                StringComparison.Ordinal));
+
+        application.ResetStationAuthenticationObservations();
+        using HttpRequestMessage stationHeaderRequest = new(
+            HttpMethod.Post,
+            "/hubs/notifications/negotiate?negotiateVersion=1");
+        stationHeaderRequest.Headers.Authorization = new AuthenticationHeaderValue(
+            StationAuthenticationDefaults.WireScheme,
+            stationToken);
+        using HttpResponseMessage stationHeader = await client.SendAsync(stationHeaderRequest);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, stationHeader.StatusCode);
+        Assert.Empty(application.StationAuthenticationObservations);
+        Assert.Contains(
+            stationHeader.Headers.WwwAuthenticate,
+            static value => string.Equals(value.Scheme, "Bearer", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            stationHeader.Headers.WwwAuthenticate,
+            static value => string.Equals(
+                value.Scheme,
+                StationAuthenticationDefaults.WireScheme,
+                StringComparison.Ordinal));
     }
 
     [Fact]

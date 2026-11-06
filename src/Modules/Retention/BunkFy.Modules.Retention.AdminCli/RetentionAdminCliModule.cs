@@ -4,7 +4,7 @@ using System.CommandLine;
 using System.CommandLine.Parsing;
 using BunkFy.Modules.Retention.Admin.Contracts;
 using BunkFy.Modules.Retention.Application;
-using BunkFy.Modules.Retention.Application.Errors;
+using BunkFy.Modules.Retention.Application.Commands;
 using BunkFy.Modules.Retention.Application.Queries;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Retention.Persistence;
@@ -14,8 +14,6 @@ using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Pagination;
 using Gma.Framework.Results;
-using Gma.Framework.Tasks;
-using Gma.Modules.TaskRuntime.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -121,14 +119,15 @@ public sealed class RetentionAdminCliModule : IAdminCliModule
                 {
                     Result<RetentionRunRetryReceiptDto> result =
                         parse.GetValue(yes)
-                            ? await RetryAsync(
-                                parse.GetRequiredValue(run),
-                                parse.GetValue(scheduledAt),
-                                parse.GetValue(globalOptions.TenantOption),
-                                ResolveActor(parse, globalOptions),
-                                provider.GetRequiredService<ITaskRunReader>(),
-                                provider.GetRequiredService<ITaskRunController>(),
-                                cancellationToken).ConfigureAwait(false)
+                            ? await provider
+                                .GetRequiredService<IRequestDispatcher>()
+                                .SendAsync(
+                                    new RequestRetentionRunRetryCommand(
+                                        parse.GetRequiredValue(run),
+                                        parse.GetValue(globalOptions.TenantOption) ??
+                                            string.Empty,
+                                        parse.GetValue(scheduledAt)),
+                                    cancellationToken).ConfigureAwait(false)
                             : Result.Failure<RetentionRunRetryReceiptDto>(
                                 AdminErrors.ConfirmationRequired);
                     if (result.IsSuccess)
@@ -142,51 +141,6 @@ public sealed class RetentionAdminCliModule : IAdminCliModule
                 },
                 token));
         return command;
-    }
-
-    private static async Task<Result<RetentionRunRetryReceiptDto>> RetryAsync(
-        Guid runId,
-        DateTimeOffset? scheduledAtUtc,
-        string? tenantId,
-        string actor,
-        ITaskRunReader taskRunReader,
-        ITaskRunController taskRunController,
-        CancellationToken cancellationToken)
-    {
-        Result<TaskRunDetails> loaded = await taskRunReader.GetAsync(
-            runId,
-            cancellationToken).ConfigureAwait(false);
-        if (loaded.IsFailure)
-        {
-            return Result.Failure<RetentionRunRetryReceiptDto>(loaded.Error);
-        }
-
-        TaskRunSummary run = loaded.Value.Summary;
-        if (string.IsNullOrWhiteSpace(tenantId) ||
-            !string.Equals(run.ScopeId, tenantId, StringComparison.Ordinal) ||
-            !string.Equals(
-                run.ModuleName,
-                RetentionModuleMetadata.Name,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                run.TaskName,
-                ExecuteRetentionSchedulePayload.TaskName,
-                StringComparison.Ordinal))
-        {
-            return Result.Failure<RetentionRunRetryReceiptDto>(
-                RetentionApplicationErrors.TaskRunUnavailable);
-        }
-
-        Result retried = await taskRunController.RetryAsync(
-            runId,
-            $"admin-cli:{actor}",
-            scheduledAtUtc,
-            cancellationToken).ConfigureAwait(false);
-        return retried.IsFailure
-            ? Result.Failure<RetentionRunRetryReceiptDto>(retried.Error)
-            : Result.Success(new RetentionRunRetryReceiptDto(
-                runId,
-                scheduledAtUtc));
     }
 
     private static void WriteSchedules(
@@ -216,10 +170,4 @@ public sealed class RetentionAdminCliModule : IAdminCliModule
         AdminCliGlobalOptions globalOptions) =>
         parse.GetValue(globalOptions.OutputOption) ?? AdminCliOutput.Table;
 
-    private static string ResolveActor(
-        ParseResult parse,
-        AdminCliGlobalOptions globalOptions) =>
-        string.IsNullOrWhiteSpace(parse.GetValue(globalOptions.ActorOption))
-            ? $"{Environment.UserDomainName}\\{Environment.UserName}"
-            : parse.GetValue(globalOptions.ActorOption)!.Trim();
 }

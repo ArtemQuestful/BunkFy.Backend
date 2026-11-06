@@ -132,7 +132,7 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
             .ThenBy(application => application.Id)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
-    public async Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+    public async Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
         PageRequest page,
         CancellationToken cancellationToken)
     {
@@ -180,7 +180,7 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
             .Take(page.PageSize + 1)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
         bool hasMore = fetched.Length > page.PageSize;
-        return new WorkspaceStaffOnboardingListResponse(
+        return new WorkspaceStaffOnboardingSummaryListResponse(
             fetched.Take(page.PageSize).ToArray(),
             page.Page,
             page.PageSize,

@@ -13,6 +13,7 @@ using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
+using BunkFy.TimeZones;
 using DomainAcknowledgement = BunkFy.Modules.Properties.Domain.ValueObjects.PropertyGovernanceAcknowledgement;
 
 internal sealed class ActivatePropertyProcessingCommandHandler(
@@ -23,7 +24,8 @@ internal sealed class ActivatePropertyProcessingCommandHandler(
     ISystemClock clock,
     IIdGenerator idGenerator,
     IEnumerable<IPropertyProcessingLifecyclePolicy>?
-        lifecyclePolicies = null)
+        lifecyclePolicies = null,
+    TimeZoneRuntimeCompatibilityProbe? runtimeTimeZones = null)
     : ICommandHandler<ActivatePropertyProcessingCommand, PropertyMutationReceiptDto>
 {
     internal const string AccommodationType = "hostel";
@@ -98,6 +100,24 @@ internal sealed class ActivatePropertyProcessingCommandHandler(
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
+        if (!PropertiesObservationTime.IsValid(nowUtc))
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                PropertiesApplicationErrors.TimeSourceUnavailable);
+        }
+
+        if (TimeZoneCatalog.Default.TryResolve(
+                property.TimeZoneId.Value,
+                out TimeZoneCatalogResolution? timeZoneResolution) &&
+            !(runtimeTimeZones ??
+                TimeZoneRuntimeCompatibilityProbe.Default).IsCompatible(
+                    timeZoneResolution.CanonicalTimeZoneId,
+                    nowUtc))
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                PropertiesApplicationErrors.TimeZoneRuntimeUnavailable);
+        }
+
         CountryPolicyAcknowledgement[] requestedAcknowledgements = command.AcceptedAcknowledgements?
             .Select(acknowledgement => new CountryPolicyAcknowledgement(
                 acknowledgement.AcknowledgementId,
@@ -132,6 +152,19 @@ internal sealed class ActivatePropertyProcessingCommandHandler(
         if (acknowledgementResult.IsFailure)
         {
             return Result.Failure<PropertyMutationReceiptDto>(acknowledgementResult.Error);
+        }
+
+        CountryPolicyTimeZoneDecision timeZoneDecision =
+            countryPolicies.EvaluateTimeZoneCompatibility(new(
+                decision.Evidence.ToBinding(),
+                AccommodationType,
+                property.TimeZoneId.Value,
+                nowUtc));
+        if (!timeZoneDecision.IsAllowed)
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                PropertiesApplicationErrors.CountryPolicyDenied(
+                    timeZoneDecision.Reason));
         }
 
         PropertyGovernanceRevisionCoordinates? previous = ToCoordinates(

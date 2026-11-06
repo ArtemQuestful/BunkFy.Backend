@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BunkFy.DataGovernance.csproj" />
+    <ProjectReference Include="..\..\..\BunkFy.TimeZones\BunkFy.TimeZones.csproj" />
   </ItemGroup>
 </Project>

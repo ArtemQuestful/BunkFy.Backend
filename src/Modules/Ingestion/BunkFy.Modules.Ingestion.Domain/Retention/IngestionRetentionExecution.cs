@@ -71,6 +71,7 @@ public sealed class IngestionRetentionExecution : ScopedAggregateRoot<Guid>
         if (this.State != IngestionRetentionExecutionState.Running ||
             attempt <= this.Attempt ||
             startedAtUtc == default ||
+            startedAtUtc < this.StartedAtUtc ||
             deadlineUtc <= startedAtUtc)
         {
             return Result.Failure(
@@ -84,9 +85,10 @@ public sealed class IngestionRetentionExecution : ScopedAggregateRoot<Guid>
         return Result.Success();
     }
 
-    public Result RecordAffected(int count)
+    public Result RecordAffected(int attempt, int count)
     {
         if (this.State != IngestionRetentionExecutionState.Running ||
+            attempt != this.Attempt ||
             count <= 0)
         {
             return Result.Failure(
@@ -109,11 +111,18 @@ public sealed class IngestionRetentionExecution : ScopedAggregateRoot<Guid>
 
     public Result Complete(
         IngestionRetentionExecutionState state,
+        int attempt,
         int remainingCount,
         string outcomeCode,
         DateTimeOffset completedAtUtc,
         DateTimeOffset? holdReviewDueAtUtc)
     {
+        if (attempt != this.Attempt)
+        {
+            return Result.Failure(
+                IngestionRetentionExecutionErrors.TransitionInvalid);
+        }
+
         string normalized = outcomeCode?.Trim() ?? string.Empty;
         bool blocked = state == IngestionRetentionExecutionState.Blocked;
         if (state is not (

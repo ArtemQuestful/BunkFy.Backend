@@ -51,7 +51,7 @@ public sealed class WorkspaceStaffAccessMutationCoordinatorTests
     }
 
     [Fact]
-    public async Task Staff_version_locks_before_authoritative_reload()
+    public async Task Staff_version_coordinate_locks_before_authoritative_reload()
     {
         WorkspaceStaffAccessProcess process = CreateProcess();
         List<string> calls = [];
@@ -69,7 +69,23 @@ public sealed class WorkspaceStaffAccessMutationCoordinatorTests
                 CancellationToken.None);
 
         Assert.Null(result);
-        Assert.Equal(["staff-lock", "version-read"], calls);
+        Assert.Equal(["version-lock", "version-read"], calls);
+    }
+
+    [Fact]
+    public async Task Explicit_coordinates_lock_subject_before_staff()
+    {
+        List<string> calls = [];
+        WorkspaceStaffAccessMutationCoordinator coordinator = new(
+            new CallbackOperationLock(calls),
+            new SequencedProcessRepository(null, calls));
+
+        await coordinator.AcquireCoordinatesAsync(
+            Guid.NewGuid(),
+            "subject-a",
+            CancellationToken.None);
+
+        Assert.Equal(["subject-lock", "staff-lock"], calls);
     }
 
     [Fact]
@@ -105,6 +121,7 @@ public sealed class WorkspaceStaffAccessMutationCoordinatorTests
     [InlineData(typeof(DenyWorkspaceStaffAccessCommandHandler))]
     [InlineData(typeof(RetryWorkspaceStaffAccessProcessCommandHandler))]
     [InlineData(typeof(StaffLifecycleWorkspaceAccessHandler))]
+    [InlineData(typeof(OrganizationMembershipAccessProfileSeedHandler))]
     [InlineData(typeof(ScrubWorkspaceStaffRetentionCorrelationCommandHandler))]
     [InlineData(typeof(ApplyWorkspaceStaffCorrelationAnonymisationCommandHandler))]
     [InlineData(typeof(RestoreWorkspaceStaffCorrelationAnonymisationCommandHandler))]
@@ -152,10 +169,29 @@ public sealed class WorkspaceStaffAccessMutationCoordinatorTests
         bool processExists = true)
         : IWorkspaceStaffAccessOperationLock
     {
+        public Task AcquireSubjectAsync(
+            string subjectId,
+            CancellationToken cancellationToken)
+        {
+            calls.Add("subject-lock");
+            return Task.CompletedTask;
+        }
+
         public Task AcquireStaffAsync(
             Guid staffMemberId,
             CancellationToken cancellationToken)
         {
+            calls.Add("staff-lock");
+            acquired?.Invoke();
+            return Task.CompletedTask;
+        }
+
+        public Task AcquireCoordinatesAsync(
+            Guid staffMemberId,
+            string subjectId,
+            CancellationToken cancellationToken)
+        {
+            calls.Add("subject-lock");
             calls.Add("staff-lock");
             acquired?.Invoke();
             return Task.CompletedTask;
@@ -166,6 +202,16 @@ public sealed class WorkspaceStaffAccessMutationCoordinatorTests
             CancellationToken cancellationToken)
         {
             calls.Add("process-lock");
+            acquired?.Invoke();
+            return Task.FromResult(processExists);
+        }
+
+        public Task<bool> TryAcquireStaffVersionAsync(
+            Guid staffMemberId,
+            long targetStaffVersion,
+            CancellationToken cancellationToken)
+        {
+            calls.Add("version-lock");
             acquired?.Invoke();
             return Task.FromResult(processExists);
         }

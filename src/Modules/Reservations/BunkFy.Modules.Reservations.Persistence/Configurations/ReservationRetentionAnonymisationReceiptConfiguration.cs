@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Reservations.Persistence.Configurations;
 
 using BunkFy.Modules.Reservations.Domain.Aggregates;
+using BunkFy.Modules.Reservations.Domain.DataRights;
 using BunkFy.Modules.Reservations.Domain.Retention;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -10,6 +11,9 @@ internal sealed class
     : IEntityTypeConfiguration<
         ReservationRetentionAnonymisationReceipt>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(
         EntityTypeBuilder<
             ReservationRetentionAnonymisationReceipt> builder)
@@ -18,6 +22,14 @@ internal sealed class
             "reservation_retention_anonymisation_receipts",
             table =>
             {
+                table.HasCheckConstraint(
+                    "CK_reservation_retention_receipts_coordinates",
+                    $"\"Id\" <> '{EmptyGuid}' AND " +
+                    $"\"ExecutionId\" <> '{EmptyGuid}' AND " +
+                    $"\"PropertyId\" <> '{EmptyGuid}' AND " +
+                    $"\"ReservationId\" <> '{EmptyGuid}' AND " +
+                    $"\"EventId\" <> '{EmptyGuid}' AND " +
+                    "trim(\"ScopeId\") <> ''");
                 table.HasCheckConstraint(
                     "CK_reservation_retention_receipts_contract",
                     $"\"ContractVersion\" = {ReservationRetentionAnonymisationReceipt.CurrentContractVersion}");
@@ -39,18 +51,17 @@ internal sealed class
                 table.HasCheckConstraint(
                     "CK_reservation_retention_receipts_digests",
                     $"char_length(\"PolicyEvidenceSha256\") = {ReservationRetentionAnonymisationReceipt.Sha256Length} AND " +
-                    $"char_length(\"CanonicalSha256\") = {ReservationRetentionAnonymisationReceipt.Sha256Length}");
+                    "\"PolicyEvidenceSha256\" ~ '^[0-9a-f]+$' AND " +
+                    $"char_length(\"CanonicalSha256\") = {ReservationRetentionAnonymisationReceipt.Sha256Length} AND " +
+                    "\"CanonicalSha256\" ~ '^[0-9a-f]+$'");
                 table.HasCheckConstraint(
-                    "CK_reservation_retention_receipts_deadline",
+                    "CK_reservation_retention_receipts_timestamps",
+                    "\"TerminalAtUtc\" > " +
+                    "TIMESTAMPTZ '0001-01-01 00:00:00+00' AND " +
                     "\"RetentionDeadlineUtc\" >= \"TerminalAtUtc\" AND " +
                     "\"CompletedAtUtc\" >= \"RetentionDeadlineUtc\"");
             });
         builder.HasKey(receipt => receipt.Id);
-        builder.HasAlternateKey(receipt => new
-        {
-            receipt.ScopeId,
-            receipt.Id
-        });
         builder.Property(receipt => receipt.ScopeId)
             .HasMaxLength(128)
             .IsRequired();
@@ -71,13 +82,24 @@ internal sealed class
         {
             receipt.ScopeId,
             receipt.ReservationId
-        }).IsUnique();
+        })
+            .HasDatabaseName(
+                "UX_reservation_retention_receipts_reservation")
+            .IsUnique();
         builder.HasIndex(receipt => new
         {
             receipt.ScopeId,
-            receipt.ExecutionId,
-            receipt.ReservationId
-        }).IsUnique();
+            receipt.ExecutionId
+        }).HasDatabaseName(
+            "IX_reservation_retention_receipts_execution");
+        builder.HasIndex(receipt => new
+        {
+            receipt.ScopeId,
+            receipt.EventId
+        })
+            .HasDatabaseName(
+                "UX_reservation_retention_receipts_event")
+            .IsUnique();
         builder.HasOne<ReservationRetentionExecution>()
             .WithMany()
             .HasForeignKey(receipt => new
@@ -90,6 +112,8 @@ internal sealed class
                 execution.ScopeId,
                 execution.Id
             })
+            .HasConstraintName(
+                "FK_reservation_retention_receipts_execution")
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Reservation>()
             .WithOne()
@@ -106,6 +130,26 @@ internal sealed class
                     reservation.ScopeId,
                     reservation.Id
                 })
+            .HasConstraintName(
+                "FK_reservation_retention_receipts_reservation")
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ReservationAnonymisationTombstone>()
+            .WithOne()
+            .HasForeignKey<
+                ReservationRetentionAnonymisationReceipt>(
+                receipt => new
+                {
+                    receipt.ScopeId,
+                    receipt.ReservationId
+                })
+            .HasPrincipalKey<ReservationAnonymisationTombstone>(
+                tombstone => new
+                {
+                    tombstone.ScopeId,
+                    tombstone.Id
+                })
+            .HasConstraintName(
+                "FK_reservation_retention_receipts_tombstone")
             .OnDelete(DeleteBehavior.Restrict);
         builder.Ignore(receipt => receipt.DomainEvents);
     }

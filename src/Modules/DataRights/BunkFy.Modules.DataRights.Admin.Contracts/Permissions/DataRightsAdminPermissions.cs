@@ -1,4 +1,4 @@
-﻿namespace BunkFy.Modules.DataRights.Admin.Contracts;
+namespace BunkFy.Modules.DataRights.Admin.Contracts;
 
 using BunkFy.Modules.DataRights.Contracts;
 using Gma.Framework.Administration;
@@ -18,6 +18,12 @@ public static class DataRightsAdminPermissions
     public static readonly AdminPermission TenantTerminationExecute =
         AdminPermission.Create(
             DataRightsAdminPermissionCodes.TenantTerminationExecute);
+    public static readonly AdminPermission TenantTerminationExportDownload =
+        AdminPermission.Create(
+            DataRightsAdminPermissionCodes.TenantTerminationExportDownload);
+    public static readonly AdminPermission TenantTerminationExportConfirm =
+        AdminPermission.Create(
+            DataRightsAdminPermissionCodes.TenantTerminationExportConfirm);
     public static readonly AdminPermission TenantTerminationRetry =
         AdminPermission.Create(
             DataRightsAdminPermissionCodes.TenantTerminationRetry);

@@ -39,6 +39,12 @@ internal sealed class ReservationConfiguration : IEntityTypeConfiguration<Reserv
                 "CK_reservations_terminal_time",
                 "(\"Status\" IN (3, 5, 8, 10) AND \"TerminalAtUtc\" IS NOT NULL) OR " +
                 "(\"Status\" NOT IN (3, 5, 8, 10) AND \"TerminalAtUtc\" IS NULL)");
+            table.HasCheckConstraint(
+                "CK_reservations_pending_inventory_request",
+                "(\"PendingAllocationAmendmentId\" IS NULL AND " +
+                "\"PendingInventoryAmendmentRequestId\" IS NULL) OR " +
+                "(\"PendingAllocationAmendmentId\" IS NOT NULL AND " +
+                "\"PendingInventoryAmendmentRequestId\" IS NOT NULL)");
         });
         builder.HasKey(reservation => reservation.Id);
         builder.HasAlternateKey(reservation => new { reservation.ScopeId, reservation.Id });
@@ -55,6 +61,8 @@ internal sealed class ReservationConfiguration : IEntityTypeConfiguration<Reserv
         builder.Property(reservation => reservation.SourceReference).HasMaxLength(Reservation.SourceReferenceMaxLength);
         builder.Property(reservation => reservation.Notes).HasMaxLength(Reservation.NotesMaxLength);
         builder.Property(reservation => reservation.PendingAllocationAmendmentRequestFingerprint).HasMaxLength(Reservation.RequestFingerprintLength).IsFixedLength();
+        builder.HasIndex(reservation => reservation.PendingInventoryAmendmentRequestId)
+            .IsUnique();
         builder.Property(reservation => reservation.PendingInventoryUnitIds).HasMaxLength(Reservation.PendingInventoryUnitIdsMaxLength);
         builder.Property(reservation => reservation.PendingPrimaryGuestName).HasMaxLength(Reservation.PrimaryGuestNameMaxLength);
         builder.Property(reservation => reservation.PendingPrimaryGuestNameSearch).HasMaxLength(Reservation.PrimaryGuestNameMaxLength);

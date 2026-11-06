@@ -8,6 +8,6 @@ public sealed record UpdatePropertyCommand(
     Guid OperationId,
     string Name,
     string Code,
-    string TimeZoneId,
+    string? TimeZoneId,
     long ExpectedVersion)
     : ITransactionalCommand<PropertyMutationReceiptDto>;

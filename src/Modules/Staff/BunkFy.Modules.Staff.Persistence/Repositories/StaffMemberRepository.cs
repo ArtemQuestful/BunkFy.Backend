@@ -215,6 +215,29 @@ internal sealed class StaffMemberRepository(StaffDbContext dbContext)
             cancellationToken);
     }
 
+    public async Task<StaffAccountDirectoryResponse> ResolveAccountDirectoryAsync(
+        IReadOnlyCollection<string> authSubjectIds,
+        CancellationToken cancellationToken)
+    {
+        StaffAccountDirectoryEntryDto[] rows = await this.OperationalMembers()
+            .AsNoTracking()
+            .Where(member =>
+                member.AuthSubjectId != null &&
+                authSubjectIds.Contains(member.AuthSubjectId))
+            .OrderBy(member => member.DisplayName)
+            .ThenBy(member => member.Id)
+            .Select(member => new StaffAccountDirectoryEntryDto(
+                member.Id,
+                member.AuthSubjectId!,
+                member.DisplayName,
+                member.JobTitle,
+                (StaffStatus)member.Status,
+                member.Version))
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new(rows);
+    }
+
     public Task<bool> EmployeeNumberExistsAsync(string employeeNumber, Guid? exceptStaffMemberId,
         CancellationToken cancellationToken)
     {

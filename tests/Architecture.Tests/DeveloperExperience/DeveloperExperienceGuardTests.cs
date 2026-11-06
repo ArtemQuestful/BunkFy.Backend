@@ -451,7 +451,10 @@ public sealed partial class DeveloperExperienceGuardTests
         Assert.Empty(missing);
         Assert.Contains("AddSeconds(60)", exporter, StringComparison.Ordinal);
         Assert.Contains("-TimeoutSec 15", exporter, StringComparison.Ordinal);
-        Assert.Contains("SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')", exporter, StringComparison.Ordinal);
+        Assert.Contains("GetEnvironmentVariables('Process')", exporter, StringComparison.Ordinal);
+        Assert.Contains("WasDefined = $wasDefined", exporter, StringComparison.Ordinal);
+        Assert.Contains("Remove-Item -LiteralPath \"Env:\\$($entry.Key)\"", exporter, StringComparison.Ordinal);
+        Assert.Contains("$entry.Value.Value", exporter, StringComparison.Ordinal);
     }
 
     [Fact]

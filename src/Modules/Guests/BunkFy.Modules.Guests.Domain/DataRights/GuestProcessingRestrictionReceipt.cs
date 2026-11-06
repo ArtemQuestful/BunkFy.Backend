@@ -67,7 +67,7 @@ public sealed class GuestProcessingRestrictionReceipt : ScopedAggregateRoot<Guid
         bool restrictionVersionValid = action switch
         {
             GuestProcessingRestrictionAction.Apply => resultingRestrictionVersion == 1,
-            GuestProcessingRestrictionAction.Release => resultingRestrictionVersion >= 2,
+            GuestProcessingRestrictionAction.Release => resultingRestrictionVersion == 2,
             _ => false
         };
         if (approvalRevision < 1 ||

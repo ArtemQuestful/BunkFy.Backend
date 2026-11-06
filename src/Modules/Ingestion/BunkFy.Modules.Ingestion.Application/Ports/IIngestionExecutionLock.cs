@@ -8,6 +8,11 @@ internal interface IIngestionExecutionLock
         int taskAttempt,
         CancellationToken cancellationToken);
 
+    Task AcquireRetentionExecutionAsync(
+        string tenantId,
+        Guid executionId,
+        CancellationToken cancellationToken);
+
     Task AcquireConnectionReadAsync(
         string tenantId,
         Guid connectionId,

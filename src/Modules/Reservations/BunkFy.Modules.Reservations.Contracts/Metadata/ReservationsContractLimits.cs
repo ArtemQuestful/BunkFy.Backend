@@ -12,4 +12,7 @@ public static class ReservationsContractLimits
     public const int TimeZoneIdMaxLength = 100;
     public const int SearchMaxLength = 200;
     public const int MaximumRequestedUnits = 100;
+    public const int DefaultOperationsSnapshotUpcomingLimit = 25;
+    public const int MaximumOperationsSnapshotUpcomingLimit = 50;
+    public const int MaximumScheduleWindowDays = 42;
 }

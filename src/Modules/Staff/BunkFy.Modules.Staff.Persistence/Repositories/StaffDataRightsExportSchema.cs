@@ -10,7 +10,7 @@ using BunkFy.Modules.DataRights.Contracts;
 internal static class StaffDataRightsExportSchema
 {
     public const string ExportSchemaId = "staff.subject-export";
-    public const int ExportSchemaVersion = 4;
+    public const int ExportSchemaVersion = 5;
 
     private const string CatalogResourceName =
         "BunkFy.Modules.Staff.Persistence.DataGovernance.personal-data-catalog.v1.json";

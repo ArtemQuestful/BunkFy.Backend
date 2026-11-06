@@ -10,12 +10,15 @@ using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
+using Microsoft.Extensions.Logging;
 
 internal sealed class SelectDataRightsSubjectCommandHandler(
     DataRightsCaseMutationCoordinator mutations,
     IEnumerable<IDataRightsSubjectDiscoveryContributor> contributors,
     IScopeContext scopeContext,
-    ISystemClock clock) : ICommandHandler<SelectDataRightsSubjectCommand, DataRightsCaseDto>
+    ISystemClock clock,
+    ILogger<SelectDataRightsSubjectCommandHandler> logger)
+    : ICommandHandler<SelectDataRightsSubjectCommand, DataRightsCaseDto>
 {
     public async Task<Result<DataRightsCaseDto>> HandleAsync(
         SelectDataRightsSubjectCommand command,
@@ -30,6 +33,7 @@ internal sealed class SelectDataRightsSubjectCommandHandler(
             command.Scope,
             command.CaseId,
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (dataRightsCase is null)
         {
             return Result.Failure<DataRightsCaseDto>(DataRightsApplicationErrors.CaseNotFound);
@@ -42,7 +46,7 @@ internal sealed class SelectDataRightsSubjectCommandHandler(
         }
 
         DataRightsSubjectCoordinate? requestedCoordinate = command.Coordinate;
-        if (requestedCoordinate is null)
+        if (!IsValidCoordinate(requestedCoordinate))
         {
             return Result.Failure<DataRightsCaseDto>(
                 DataRightsApplicationErrors.SubjectCoordinateInvalid);
@@ -58,37 +62,60 @@ internal sealed class SelectDataRightsSubjectCommandHandler(
             return Result.Failure<DataRightsCaseDto>(contributor.Error);
         }
 
-        DataRightsSubjectSelectionValidation validation =
-            await contributor.Value.ValidateSelectionAsync(
+        DataRightsSubjectSelectionValidation validation;
+        try
+        {
+            validation = await contributor.Value.ValidateSelectionAsync(
                 new DataRightsSubjectSelectionRequest(
                     scopeContext.ScopeId,
                     (DataRightsCaseType)dataRightsCase.Kind,
                     dataRightsCase.PropertyId,
-                    requestedCoordinate),
+                    requestedCoordinate!),
                 cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (Exception exception)
+            when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                "Data Rights subject selection owner {OwnerKey} failed because {ExceptionType} was raised.",
+                contributor.Value.OwnerKey,
+                exception.GetType().Name);
+            return Result.Failure<DataRightsCaseDto>(
+                DataRightsApplicationErrors.SubjectOwnerRetryRequired);
+        }
+
         if (validation is null)
         {
             return Result.Failure<DataRightsCaseDto>(
-                DataRightsApplicationErrors.SubjectCoordinateInvalid);
+                DataRightsApplicationErrors.SubjectOwnerResultInvalid);
         }
 
         if (validation.Status != DataRightsSubjectSelectionValidationStatus.Valid)
         {
+            if (validation.Coordinate is not null)
+            {
+                return Result.Failure<DataRightsCaseDto>(
+                    DataRightsApplicationErrors.SubjectOwnerResultInvalid);
+            }
+
             return Result.Failure<DataRightsCaseDto>(MapValidationError(validation.Status));
         }
 
         DataRightsSubjectCoordinate? coordinate = validation.Coordinate;
-        if (coordinate is null || !IsSameSelection(requestedCoordinate, coordinate))
+        if (!IsValidCoordinate(coordinate) ||
+            !IsSameSelection(requestedCoordinate!, coordinate!))
         {
             return Result.Failure<DataRightsCaseDto>(
-                DataRightsApplicationErrors.SubjectCoordinateInvalid);
+                DataRightsApplicationErrors.SubjectOwnerResultInvalid);
         }
+        DataRightsSubjectCoordinate validatedCoordinate = coordinate!;
 
         Result selected = dataRightsCase.SelectSubject(
-            coordinate.OwnerKey,
-            coordinate.RecordType,
-            coordinate.RecordId,
-            coordinate.RecordVersion,
+            validatedCoordinate.OwnerKey,
+            validatedCoordinate.RecordType,
+            validatedCoordinate.RecordId,
+            validatedCoordinate.RecordVersion,
             command.ExpectedVersion,
             command.ActorId,
             clock.UtcNow);
@@ -106,8 +133,21 @@ internal sealed class SelectDataRightsSubjectCommandHandler(
                 DataRightsApplicationErrors.DiscoveryScopeUnavailable,
             DataRightsSubjectSelectionValidationStatus.NotFound =>
                 DataRightsApplicationErrors.SubjectNotFound,
-            _ => DataRightsApplicationErrors.SubjectCoordinateInvalid
+            DataRightsSubjectSelectionValidationStatus.RetryRequired =>
+                DataRightsApplicationErrors.SubjectOwnerRetryRequired,
+            _ => DataRightsApplicationErrors.SubjectOwnerResultInvalid
         };
+
+    private static bool IsValidCoordinate(DataRightsSubjectCoordinate? coordinate) =>
+        coordinate is not null &&
+        !string.IsNullOrWhiteSpace(coordinate.OwnerKey) &&
+        coordinate.OwnerKey.Trim().Length <=
+            DataRightsSubjectDiscoveryLimits.OwnerKeyMaxLength &&
+        !string.IsNullOrWhiteSpace(coordinate.RecordType) &&
+        coordinate.RecordType.Trim().Length <=
+            DataRightsSubjectDiscoveryLimits.RecordTypeMaxLength &&
+        coordinate.RecordId != Guid.Empty &&
+        coordinate.RecordVersion > 0;
 
     private static bool IsSameSelection(
         DataRightsSubjectCoordinate requested,

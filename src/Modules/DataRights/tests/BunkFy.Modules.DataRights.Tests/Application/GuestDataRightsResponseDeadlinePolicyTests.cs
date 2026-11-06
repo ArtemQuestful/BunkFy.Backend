@@ -147,6 +147,34 @@ public sealed class GuestDataRightsResponseDeadlinePolicyTests
         Assert.Equal(DataRightsResponseRight.Erasure, result.Value.ControllingRight);
     }
 
+    [Fact]
+    public async Task Normal_projection_return_after_cancellation_is_not_accepted()
+    {
+        (CountryPolicyRegistry registry, PropertyGovernancePolicyBinding binding) =
+            LoadPolicy("example-hostel-policy.v2.json");
+        using CancellationTokenSource source = new();
+        GuestDataRightsResponseDeadlinePolicy policy = new(
+            new StubPropertyRepository(
+                new(
+                    true,
+                    PropertyStatus.Active,
+                    "Europe/London",
+                    PropertyProcessingStatus.Enabled,
+                    binding,
+                    17,
+                    19),
+                _ => source.Cancel()),
+            registry);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            policy.ResolveGuestAsync(
+                Guid.NewGuid(),
+                DataRightsCaseOperation.AccessExport,
+                ReceivedAt,
+                ReceivedAt,
+                source.Token));
+    }
+
     private static (
         CountryPolicyRegistry Registry,
         PropertyGovernancePolicyBinding Binding) LoadPolicy(string fileName)
@@ -166,7 +194,8 @@ public sealed class GuestDataRightsResponseDeadlinePolicyTests
                 document.PolicyVersion,
                 artifact.ContentSha256,
                 CountryLaunchStatus.Engineering)],
-            CountryPolicyRuntimeMode.Engineering);
+            CountryPolicyRuntimeMode.Engineering,
+            PinnedTzdbCountryPolicyTimeZoneRules.Instance);
         PropertyGovernancePolicyBinding binding = new(
             document.OperatingCountryCode,
             document.PolicyId,
@@ -187,7 +216,8 @@ public sealed class GuestDataRightsResponseDeadlinePolicyTests
     }
 
     private sealed class StubPropertyRepository(
-        DataRightsPropertyPolicySnapshot? property)
+        DataRightsPropertyPolicySnapshot? property,
+        Action<CancellationToken>? afterGet = null)
         : IDataRightsPropertyProjectionRepository
     {
         public Task ApplyTopologyAsync(
@@ -202,6 +232,10 @@ public sealed class GuestDataRightsResponseDeadlinePolicyTests
 
         public Task<DataRightsPropertyPolicySnapshot?> GetPolicyAsync(
             Guid propertyId,
-            CancellationToken cancellationToken) => Task.FromResult(property);
+            CancellationToken cancellationToken)
+        {
+            afterGet?.Invoke(cancellationToken);
+            return Task.FromResult(property);
+        }
     }
 }

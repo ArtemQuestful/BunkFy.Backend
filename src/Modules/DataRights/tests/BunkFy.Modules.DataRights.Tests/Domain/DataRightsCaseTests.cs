@@ -577,6 +577,15 @@ public sealed class DataRightsCaseTests
                 DataRightsCaseOperation.None,
                 DataRightsRequesterRelation.DataSubject).Error.Code);
         Assert.Equal(
+            "DataRights.OperationsInvalid",
+            DataRightsCaseRequest.Create(
+                Guid.NewGuid(),
+                DataRightsCaseKind.GuestRights,
+                DataRightsCaseOperation.AccessExport |
+                    DataRightsCaseOperation.Restriction,
+                DataRightsRequesterRelation.ControllerInitiated,
+                DataRightsRestrictionAction.Apply).Error.Code);
+        Assert.Equal(
             "DataRights.GuestRightsRequesterInvalid",
             DataRightsCaseRequest.Create(
                 Guid.NewGuid(),

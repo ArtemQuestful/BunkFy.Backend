@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Workspaces.Persistence.TenantTermination;
 
 using System.Globalization;
 using BunkFy.Modules.Workspaces.Domain;
+using BunkFy.Modules.Workspaces.Domain.DataRights;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using Microsoft.EntityFrameworkCore;
 
@@ -53,12 +54,9 @@ internal sealed partial class WorkspaceTenantDestructionOwner
                     projection => projection.Id,
                     cancellationToken),
             WorkspaceTenantDestroyStage.OnboardingCorrectionReceipts =>
-                this.RemoveGuidBatchAsync(
+                this.RemoveOnboardingReceiptBatchAsync(
                     operation,
-                    dbContext.StaffOnboardingCorrectionReceipts
-                        .IgnoreQueryFilters()
-                        .Where(receipt => receipt.ScopeId == tenantId),
-                    receipt => receipt.Id,
+                    tenantId,
                     cancellationToken),
             WorkspaceTenantDestroyStage.OnboardingRestrictionReceipts =>
                 this.RemoveGuidBatchAsync(
@@ -171,6 +169,14 @@ internal sealed partial class WorkspaceTenantDestructionOwner
                             fence.Id != operation.FenceId),
                     fence => fence.Id,
                     cancellationToken),
+            WorkspaceTenantDestroyStage.StaffOnboardingRetentionExecutions =>
+                this.RemoveGuidBatchAsync(
+                    operation,
+                    dbContext.StaffOnboardingRetentionExecutions
+                        .IgnoreQueryFilters()
+                        .Where(execution => execution.ScopeId == tenantId),
+                    execution => execution.Id,
+                    cancellationToken),
             WorkspaceTenantDestroyStage.SweepCheckpoints =>
                 this.RemoveGuidBatchAsync(
                     operation,
@@ -243,6 +249,59 @@ internal sealed partial class WorkspaceTenantDestructionOwner
                 .Where(application => application.ScopeId == tenantId),
             application => application.Id,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> RemoveOnboardingReceiptBatchAsync(
+        WorkspaceTenantDestroyOperation operation,
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        WorkspaceStaffOnboardingRecoveryReceipt[] recoveryReceipts =
+            await dbContext.StaffOnboardingRecoveryReceipts
+                .IgnoreQueryFilters()
+                .Where(receipt => receipt.ScopeId == tenantId)
+                .OrderBy(receipt => receipt.Id)
+                .Take(operation.BatchSize + 1)
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (recoveryReceipts.Length > 0)
+        {
+            WorkspaceStaffOnboardingRecoveryReceipt[] selected =
+                recoveryReceipts.Take(operation.BatchSize).ToArray();
+            dbContext.RemoveRange(selected);
+            EnsureBatchRecorded(
+                operation,
+                selected.Select(receipt =>
+                    $"recovery:{receipt.Id:N}").ToArray(),
+                stageCompleted: false,
+                clock.UtcNow);
+            return true;
+        }
+
+        WorkspaceStaffOnboardingCorrectionReceipt[] correctionReceipts =
+            await dbContext.StaffOnboardingCorrectionReceipts
+                .IgnoreQueryFilters()
+                .Where(receipt => receipt.ScopeId == tenantId)
+                .OrderBy(receipt => receipt.Id)
+                .Take(operation.BatchSize + 1)
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (correctionReceipts.Length > 0)
+        {
+            WorkspaceStaffOnboardingCorrectionReceipt[] selected =
+                correctionReceipts.Take(operation.BatchSize).ToArray();
+            dbContext.RemoveRange(selected);
+            EnsureBatchRecorded(
+                operation,
+                selected.Select(receipt =>
+                    $"correction:{receipt.Id:N}").ToArray(),
+                correctionReceipts.Length <= operation.BatchSize,
+                clock.UtcNow);
+            return true;
+        }
+
+        EnsureStageAdvanced(operation, clock.UtcNow);
+        return false;
     }
 
     private async Task<bool> RemoveBatchAsync<TEntity>(
@@ -370,6 +429,10 @@ internal sealed partial class WorkspaceTenantDestructionOwner
                 .IgnoreQueryFilters()
                 .AnyAsync(receipt => receipt.ScopeId == tenantId, cancellationToken)
                 .ConfigureAwait(false) ||
+            await dbContext.StaffOnboardingRecoveryReceipts
+                .IgnoreQueryFilters()
+                .AnyAsync(receipt => receipt.ScopeId == tenantId, cancellationToken)
+                .ConfigureAwait(false) ||
             await dbContext.StaffOnboardingProcessingRestrictionReceipts
                 .IgnoreQueryFilters()
                 .AnyAsync(receipt => receipt.ScopeId == tenantId, cancellationToken)
@@ -411,6 +474,10 @@ internal sealed partial class WorkspaceTenantDestructionOwner
             await dbContext.StaffRetentionCorrelationReceipts
                 .IgnoreQueryFilters()
                 .AnyAsync(receipt => receipt.ScopeId == tenantId, cancellationToken)
+                .ConfigureAwait(false) ||
+            await dbContext.StaffOnboardingRetentionExecutions
+                .IgnoreQueryFilters()
+                .AnyAsync(execution => execution.ScopeId == tenantId, cancellationToken)
                 .ConfigureAwait(false) ||
             await dbContext.StaffCorrelationAnonymisationRestoreReceipts
                 .IgnoreQueryFilters()

@@ -35,7 +35,7 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("workspace.termination.destroyed", result.ResultCode);
-        Assert.Equal(11, result.AffectedCount);
+        Assert.Equal(13, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(3, result.ResultingProofRevision);
         Assert.Empty(await context.TenantDestroyOperations.ToListAsync());
@@ -108,20 +108,21 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
     public void Destroy_stage_ordinals_preserve_the_existing_protocol_and_append_receipts_after_checkpoints()
     {
         Assert.Equal(
-            Enumerable.Range(1, 19),
+            Enumerable.Range(1, 20),
             Enum.GetValues<WorkspaceTenantDestroyStage>()
                 .Where(stage => stage is >=
                     WorkspaceTenantDestroyStage.OutboxMessages and <=
-                    WorkspaceTenantDestroyStage.HistoricalTerminationFences)
+                    WorkspaceTenantDestroyStage.StaffOnboardingRetentionExecutions)
                 .Select(stage => (int)stage));
         Assert.Equal(
-            20,
+            22,
             (int)WorkspaceTenantDestroyStage.SweepCheckpoints);
         Assert.Equal(
-            21,
+            23,
             (int)WorkspaceTenantDestroyStage
                 .HistoricalNoProvisionReceipts);
-        Assert.Equal(22, (int)WorkspaceTenantDestroyStage.Completed);
+        Assert.Equal(20, (int)WorkspaceTenantDestroyStage.StaffOnboardingRetentionExecutions);
+        Assert.Equal(21, (int)WorkspaceTenantDestroyStage.Completed);
 
         WorkspaceTenantDestroyOperation operation = Assert.IsType<
             WorkspaceTenantDestroyOperation>(
@@ -133,7 +134,7 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 selectedFenceVersion: 4,
                 WorkspaceTenantDestroyOperation.MaximumBatchSize,
                 Now));
-        for (int stage = 1; stage <= 19; stage++)
+        for (int stage = 1; stage <= 20; stage++)
         {
             Assert.Equal(stage, (int)operation.Stage);
             Assert.True(operation.AdvanceEmptyStage(
@@ -143,13 +144,13 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         Assert.Equal(
             WorkspaceTenantDestroyStage.SweepCheckpoints,
             operation.Stage);
-        Assert.True(operation.AdvanceEmptyStage(Now.AddMinutes(20)));
+        Assert.True(operation.AdvanceEmptyStage(Now.AddMinutes(21)));
         Assert.Equal(
             WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts,
             operation.Stage);
-        Assert.True(operation.AdvanceEmptyStage(Now.AddMinutes(21)));
+        Assert.True(operation.AdvanceEmptyStage(Now.AddMinutes(22)));
         Assert.Equal(WorkspaceTenantDestroyStage.Completed, operation.Stage);
-        Assert.False(operation.AdvanceEmptyStage(Now.AddMinutes(22)));
+        Assert.False(operation.AdvanceEmptyStage(Now.AddMinutes(23)));
 
         using WorkspacesDbContext context = CreateContext();
         IEntityType entity = context.GetService<IDesignTimeModel>().Model
@@ -161,7 +162,7 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 candidate => candidate.Name ==
                     "CK_workspaces_tenant_destroy_operation_progress");
         Assert.Contains(
-            "\"Stage\" BETWEEN 1 AND 22",
+            "\"Stage\" BETWEEN 1 AND 23",
             constraint.Sql,
             StringComparison.Ordinal);
     }
@@ -350,6 +351,8 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         await context.PropertyProjections.IgnoreQueryFilters().AnyAsync() ||
         await context.StaffOnboardingCorrectionReceipts
             .IgnoreQueryFilters().AnyAsync() ||
+        await context.StaffOnboardingRecoveryReceipts
+            .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffOnboardingProcessingRestrictionReceipts
             .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffOnboardingProcessingRestrictionProjections
@@ -369,6 +372,8 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         await context.StaffDeferredClaimWithdrawals
             .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffRetentionCorrelationReceipts
+            .IgnoreQueryFilters().AnyAsync() ||
+        await context.StaffOnboardingRetentionExecutions
             .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffCorrelationAnonymisationRestoreReceipts
             .IgnoreQueryFilters().AnyAsync() ||

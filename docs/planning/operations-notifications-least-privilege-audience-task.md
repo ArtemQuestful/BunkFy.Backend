@@ -45,8 +45,10 @@ No BunkFy policy is moved into GMA.
 The projector API requires a non-null `PermissionCode` for every property
 fan-out. This makes omission a compile-time error for new handlers. Membership
 filtering runs first, authorization narrows the candidates before exact Staff
-correlation, failures remain closed, and no copy is persisted until the
-complete audience is validated.
+correlation, and no copy is persisted until every returned recipient is
+validated. A later current-state Staff omission may narrow the audience without
+poisoning valid recipients; authority failures and malformed, unexpected, or
+duplicate resolver output remain closed.
 
 ## Operational Notes
 

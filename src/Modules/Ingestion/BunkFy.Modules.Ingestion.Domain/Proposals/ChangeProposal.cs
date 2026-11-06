@@ -78,7 +78,8 @@ public sealed class ChangeProposal : ScopedAggregateRoot<Guid>
             return Result.Failure<ChangeProposal>(IngestionDomainErrors.ProposalReasonCodeInvalid);
         }
 
-        if (baseReservationDetailsRevision <= 0 || normalizedDiff.Length is 0 or > DiffMaxLength)
+        if (baseReservationDetailsRevision <= 0 || normalizedDiff.Length is 0 or > DiffMaxLength ||
+            nowUtc == default)
         {
             return Result.Failure<ChangeProposal>(IngestionDomainErrors.ProposalDiffInvalid);
         }
@@ -106,7 +107,8 @@ public sealed class ChangeProposal : ScopedAggregateRoot<Guid>
         }
 
         string normalizedActor = actor?.Trim() ?? string.Empty;
-        if (normalizedActor.Length is 0 or > ActorMaxLength || productOperationId == Guid.Empty)
+        if (normalizedActor.Length is 0 or > ActorMaxLength || productOperationId == Guid.Empty ||
+            nowUtc < this.CreatedAtUtc)
         {
             return Result.Failure(IngestionDomainErrors.DecisionReasonInvalid);
         }
@@ -134,6 +136,11 @@ public sealed class ChangeProposal : ScopedAggregateRoot<Guid>
         if (productOperationId == Guid.Empty || this.ProductOperationId != productOperationId)
         {
             return Result.Failure(IngestionDomainErrors.IdRequired);
+        }
+
+        if (!this.DecidedAtUtc.HasValue || nowUtc < this.DecidedAtUtc)
+        {
+            return Result.Failure(IngestionDomainErrors.ProposalNotApplying);
         }
 
         Result retention = ValidateRetentionDeadline(sensitiveDataRetainUntilUtc, nowUtc);
@@ -225,7 +232,7 @@ public sealed class ChangeProposal : ScopedAggregateRoot<Guid>
         if (this.State is ChangeProposalState.Pending or
                 ChangeProposalState.Applying ||
             this.AnonymisedAtUtc.HasValue ||
-            nowUtc == default)
+            !this.CompletedAtUtc.HasValue || nowUtc < this.CompletedAtUtc)
         {
             return Result.Failure(
                 IngestionDomainErrors.AnonymisationRecordNotReducible);
@@ -258,6 +265,11 @@ public sealed class ChangeProposal : ScopedAggregateRoot<Guid>
         if (decision.IsFailure)
         {
             return decision;
+        }
+
+        if (nowUtc < this.CreatedAtUtc)
+        {
+            return Result.Failure(IngestionDomainErrors.DecisionReasonInvalid);
         }
 
         Result retention = ValidateRetentionDeadline(sensitiveDataRetainUntilUtc, nowUtc);
@@ -293,6 +305,11 @@ public sealed class ChangeProposal : ScopedAggregateRoot<Guid>
         if (normalizedReason.Length is 0 or > ReasonMaxLength)
         {
             return Result.Failure(IngestionDomainErrors.DecisionReasonInvalid);
+        }
+
+        if (!this.DecidedAtUtc.HasValue || nowUtc < this.DecidedAtUtc)
+        {
+            return Result.Failure(IngestionDomainErrors.ProposalNotApplying);
         }
 
         Result retention = ValidateRetentionDeadline(sensitiveDataRetainUntilUtc, nowUtc);

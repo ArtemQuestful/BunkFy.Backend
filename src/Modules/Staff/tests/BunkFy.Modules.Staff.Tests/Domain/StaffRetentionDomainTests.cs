@@ -77,6 +77,7 @@ public sealed class StaffRetentionDomainTests
         Assert.True(execution.RecordAffected().IsSuccess);
         Assert.True(execution.Complete(
             StaffRetentionExecutionState.Completed,
+            attempt: 1,
             1,
             0,
             "staff.staff-employment.completed",

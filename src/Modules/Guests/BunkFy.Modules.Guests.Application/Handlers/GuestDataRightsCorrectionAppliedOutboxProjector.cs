@@ -3,7 +3,6 @@ namespace BunkFy.Modules.Guests.Application.Handlers;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Guests.Application.Mapping;
 using BunkFy.Modules.Guests.Contracts;
-using BunkFy.Modules.Guests.Domain.DataRights;
 using BunkFy.Modules.Guests.Domain.Events;
 using Gma.Framework.Application.Events;
 using Gma.Framework.Messaging;
@@ -32,7 +31,7 @@ internal sealed class GuestDataRightsCorrectionAppliedOutboxProjector(
                 domainEvent.SelectedRecordVersion,
                 domainEvent.CurrentRecordVersion,
                 GuestsDataRightsCoordinates.CorrectionFieldPolicyKey,
-                GuestDataRightsCorrectionReceipt.CurrentContractVersion,
+                domainEvent.ReceiptContractVersion,
                 domainEvent.ReceiptId,
                 domainEvent.ChangedFields.Select(field => field.ToFieldKey()).ToArray()),
             cancellationToken);

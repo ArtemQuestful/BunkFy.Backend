@@ -23,6 +23,28 @@ public sealed class ReservationRetentionConfigurationTests
         Assert.Equal(60, options.IntervalMinutes);
         Assert.Equal(100, options.ScanSize);
         Assert.Equal(25, options.MutationBatchSize);
+        Assert.Equal(1000, ReservationRetentionOptions.MaximumScanSize);
+    }
+
+    [Fact]
+    public void Scan_size_cannot_exceed_repository_bound()
+    {
+        ReservationRetentionOptions options = new()
+        {
+            ScanSize = ReservationRetentionOptions.MaximumScanSize + 1,
+            MutationBatchSize = 1
+        };
+
+        ValidateOptionsResult validation =
+            new ReservationRetentionOptionsValidator()
+                .Validate(null, options);
+
+        Assert.True(validation.Failed);
+        Assert.Contains(
+            validation.Failures,
+            failure => failure.Contains(
+                $"between 1 and {ReservationRetentionOptions.MaximumScanSize}",
+                StringComparison.Ordinal));
     }
 
     [Fact]

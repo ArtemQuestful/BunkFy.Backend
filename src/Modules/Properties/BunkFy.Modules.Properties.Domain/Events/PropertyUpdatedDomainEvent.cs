@@ -14,7 +14,8 @@ public sealed record PropertyUpdatedDomainEvent : ScopedDomainEvent
         string code,
         string timeZoneId,
         PropertyState status,
-        long propertyVersion)
+        long propertyVersion,
+        string? previousTimeZoneId = null)
         : base(eventId, occurredAtUtc, tenantId)
     {
         this.PropertyId = DomainEventGuards.RequireId(propertyId, nameof(propertyId));
@@ -25,6 +26,12 @@ public sealed record PropertyUpdatedDomainEvent : ScopedDomainEvent
         this.PropertyVersion = propertyVersion > 0
             ? propertyVersion
             : throw new ArgumentOutOfRangeException(nameof(propertyVersion));
+        this.PreviousTimeZoneId = previousTimeZoneId is null
+            ? null
+            : DomainEventGuards.NormalizeRequiredText(
+                previousTimeZoneId,
+                Property.TimeZoneIdMaxLength,
+                nameof(previousTimeZoneId));
     }
 
     public Guid PropertyId { get; }
@@ -33,4 +40,5 @@ public sealed record PropertyUpdatedDomainEvent : ScopedDomainEvent
     public string TimeZoneId { get; }
     public PropertyState Status { get; }
     public long PropertyVersion { get; }
+    public string? PreviousTimeZoneId { get; }
 }

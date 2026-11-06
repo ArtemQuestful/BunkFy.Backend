@@ -63,11 +63,8 @@ public sealed class StaffProcessingRestrictionIntegrationTests
             AuthTestContainers.GetNatsConnectionString(nats),
             disableOutboxPublisher: false);
         await api.MigrateStaffAuthorizationDatabaseAsync().ConfigureAwait(false);
-        using (IServiceScope scope = api.Services.CreateScope())
-        {
-            await scope.ServiceProvider.GetRequiredService<DataRightsDbContext>()
-                .Database.MigrateAsync().ConfigureAwait(false);
-        }
+        await api.MigrateGuestDataRightsAuthorizationDatabaseAsync()
+            .ConfigureAwait(false);
 
         await using AdminCliTestApplication admin =
             new("PostgreSql", connectionString);
@@ -345,6 +342,30 @@ public sealed class StaffProcessingRestrictionIntegrationTests
             dataRightsCase.Version,
             "user:privacy-reviewer",
             startedAtUtc.AddMinutes(2)).IsSuccess);
+        if (action == DataRightsRestrictionAction.Release)
+        {
+            using IServiceScope targetScope = api.Services.CreateScope();
+            targetScope.ServiceProvider
+                .GetRequiredService<ITenantContextAccessor>()
+                .SetTenant(TenantId);
+            StaffProcessingRestriction target = await targetScope
+                .ServiceProvider
+                .GetRequiredService<StaffDbContext>()
+                .ProcessingRestrictions
+                .AsNoTracking()
+                .SingleAsync(candidate =>
+                    candidate.StaffMemberId == staffMemberId &&
+                    candidate.Status ==
+                        StaffProcessingRestrictionState.Active)
+                .ConfigureAwait(false);
+            Assert.True(dataRightsCase.SelectRestrictionReleaseTarget(
+                StaffDataRightsCoordinates.Owner,
+                target.Id,
+                target.Version,
+                dataRightsCase.Version,
+                "user:privacy-reviewer",
+                startedAtUtc.AddMinutes(2).AddSeconds(30)).IsSuccess);
+        }
         Assert.True(dataRightsCase.RequireReview(
             dataRightsCase.Version,
             "user:privacy-reviewer",

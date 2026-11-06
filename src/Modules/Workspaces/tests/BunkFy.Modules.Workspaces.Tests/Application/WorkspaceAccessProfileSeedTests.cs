@@ -7,6 +7,7 @@ using BunkFy.Modules.Inventory.Contracts;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Stations.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using Gma.Framework.Permissions;
 using Gma.Modules.AccessControl.Contracts;
@@ -15,6 +16,23 @@ using Xunit;
 [Trait("Category", "Unit")]
 public sealed class WorkspaceAccessProfileSeedTests
 {
+    [Fact]
+    public void Station_management_is_sensitive_delegable_and_manager_only()
+    {
+        Assert.Equal(7, WorkspaceAccessProfileSeeds.Version);
+        WorkspaceAccessPermissionDto permission = Assert.Single(
+            WorkspaceAccessPermissionCatalogue.All, item => item.Code == StationsPermissionCodes.Manage);
+        Assert.True(permission.IsSensitive);
+        Assert.Empty(permission.RequiredPermissions);
+        Assert.Equal(permission.Code, Assert.Single(StationsModuleMetadata.Descriptor.GetPermissions()).Code);
+        Assert.Contains(permission.Code, WorkspaceAccessRoles.DelegablePermissions);
+        Assert.Contains(permission.Code, WorkspaceAccessProfileSeeds.Manager.Permissions);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.CompanySupportPermissionCeiling);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.LegacyMemberPermissions);
+        Assert.All(WorkspaceAccessProfileSeeds.All.Where(profile => profile.Key != WorkspaceAccessProfileSeeds.ManagerKey),
+            profile => Assert.DoesNotContain(permission.Code, profile.Permissions));
+    }
+
     [Fact]
     public void Membership_marker_grants_no_permissions()
     {
@@ -79,6 +97,23 @@ public sealed class WorkspaceAccessProfileSeedTests
             Assert.DoesNotContain(profile.Permissions, dataRightsPermissions.Contains));
     }
 
+    [Theory]
+    [InlineData(DataRightsAdminPermissionCodes.TenantTerminationExportDownload)]
+    [InlineData(DataRightsAdminPermissionCodes.TenantTerminationExportConfirm)]
+    public void Tenant_termination_export_handoff_permissions_are_sensitive_delegable_and_never_seeded(
+        string permissionCode)
+    {
+        WorkspaceAccessPermissionDto permission = Assert.Single(
+            WorkspaceAccessPermissionCatalogue.All,
+            item => item.Code == permissionCode);
+
+        Assert.True(permission.IsSensitive);
+        Assert.Contains(permission.Code, WorkspaceAccessRoles.DelegablePermissions);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.CompanySupportPermissionCeiling);
+        Assert.All(WorkspaceAccessProfileSeeds.All, profile =>
+            Assert.DoesNotContain(permission.Code, profile.Permissions));
+    }
+
     [Fact]
     public void Guest_data_hold_permission_is_delegable_but_not_seeded()
     {
@@ -129,7 +164,7 @@ public sealed class WorkspaceAccessProfileSeedTests
     [Fact]
     public void Staff_onboarding_management_is_sensitive_delegable_and_manager_only()
     {
-        Assert.Equal(4, WorkspaceAccessProfileSeeds.Version);
+        Assert.Equal(7, WorkspaceAccessProfileSeeds.Version);
         WorkspaceAccessPermissionDto permission = Assert.Single(
             WorkspaceAccessPermissionCatalogue.All,
             item => item.Code ==
@@ -160,6 +195,28 @@ public sealed class WorkspaceAccessProfileSeedTests
     }
 
     [Fact]
+    public void Property_time_zone_management_is_sensitive_delegable_and_manager_only()
+    {
+        Assert.Equal(7, WorkspaceAccessProfileSeeds.Version);
+        WorkspaceAccessPermissionDto permission = Assert.Single(
+            WorkspaceAccessPermissionCatalogue.All,
+            item => item.Code == PropertiesAdminPermissionCodes.TimeZonesManage);
+
+        Assert.True(permission.IsSensitive);
+        Assert.Equal(
+            [PropertiesAdminPermissionCodes.Read],
+            permission.RequiredPermissions);
+        Assert.Contains(permission.Code, WorkspaceAccessRoles.DelegablePermissions);
+        Assert.Contains(permission.Code, WorkspaceAccessProfileSeeds.Manager.Permissions);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.LegacyMemberPermissions);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.CompanySupportPermissionCeiling);
+        Assert.All(
+            WorkspaceAccessProfileSeeds.All.Where(
+                profile => profile.Key != WorkspaceAccessProfileSeeds.ManagerKey),
+            profile => Assert.DoesNotContain(permission.Code, profile.Permissions));
+    }
+
+    [Fact]
     public void Inventory_retirement_is_sensitive_delegable_and_manager_only()
     {
         WorkspaceAccessPermissionDto permission = Assert.Single(
@@ -172,6 +229,32 @@ public sealed class WorkspaceAccessProfileSeedTests
                 PropertiesAdminPermissionCodes.RoomsManage,
                 PropertiesAdminPermissionCodes.BedsManage,
                 InventoryAdminPermissionCodes.Read
+            ],
+            permission.RequiredPermissions);
+        Assert.Contains(permission.Code, WorkspaceAccessRoles.DelegablePermissions);
+        Assert.Contains(permission.Code, WorkspaceAccessProfileSeeds.Manager.Permissions);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.LegacyMemberPermissions);
+        Assert.DoesNotContain(permission.Code, WorkspaceAccessRoles.CompanySupportPermissionCeiling);
+        Assert.All(
+            WorkspaceAccessProfileSeeds.All.Where(
+                profile => profile.Key != WorkspaceAccessProfileSeeds.ManagerKey),
+            profile => Assert.DoesNotContain(permission.Code, profile.Permissions));
+    }
+
+    [Fact]
+    public void Inventory_block_group_management_is_sensitive_delegable_and_manager_only()
+    {
+        WorkspaceAccessPermissionDto permission = Assert.Single(
+            WorkspaceAccessPermissionCatalogue.All,
+            item => item.Code ==
+                InventoryAdminPermissionCodes.BlockGroupsManage);
+
+        Assert.True(permission.IsSensitive);
+        Assert.Equal(
+            [
+                PropertiesAdminPermissionCodes.Read,
+                InventoryAdminPermissionCodes.Read,
+                InventoryAdminPermissionCodes.BlocksManage
             ],
             permission.RequiredPermissions);
         Assert.Contains(permission.Code, WorkspaceAccessRoles.DelegablePermissions);

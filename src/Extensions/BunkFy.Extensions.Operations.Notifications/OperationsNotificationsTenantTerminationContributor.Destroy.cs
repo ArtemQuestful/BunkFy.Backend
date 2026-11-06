@@ -34,26 +34,29 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
         WorkspaceTerminationFenceSnapshot? fence =
             await this.ReadFenceAsync(cancellationToken)
                 .ConfigureAwait(false);
+        DateTimeOffset observedAtUtc = this.GetUtcNowBeforeDeadline(
+            request.DeadlineUtc);
         if (!Matches(request, fence))
         {
             return Retry(
                 "operations-notifications.termination.destroy-fence-unavailable",
-                clock.UtcNow);
+                observedAtUtc);
         }
 
         NotificationScopeSnapshot selected = await lifecycle.GetSnapshotAsync(
                 tenantId!,
                 cancellationToken)
             .ConfigureAwait(false);
+        observedAtUtc = this.GetUtcNowBeforeDeadline(request.DeadlineUtc);
         if (!TrySelectDestroyRevision(selected, out long expectedRevision))
         {
             return selected?.Status == NotificationScopeStatus.ScopeUnavailable
                 ? Retry(
                     "operations-notifications.termination.destroy-scope-unavailable",
-                    clock.UtcNow)
+                    observedAtUtc)
                 : Failed(
                     "operations-notifications.termination.destroy-scope-invalid",
-                    clock.UtcNow);
+                    observedAtUtc);
         }
 
         NotificationScopeDestroyResult result = await lifecycle.DestroyBatchAsync(
@@ -64,11 +67,24 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
                     DestroyBatchSize),
                 cancellationToken)
             .ConfigureAwait(false);
+        _ = this.GetUtcNowBeforeDeadline(request.DeadlineUtc);
+        WorkspaceTerminationFenceSnapshot? resultingFence =
+            await this.ReadFenceAsync(cancellationToken)
+                .ConfigureAwait(false);
+        observedAtUtc = this.GetUtcNowBeforeDeadline(request.DeadlineUtc);
+        if (!Matches(request, resultingFence) ||
+            resultingFence!.Version != fence!.Version)
+        {
+            return Retry(
+                "operations-notifications.termination.destroy-fence-changed",
+                observedAtUtc);
+        }
+
         return MapDestroyResult(
             request,
             expectedRevision,
             result,
-            clock.UtcNow);
+            observedAtUtc);
     }
 
     private static TenantTerminationContributionResult MapDestroyResult(
@@ -207,6 +223,7 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
             progress.RemovalProofSha256) &&
         progress.StartedAtUtc != default &&
         progress.UpdatedAtUtc >= progress.StartedAtUtc &&
+        progress.UpdatedAtUtc < request.DeadlineUtc &&
         progress.UpdatedAtUtc <= recordedAtUtc;
 
     private static bool IsValid(
@@ -225,5 +242,6 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
             receipt.RemovalProofSha256) &&
         receipt.StartedAtUtc != default &&
         receipt.CompletedAtUtc >= receipt.StartedAtUtc &&
+        receipt.CompletedAtUtc < request.DeadlineUtc &&
         receipt.CompletedAtUtc <= recordedAtUtc;
 }

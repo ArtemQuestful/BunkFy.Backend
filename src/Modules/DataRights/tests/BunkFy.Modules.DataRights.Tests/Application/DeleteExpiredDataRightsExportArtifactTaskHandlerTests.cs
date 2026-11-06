@@ -61,6 +61,36 @@ public sealed class DeleteExpiredDataRightsExportArtifactTaskHandlerTests
         Assert.NotNull(dispatcher.Completed);
     }
 
+    [Fact]
+    public async Task Late_cancellation_after_delete_stops_completion_and_retry_converges()
+    {
+        Guid artifactId = Guid.NewGuid();
+        FakeTaskDispatcher dispatcher = new(artifactId);
+        using CancellationTokenSource source = new();
+        RecordingObjectStore objectStore = new(afterDelete: source.Cancel);
+        DeleteExpiredDataRightsExportArtifactTaskHandler handler = new(
+            dispatcher,
+            objectStore);
+        DeleteExpiredDataRightsExportArtifactPayload payload = Payload(
+            artifactId);
+        TaskExecutionContext context = Context();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            handler.HandleAsync(payload, context, source.Token));
+
+        Assert.NotNull(dispatcher.Started);
+        Assert.Null(dispatcher.Completed);
+        Assert.Equal(1, objectStore.DeleteCount);
+
+        await handler.HandleAsync(
+            payload,
+            context,
+            CancellationToken.None);
+
+        Assert.NotNull(dispatcher.Completed);
+        Assert.Equal(2, objectStore.DeleteCount);
+    }
+
     private static DeleteExpiredDataRightsExportArtifactPayload Payload(
         Guid artifactId) =>
         new(
@@ -130,16 +160,21 @@ public sealed class DeleteExpiredDataRightsExportArtifactTaskHandlerTests
         }
     }
 
-    private sealed class RecordingObjectStore(bool deleteResult = true)
+    private sealed class RecordingObjectStore(
+        bool deleteResult = true,
+        Action? afterDelete = null)
         : IDataRightsExportArtifactObjectStore
     {
         public Guid? DeletedArtifactId { get; private set; }
+        public int DeleteCount { get; private set; }
 
         public Task<bool> DeleteAsync(
             Guid artifactId,
             CancellationToken cancellationToken)
         {
             this.DeletedArtifactId = artifactId;
+            this.DeleteCount++;
+            afterDelete?.Invoke();
             return Task.FromResult(deleteResult);
         }
     }

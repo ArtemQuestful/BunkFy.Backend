@@ -75,13 +75,20 @@ redaction and reports an operational failure instead of deleting data when
 the authoritative history window has lapsed. Sensitive API and Admin API
 responses are explicitly non-cacheable.
 
+Each automatic staging-cleanup run is admitted by a Workspaces-owned execution
+record keyed by the generic Retention execution id. Begin, bounded discovery,
+per-candidate reconciliation, and completion serialize on that tenant-qualified
+coordinate before source locks are taken. Higher retries preserve cumulative
+scanned and affected counts; stale attempts fail before discovery, and exact
+terminal replay returns the stored result. The evidence is classified,
+tenant-exported, and removed by the bounded termination lifecycle.
 Withdrawal observations that arrive before the corresponding claim-request
 event are retained in a bounded Workspaces-owned correlation table. Claim
 request binding and withdrawal consumption share one exclusive source
 coordinate, so neither subscription can miss the other's commit. Exact
 duplicates replay, divergent coordinates fail closed, and the observation is
 removed only after authoritative terminalization, source terminal cleanup, or
-tenant destruction. This v12 persistence/export shape advances both the
+tenant destruction. This composed v14 persistence/export shape advances both the
 personal-data catalogue and tenant-termination manifest; rollout evidence and
 frozen owner approvals must use the new catalog version and digest.
 Organizations admission permits a claim on a BunkFy-owned link only while a
@@ -113,12 +120,12 @@ pseudonym lookups fail closed.
 
 For an approved optional tenant-termination export, Workspaces streams the
 same catalogue-approved portable staff and access-history shapes across the
-whole frozen tenant. A tenant-scoped transaction lock drains local writes
-before the fence is accepted and remains held through a repeatable-read
-snapshot. The export excludes property projections, transport journals,
-rebuild checkpoints, termination accountability proofs, anonymisation
-tombstones, and generic Organizations, Auth, or Access Control state owned by
-other modules.
+whole frozen tenant, including Staff-onboarding retention execution evidence.
+A tenant-scoped transaction lock drains local writes before the fence is
+accepted and remains held through a repeatable-read snapshot. The export
+excludes property projections, transport journals, rebuild checkpoints,
+termination accountability proofs, anonymisation tombstones, and generic
+Organizations, Auth, or Access Control state owned by other modules.
 
 For irreversible tenant termination, Workspaces is the final product owner.
 It waits for the terminal Properties and Task Runtime branches, transitions

@@ -8,19 +8,20 @@ public static class InventoryTenantTerminationMetadata
     public const string OwnerKey = InventoryDataRightsCoordinates.Owner;
     public const string ExportDependencyOwnerKey = "properties";
     public const string DestroyDependencyOwnerKey = "reservations";
-    public const int CatalogVersion = 6;
-    public const int PersonalDataCatalogVersion = 6;
+    public const int CatalogVersion = 8;
+    public const int PersonalDataCatalogVersion = 9;
     public const string ExportCatalogId = "inventory.tenant-portability";
     public const int ExportCatalogSchemaVersion = 1;
     public const string ExportSchemaId =
         "inventory.tenant-termination-export";
-    public const int ExportSchemaVersion = 5;
+    public const int ExportSchemaVersion = 6;
 
     public const string InventoryUnitRecordType = "inventory-unit";
     public const string RoomConfigurationRecordType = "room-configuration";
     public const string ManagementOperationRecordType =
         "management-operation";
     public const string ManualBlockRecordType = "manual-block";
+    public const string ManualBlockGroupRecordType = "manual-block-group";
     public const string AllocationRecordType = "allocation";
     public const string AllocationUnitRecordType = "allocation-unit";
     public const string AllocationAmendmentDecisionRecordType =
@@ -41,6 +42,7 @@ public static class InventoryTenantTerminationMetadata
             RoomConfigurationRecordType,
             ManagementOperationRecordType,
             ManualBlockRecordType,
+            ManualBlockGroupRecordType,
             AllocationRecordType,
             AllocationUnitRecordType,
             AllocationAmendmentDecisionRecordType,
@@ -72,6 +74,7 @@ public static class InventoryTenantTerminationMetadata
             "inventory.updated-at",
             "inventory.operation-id",
             "inventory.management-operation",
+            "inventory.staff-change-operations",
             "inventory.block-id",
             "inventory.block-group-id",
             "inventory.arrival",

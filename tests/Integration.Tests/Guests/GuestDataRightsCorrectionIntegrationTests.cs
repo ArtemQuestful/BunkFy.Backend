@@ -109,6 +109,7 @@ public sealed class GuestDataRightsCorrectionIntegrationTests
             dateOfBirth = new DateOnly(1992, 4, 10),
             nationalityCountryCode = "GB",
             preferredLanguageTag = "en-GB",
+            languageTags = new[] { "en-GB", "fr", "unknown-١" },
             notes = "Corrected through an approved rights request."
         };
 
@@ -213,6 +214,9 @@ public sealed class GuestDataRightsCorrectionIntegrationTests
             .ConfigureAwait(false);
 
         Assert.Equal("Corrected Guest", persisted.DisplayName);
+        Assert.Equal(["en-GB", "fr", "unknown-١"], persisted.LanguageTags);
+        Assert.Equal(2, receipt.ContractVersion);
+        Assert.Contains("guest.profile.language-tags", first.ChangedFields);
         Assert.Equal(2, persisted.Version);
         Assert.Equal(first.ReceiptId, receipt.Id);
         Assert.Equal(profile.Id, receipt.GuestId);

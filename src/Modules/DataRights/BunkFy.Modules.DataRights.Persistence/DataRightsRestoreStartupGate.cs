@@ -27,17 +27,20 @@ internal sealed class DataRightsRestoreStartupGate(
         {
             await this.EnsureProvidersReadyAsync(cancellationToken)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             for (int pass = 0; pass < MaximumSnapshotPasses; pass++)
             {
                 DataRightsRestoreScopeSnapshot snapshot =
                     await scopeSource.OpenSnapshotAsync(cancellationToken)
                         .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 bool retry;
                 try
                 {
                     retry = await this.ReconcileSnapshotAsync(
                         snapshot,
                         cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
                 catch (DataRightsRestoreScopeSourceException exception)
                     when (string.Equals(
@@ -54,9 +57,11 @@ internal sealed class DataRightsRestoreStartupGate(
                     continue;
                 }
 
-                if (await scopeSource.IsCurrentAsync(
-                        snapshot,
-                        cancellationToken).ConfigureAwait(false))
+                bool isCurrent = await scopeSource.IsCurrentAsync(
+                    snapshot,
+                    cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (isCurrent)
                 {
                     readinessState.MarkReady(
                         timeProvider.GetUtcNow(),
@@ -93,9 +98,11 @@ internal sealed class DataRightsRestoreStartupGate(
         DataRightsLedgerDeltaStoreReadiness deltaReadiness =
             await deltaStore.CheckReadinessAsync(cancellationToken)
                 .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         DataRightsRestoreScopeSourceReadiness scopeReadiness =
             await scopeSource.CheckReadinessAsync(cancellationToken)
                 .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!deltaReadiness.IsReady ||
             !scopeReadiness.IsReady ||
             !string.Equals(
@@ -124,6 +131,7 @@ internal sealed class DataRightsRestoreStartupGate(
                     afterScopeId,
                     ScopePageSize,
                     cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!HasValidPage(page))
             {
                 throw new InvalidOperationException(
@@ -145,6 +153,7 @@ internal sealed class DataRightsRestoreStartupGate(
                         restoreScope,
                         snapshot.SnapshotSha256,
                         cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (result.IsFailure)
                 {
                     if (string.Equals(

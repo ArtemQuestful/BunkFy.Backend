@@ -414,6 +414,37 @@ public sealed class TenantTerminationProcessTests
     }
 
     [Fact]
+    public void Cancellation_remains_available_while_export_is_running()
+    {
+        TenantTerminationProcess process = Prepare(exportRequested: true);
+        Assert.True(process.BeginPhase(
+            TenantTerminationProcessPhase.Freeze,
+            process.Version,
+            Approver,
+            Now.AddMinutes(1)).IsSuccess);
+        Assert.True(CompleteFreeze(
+            process,
+            process.OperationRevision,
+            process.Version,
+            Approver,
+            Now.AddMinutes(2)).IsSuccess);
+        Assert.True(process.BeginPhase(
+            TenantTerminationProcessPhase.Export,
+            process.Version,
+            Executor,
+            Now.AddMinutes(3)).IsSuccess);
+
+        Result cancelled = process.RequestCancellation(
+            process.Version,
+            Approver,
+            Now.AddMinutes(4));
+
+        Assert.True(cancelled.IsSuccess);
+        Assert.Equal(TenantTerminationProcessPhase.Restore, process.Phase);
+        Assert.Equal(TenantTerminationProcessStatus.Pending, process.Status);
+    }
+
+    [Fact]
     public void Cancellation_is_denied_before_freeze_or_after_destruction_starts()
     {
         TenantTerminationProcess beforeFreeze = Prepare(exportRequested: false);

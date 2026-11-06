@@ -14,6 +14,21 @@
       "cardinality": "bounded-enum",
       "reviewTask": "docs/planning/adapter-ingress-trust-boundary-task.md",
       "verification": "src/Modules/Ingestion/tests/BunkFy.Modules.Ingestion.Tests/Application/AdapterIngressMetricsTests.cs"
+    },
+    {
+      "source": "src/Modules/Workspaces/BunkFy.Modules.Workspaces.Application/WorkspaceStaffOnboardingRecoveryMetrics.cs",
+      "meter": "bunkfy.workspaces.staff_onboarding_recovery",
+      "instrument": "bunkfy.workspaces.staff_onboarding_recovery.outcomes",
+      "kind": "counter",
+      "dimensions": [
+        "outcome",
+        "reason",
+        "replay"
+      ],
+      "personalData": "none",
+      "cardinality": "bounded-enum",
+      "reviewTask": "docs/planning/workspace-staff-onboarding-recovery-audit-task.md",
+      "verification": "src/Modules/Workspaces/tests/BunkFy.Modules.Workspaces.Tests/Application/AttemptWorkspaceStaffOnboardingRecoveryCommandHandlerTests.cs"
     }
   ]
 }

@@ -295,6 +295,23 @@ internal sealed class WorkspaceStaffOnboardingIdentityAnchorConvergence(
                 return Conflict();
             }
 
+            if (application.Status == WorkspaceStaffOnboardingState.Failed &&
+                application.StaffMemberId.HasValue)
+            {
+                if (application.StaffMemberId.Value != staffMemberId ||
+                    (application.IdentityAnchorExpectedResolutionEventId.HasValue &&
+                        application.IdentityAnchorExpectedResolutionEventId.Value !=
+                            resolutionEventId))
+                {
+                    return Conflict();
+                }
+
+                // A durable Staff anchor does not authorize retrying a failed
+                // access mutation. Preserve the receipted recovery boundary.
+                return Success(
+                    WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome.Active);
+            }
+
             long version = application.Version;
             Guid continuationEventId =
                 application.IdentityAnchorContinuationEventId ??

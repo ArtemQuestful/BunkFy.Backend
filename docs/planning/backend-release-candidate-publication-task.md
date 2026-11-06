@@ -3,6 +3,16 @@
 Status: published; exact backend, web, and product candidate verification complete
 Date: 2026-08-05
 
+## 2026-09-05 unpublished retirement-context candidate amendment
+
+The [retirement context-read task](inventory-retirement-context-read-task.md)
+adds exact-target read contracts and shared inline web recovery. Prior published
+commits and CI below do not cover this dirty successor candidate. Record exact
+backend/web diffs, generated OpenAPI/client, targeted/full checks, PostgreSQL
+index/plan evidence and preview fingerprint separately. Additive backend-first
+rollout and web rollback preserve all retirement history; hosted/support/
+monitoring/backup/privacy/legal and exact-commit CI approval remain pending.
+
 ## Scope
 
 Publish the completed backend and reusable GMA slices as one coherent
@@ -92,3 +102,50 @@ edit-by-edit development loop.
 - production migration plan/apply, edge, object-store, key continuity, backup,
   restore, alert routing, and rollback evidence; and
 - market-specific legal and retention policy approval.
+
+## 2026-09-28 staff PIN successor (separate evidence denominator)
+
+First-job source checkpoint `746c75fe60d4600cf9f1e5fff173da9730514081` was
+committed/pushed on `codex/staff-pin-first-job-20260928`. Later P4 HTTP/UI
+composition remains a local candidate; its 17 focused host/HTTP/PostgreSQL tests
+are not exact-commit CI, a published web/root pointer, deployed migrations or
+operator acceptance. Preserve failed/superseded receipts. Record backend, web,
+root/gitlinks and generated contract fingerprints separately before publication.
+Require exact CI and immutable image/SBOM/scan evidence before promotion;
+follow disabled deployment -> migration admission -> isolated HTTPS/operator
+checks -> canary -> bounded rollout. Roll back entry points while retaining
+schemas and attribution. [Station admission](../operations/stations-production-admission.md)
+defines outstanding operational/privacy/support/restore gates; no older release
+status is changed by this local amendment.
+
+## 2026-08-25 Unpublished Recovery Checkpoint
+
+The staff-onboarding recovery-audit checkpoint is later local work and is not
+part of the published commits or evidence listed above. It adds Staff and Access
+Control read-only proof contracts, Workspaces recovery attempts/receipts, a
+Workspaces migration, Data Rights catalogue/export changes, and tenant-
+termination export/destruction coverage.
+
+Checkpoint 3 collects `O1 -> S1 -> A1 -> O2 -> S2 -> A2` and requires exact
+first/second proof equality, binds Access lifecycle proof to bounded target
+scopes, exposes terminal same-operation replay versus a machine-readable
+new-operation retry directive, enforces receipt truth and chronology in the
+domain and PostgreSQL, and emits only bounded outcome/reason/replay telemetry.
+The recovery POST and its product capability are default-off; disabled POST is
+no-store and the latest-receipt GET remains available.
+
+For a future candidate, separately record repository implementation, local
+verification, exact-commit CI, hosted proof, and operational/privacy/legal
+admission. The Access profile semantics are the current active profile version
+observed at recovery time, not the unpersisted issuance-time version; the
+cross-module proof is observational and not distributed-atomic.
+
+Promotion order is expand -> disabled deploy -> exact migration and release
+composition verification -> isolated QA. Production activation remains
+prohibited: raw recovery-actor retention/pseudonymisation and verified
+subject/role-bound Data Rights release are unresolved blockers, and there is no
+exact-commit CI or hosted proof for this local checkpoint. Rollback disables
+POST while retaining the additive schema, receipts, and latest GET. No
+historical accepted-membership binding backfill is authorized. The impact set
+includes SP-002, SP-003, and SP-008 in addition to SP-001, SP-006, SP-007,
+SP-009, SP-011, SP-012, and SP-013.

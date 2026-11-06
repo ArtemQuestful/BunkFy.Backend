@@ -33,6 +33,8 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
     private const string TenantB =
         "10000000-0000-0000-0000-000000000002";
     private const string SubjectId = "account-subject-a";
+    private const string PlanCreatorSubjectId = "account-plan-creator";
+    private const string RecoveryActorSubjectId = "account-recovery-operator";
     private static readonly Guid StaffMemberId =
         Guid.Parse("20000000-0000-0000-0000-000000000001");
     private static readonly Guid PropertyA =
@@ -236,16 +238,42 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             Assert.Equal(
                 [
                     WorkspacesDataRightsCoordinates
-                        .StaffAccessPlanRecordType,
-                    WorkspacesDataRightsCoordinates
                         .StaffAccessProcessRecordType,
                     WorkspacesDataRightsCoordinates
-                        .StaffOnboardingRecordType
+                        .StaffOnboardingRecordType,
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType
                 ],
                 bySubject.Candidates
                     .Select(candidate =>
                         candidate.Coordinate.RecordType)
                     .ToArray());
+            DataRightsSubjectDiscoveryResult byPlanCreator =
+                await discovery.DiscoverAsync(
+                    DiscoveryRequest(
+                        TenantA,
+                        AccountSubjectId: PlanCreatorSubjectId),
+                    CancellationToken.None);
+            Assert.Equal(
+                [
+                    WorkspacesDataRightsCoordinates.StaffAccessPlanRecordType,
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType
+                ],
+                byPlanCreator.Candidates
+                    .Select(candidate => candidate.Coordinate.RecordType)
+                    .ToArray());
+            DataRightsSubjectDiscoveryResult byRecoveryActor =
+                await discovery.DiscoverAsync(
+                    DiscoveryRequest(
+                        TenantA,
+                        AccountSubjectId: RecoveryActorSubjectId),
+                    CancellationToken.None);
+            Assert.Equal(
+                WorkspacesDataRightsCoordinates
+                    .StaffOnboardingRecoveryReceiptRecordType,
+                Assert.Single(byRecoveryActor.Candidates)
+                    .Coordinate.RecordType);
             DataRightsSubjectDiscoveryResult staffBySubject =
                 await staffDiscovery.DiscoverAsync(
                     DiscoveryRequest(
@@ -270,6 +298,8 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                         .StaffAccessProcessRecordType,
                     WorkspacesDataRightsCoordinates
                         .StaffOnboardingRecordType,
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType,
                     WorkspacesDataRightsCoordinates
                         .StaffRetentionCorrelationReceiptRecordType
                 ],
@@ -320,20 +350,48 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                 DataRightsSubjectSelectionValidationStatus.Stale,
                 staleSelection.Status);
 
-            await AssertExportAsync(
+            CollectingSink onboardingSink = await AssertExportAsync(
                 exporter,
                 onboardingCoordinate,
-                expectedCount: 1,
+                expectedCount: 2,
                 expectedRecordTypes:
                 [
                     WorkspacesDataRightsCoordinates
-                        .StaffOnboardingRecordType
+                        .StaffOnboardingRecordType,
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType
                 ]);
+            DataRightsExportRecord applicantRecovery =
+                onboardingSink.Records[1];
+            Assert.Equal(
+                SubjectId,
+                Field(
+                        applicantRecovery,
+                        "workspaces.onboarding-recovery.applicant-subject-id")
+                    .GetString());
+            AssertRecoveryActorFieldsAreRedacted(applicantRecovery);
+
+            CollectingSink staffLinkedOnboardingSink = await AssertExportAsync(
+                exporter,
+                byStaff.Candidates.Single(candidate =>
+                    candidate.Coordinate.RecordType ==
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecordType).Coordinate,
+                expectedCount: 2,
+                expectedRecordTypes:
+                [
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecordType,
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType
+                ]);
+            AssertRecoveryActorFieldsAreRedacted(
+                staffLinkedOnboardingSink.Records[1]);
             CollectingSink processSink = await AssertExportAsync(
                 exporter,
                 bySubject.Candidates.Single(candidate =>
                     candidate.Coordinate.RecordType ==
-                    WorkspacesDataRightsCoordinates
+                        WorkspacesDataRightsCoordinates
                         .StaffAccessProcessRecordType).Coordinate,
                 expectedCount: 3,
                 expectedRecordTypes:
@@ -357,7 +415,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
 
             CollectingSink planSink = await AssertExportAsync(
                 exporter,
-                bySubject.Candidates.Single(candidate =>
+                byPlanCreator.Candidates.Single(candidate =>
                     candidate.Coordinate.RecordType ==
                     WorkspacesDataRightsCoordinates
                         .StaffAccessPlanRecordType).Coordinate,
@@ -402,6 +460,32 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                         "workspaces.retention-correlation-proof")
                     .GetProperty("canonicalSha256")
                     .GetString());
+
+            CollectingSink recoverySink = await AssertExportAsync(
+                exporter,
+                byPlanCreator.Candidates.Single(candidate =>
+                    candidate.Coordinate.RecordType ==
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType).Coordinate,
+                expectedCount: 1,
+                expectedRecordTypes:
+                [
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType
+                ]);
+            Assert.Equal(
+                graph.RecoveryReceipt.OperationId,
+                Field(
+                        recoverySink.Records[0],
+                        "workspaces.onboarding-recovery.operation-id")
+                    .GetGuid());
+            Assert.Equal(
+                JsonValueKind.Null,
+                Field(
+                        recoverySink.Records[0],
+                        "workspaces.onboarding-recovery.applicant-subject-id")
+                    .ValueKind);
+            AssertRecoveryActorFieldsAreRedacted(recoverySink.Records[0]);
 
             CollectingSink replay =
                 await AssertExportAsync(
@@ -461,12 +545,14 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("workspace.termination.exported", result.ResultCode);
-        Assert.Equal(9, result.AffectedCount);
+        Assert.Equal(10, result.AffectedCount);
         Assert.Equal(fence.Version, result.SelectedProofRevision);
         Assert.Equal(fence.Version, result.ResultingProofRevision);
         Assert.Equal(
             [
                 WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
+                WorkspacesDataRightsCoordinates
+                    .StaffOnboardingRecoveryReceiptRecordType,
                 "staff-deferred-claim-withdrawal",
                 WorkspacesDataRightsCoordinates.StaffAccessProcessRecordType,
                 "staff-access-profile-snapshot",
@@ -478,7 +564,23 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                     .StaffRetentionCorrelationReceiptRecordType
             ],
             first.Records.Select(record => record.RecordType).ToArray());
-        DataRightsExportRecord deferred = first.Records[1];
+        DataRightsExportRecord recoveryReceipt = first.Records.Single(record =>
+            record.RecordType == WorkspacesDataRightsCoordinates
+                .StaffOnboardingRecoveryReceiptRecordType);
+        Assert.Equal(
+            PlanCreatorSubjectId,
+            Field(
+                    recoveryReceipt,
+                    "workspaces.onboarding-recovery.plan-creator-actor-id")
+                .GetString());
+        Assert.Equal(
+            RecoveryActorSubjectId,
+            Field(
+                    recoveryReceipt,
+                    "workspaces.onboarding-recovery.recovery-actor-id")
+                .GetString());
+        DataRightsExportRecord deferred = Assert.Single(first.Records, record =>
+            record.RecordType == "staff-deferred-claim-withdrawal");
         Assert.Equal(
             Guid.Parse("50000000-0000-0000-0000-000000000096"),
             deferred.RecordId);
@@ -619,6 +721,20 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
         return sink;
     }
 
+    private static void AssertRecoveryActorFieldsAreRedacted(
+        DataRightsExportRecord record)
+    {
+        foreach (string fieldId in new[]
+                 {
+                     "workspaces.onboarding-recovery.plan-creator-actor-id",
+                     "workspaces.onboarding-recovery.recovery-actor-id",
+                     "workspaces.onboarding-recovery.effective-system-actor-id"
+                 })
+        {
+            Assert.Equal(JsonValueKind.Null, Field(record, fieldId).ValueKind);
+        }
+    }
+
     private static async Task AssertPartialIndexAsync(
         WorkspacesDbContext dbContext)
     {
@@ -681,6 +797,35 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                 "Manager",
                 "Operations",
                 Now).Value;
+        dbContext.StaffOnboardingApplications.Add(onboarding);
+        await dbContext.SaveChangesAsync();
+        Assert.True(
+            onboarding.ObserveInvitationAccepted(
+                Now.AddMinutes(1)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+        Guid acceptedMembershipId = Guid.Parse(
+            "51000000-0000-0000-0000-000000000001");
+        Assert.True(onboarding.BindAcceptedMembership(
+            acceptedMembershipId,
+            membershipVersion: 2,
+            Now.AddMinutes(2)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+        Assert.True(
+            onboarding.MarkStaffReady(
+                StaffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+                Now.AddMinutes(3)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+        Assert.True(onboarding.Fail(
+            "Workspaces.AccessProvisioningFailed",
+            Now.AddMinutes(4)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+        long selectedApplicationVersion = onboarding.Version;
+        Assert.True(onboarding.RecoverCompletedExact(
+            Now.AddMinutes(5)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+
         WorkspaceStaffAccessProcess process =
             WorkspaceStaffAccessProcess.Create(
                 Guid.Parse(
@@ -719,7 +864,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                     "70000000-0000-0000-0000-000000000003"),
                 "workspace-manager",
                 [PropertyB, PropertyA],
-                subjectId,
+                PlanCreatorSubjectId,
                 Now).Value;
         Assert.True(plan.Activate(Now.AddMinutes(1)).IsSuccess);
 
@@ -746,29 +891,58 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                 Guid.Parse("60000000-0000-0000-0000-000000000096"),
                 Now.AddHours(1)).Value;
 
-        dbContext.StaffOnboardingApplications.Add(onboarding);
+        WorkspaceStaffOnboardingRecoveryReceipt recoveryReceipt =
+            WorkspaceStaffOnboardingRecoveryReceipt.Create(new(
+                Guid.Parse("81000000-0000-0000-0000-000000000001"),
+                tenantId,
+                Guid.Parse("82000000-0000-0000-0000-000000000001"),
+                onboarding.Id,
+                sourceId,
+                StaffMemberId,
+                WorkspaceStaffOnboardingRecoveryTriggerKind.ManualOperator,
+                Guid.Parse("82000000-0000-0000-0000-000000000001"),
+                subjectId,
+                PlanCreatorSubjectId,
+                RecoveryActorSubjectId,
+                "system:workspaces",
+                new string('b', 64),
+                ExpectedApplicationVersion: selectedApplicationVersion,
+                SelectedApplicationVersion: selectedApplicationVersion,
+                WorkspaceStaffOnboardingState.Failed,
+                ResultingApplicationVersion: selectedApplicationVersion + 1,
+                WorkspaceStaffOnboardingState.Completed,
+                plan.ProfileId,
+                CurrentProfileVersion: 3,
+                PropertyCount: 2,
+                new string('c', 64),
+                OrganizationRevision: 4,
+                acceptedMembershipId,
+                MembershipVersion: 2,
+                MembershipStatus: 1,
+                StaffTenantRevision: 5,
+                StaffMemberVersion: 4,
+                new string('d', 64),
+                new string('e', 64),
+                AccessManagementRevision: 6,
+                new string('f', 64),
+                WorkspaceRecoveryVerification.Equivalent,
+                WorkspaceRecoveryVerification.Equivalent,
+                WorkspaceRecoveryVerification.Equivalent,
+                WorkspaceStaffOnboardingRecoveryOutcome.Recovered,
+                WorkspaceStaffOnboardingRecoveryReason.ExactStateRecovered,
+                AccessMutationPerformed: false,
+                Now.AddMinutes(5),
+                Now.AddMinutes(5),
+                Now.AddMinutes(5),
+                Now.AddMinutes(5))).Value;
+
         dbContext.StaffDeferredClaimWithdrawals.Add(deferred);
         dbContext.StaffAccessProcesses.Add(process);
         dbContext.StaffAccessPlans.Add(plan);
         dbContext.StaffRetentionCorrelationReceipts.Add(receipt);
-
+        dbContext.StaffOnboardingRecoveryReceipts.Add(recoveryReceipt);
         await dbContext.SaveChangesAsync();
-        Assert.True(
-            onboarding.ObserveInvitationAccepted(
-                Now.AddMinutes(1)).IsSuccess);
-        await dbContext.SaveChangesAsync();
-        Assert.True(
-            onboarding.MarkStaffReady(
-                StaffMemberId,
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                Now.AddMinutes(2)).IsSuccess);
-        await dbContext.SaveChangesAsync();
-        Assert.True(
-            onboarding.Complete(
-                Now.AddMinutes(3)).IsSuccess);
-        await dbContext.SaveChangesAsync();
-        return new SeededGraph(receipt, onboarding);
+        return new SeededGraph(receipt, recoveryReceipt, onboarding);
     }
 
     private static DataRightsSubjectDiscoveryRequest DiscoveryRequest(
@@ -918,5 +1092,6 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
 
     private sealed record SeededGraph(
         WorkspaceStaffRetentionCorrelationReceipt Receipt,
+        WorkspaceStaffOnboardingRecoveryReceipt RecoveryReceipt,
         WorkspaceStaffOnboarding Onboarding);
 }

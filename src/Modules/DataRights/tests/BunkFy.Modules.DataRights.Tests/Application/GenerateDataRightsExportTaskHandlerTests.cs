@@ -67,7 +67,7 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
     }
 
     [Fact]
-    public async Task Generation_failure_records_bounded_code_for_retry()
+    public async Task Terminal_generation_failure_records_code_and_stops_retrying()
     {
         DataRightsExportGenerationStart start = Start(dispatchRequired: true);
         FakeTaskDispatcher dispatcher = new(start);
@@ -78,20 +78,109 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
             generator,
             objectStore);
 
-        InvalidOperationException exception =
-            await Assert.ThrowsAsync<InvalidOperationException>(
+        TaskRunTerminalFailureException exception =
+            await Assert.ThrowsAsync<TaskRunTerminalFailureException>(
                 () => handler.HandleAsync(
                     Payload(start),
-                    Context(),
+                    Context(attempt: 1, maxAttempts: 5),
                     CancellationToken.None));
 
-        Assert.Contains("subject-stale", exception.Message);
+        Assert.Equal(
+            "data-rights.export:subject-stale",
+            exception.FailureCode);
         FailDataRightsExportGenerationCommand failed =
             Assert.IsType<FailDataRightsExportGenerationCommand>(
                 dispatcher.Failed);
         Assert.Equal("subject-stale", failed.FailureCode);
         Assert.Null(dispatcher.Completed);
         Assert.Equal(start.ArtifactId, objectStore.DeletedArtifactId);
+    }
+
+    [Fact]
+    public async Task Retryable_generation_failure_stays_active_before_final_attempt()
+    {
+        DataRightsExportGenerationStart start = Start(dispatchRequired: true);
+        FakeTaskDispatcher dispatcher = new(start);
+        RecordingObjectStore objectStore = new();
+        GenerateDataRightsExportTaskHandler handler = new(
+            dispatcher,
+            new RecordingGenerator(
+                "owner-retry-required",
+                DataRightsExportFailureDisposition.Retryable),
+            objectStore);
+
+        InvalidOperationException exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => handler.HandleAsync(
+                    Payload(start),
+                    Context(attempt: 2, maxAttempts: 5),
+                    CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.ExportGenerationRetryRequired",
+            exception.Message);
+        Assert.Null(dispatcher.Failed);
+        Assert.Null(dispatcher.Completed);
+        Assert.Equal(start.ArtifactId, objectStore.DeletedArtifactId);
+    }
+
+    [Fact]
+    public async Task Retryable_generation_failure_becomes_terminal_on_final_attempt()
+    {
+        DataRightsExportGenerationStart start = Start(dispatchRequired: true);
+        FakeTaskDispatcher dispatcher = new(start);
+        GenerateDataRightsExportTaskHandler handler = new(
+            dispatcher,
+            new RecordingGenerator(
+                "owner-retry-required",
+                DataRightsExportFailureDisposition.Retryable),
+            new RecordingObjectStore());
+
+        TaskRunTerminalFailureException exception =
+            await Assert.ThrowsAsync<TaskRunTerminalFailureException>(
+                () => handler.HandleAsync(
+                    Payload(start),
+                    Context(attempt: 5, maxAttempts: 5),
+                    CancellationToken.None));
+
+        Assert.Equal(
+            "data-rights.export:owner-retry-required",
+            exception.FailureCode);
+        FailDataRightsExportGenerationCommand failed =
+            Assert.IsType<FailDataRightsExportGenerationCommand>(
+                dispatcher.Failed);
+        Assert.Equal(5, failed.Attempt);
+        Assert.Equal("owner-retry-required", failed.FailureCode);
+    }
+
+    [Fact]
+    public async Task Rejected_generation_start_records_terminal_failure()
+    {
+        DataRightsExportGenerationStart start = Start(dispatchRequired: true);
+        FakeTaskDispatcher dispatcher = new(
+            start,
+            startError: new Error(
+                "DataRights.ExportOwnerCatalogInvalid",
+                "The catalogue is invalid."));
+        GenerateDataRightsExportTaskHandler handler = new(
+            dispatcher,
+            new RecordingGenerator(Protected()),
+            new RecordingObjectStore());
+
+        TaskRunTerminalFailureException exception =
+            await Assert.ThrowsAsync<TaskRunTerminalFailureException>(
+                () => handler.HandleAsync(
+                    Payload(start),
+                    Context(attempt: 1, maxAttempts: 5),
+                    CancellationToken.None));
+
+        Assert.Equal(
+            "data-rights.export:owner-catalog-invalid",
+            exception.FailureCode);
+        FailDataRightsExportGenerationCommand failed =
+            Assert.IsType<FailDataRightsExportGenerationCommand>(
+                dispatcher.Failed);
+        Assert.Equal("owner-catalog-invalid", failed.FailureCode);
     }
 
     [Fact]
@@ -114,7 +203,7 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
     }
 
     [Fact]
-    public async Task Database_completion_failure_removes_written_object()
+    public async Task Rejected_database_completion_is_terminal_and_removes_object()
     {
         DataRightsExportGenerationStart start = Start(dispatchRequired: true);
         FakeTaskDispatcher dispatcher = new(start, completeFails: true);
@@ -124,12 +213,38 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
             new RecordingGenerator(Protected()),
             objectStore);
 
+        TaskRunTerminalFailureException exception =
+            await Assert.ThrowsAsync<TaskRunTerminalFailureException>(
+            () => handler.HandleAsync(
+                Payload(start),
+                Context(attempt: 1, maxAttempts: 5),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "data-rights.export:completion-rejected",
+            exception.FailureCode);
+        Assert.NotNull(dispatcher.Failed);
+        Assert.Equal(start.ArtifactId, objectStore.DeletedArtifactId);
+    }
+
+    [Fact]
+    public async Task Transient_database_completion_failure_retries_without_failing_artifact()
+    {
+        DataRightsExportGenerationStart start = Start(dispatchRequired: true);
+        FakeTaskDispatcher dispatcher = new(start, completeThrows: true);
+        RecordingObjectStore objectStore = new();
+        GenerateDataRightsExportTaskHandler handler = new(
+            dispatcher,
+            new RecordingGenerator(Protected()),
+            objectStore);
+
         _ = await Assert.ThrowsAsync<InvalidOperationException>(
             () => handler.HandleAsync(
                 Payload(start),
-                Context(),
+                Context(attempt: 2, maxAttempts: 5),
                 CancellationToken.None));
 
+        Assert.Null(dispatcher.Failed);
         Assert.Equal(start.ArtifactId, objectStore.DeletedArtifactId);
     }
 
@@ -168,20 +283,25 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
             start.PropertyId,
             start.DecisionRevision);
 
-    private static TaskExecutionContext Context() => new(
+    private static TaskExecutionContext Context(
+        int attempt = 1,
+        int maxAttempts = 5) => new(
         Guid.NewGuid(),
         DataRightsModuleMetadata.Name,
         GenerateDataRightsExportPayload.TaskName,
         DataRightsModuleMetadata.ExportWorkerGroup,
         "worker-1",
         "node-1",
-        attempt: 1,
+        attempt,
         scopeId: "tenant-a",
-        correlationId: Guid.NewGuid());
+        correlationId: Guid.NewGuid(),
+        maxAttempts: maxAttempts);
 
     private sealed class FakeTaskDispatcher(
         DataRightsExportGenerationStart start,
-        bool completeFails = false)
+        bool completeFails = false,
+        bool completeThrows = false,
+        Error? startError = null)
         : ITaskCommandDispatcher
     {
         public object? Completed { get; private set; }
@@ -195,8 +315,7 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
         {
             object result = command switch
             {
-                BeginDataRightsExportGenerationCommand =>
-                    Result.Success(start),
+                BeginDataRightsExportGenerationCommand => this.Begin(),
                 CompleteDataRightsExportGenerationCommand completed =>
                     this.Complete(completed),
                 FailDataRightsExportGenerationCommand failed =>
@@ -207,10 +326,20 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
             return Task.FromResult((Result<TResponse>)result);
         }
 
+        private Result<DataRightsExportGenerationStart> Begin() =>
+            startError is null
+                ? Result.Success(start)
+                : Result.Failure<DataRightsExportGenerationStart>(startError);
+
         private Result<Unit> Complete(
             CompleteDataRightsExportGenerationCommand command)
         {
             this.Completed = command;
+            if (completeThrows)
+            {
+                throw new TimeoutException("The database timed out.");
+            }
+
             return completeFails
                 ? Result.Failure<Unit>(
                     new Error(
@@ -230,13 +359,18 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
     private sealed class RecordingGenerator : IDataRightsExportArtifactGenerator
     {
         private readonly DataRightsProtectedExportArtifact? result;
-        private readonly string? failureCode;
+        private readonly DataRightsExportGenerationException? failure;
 
         public RecordingGenerator(DataRightsProtectedExportArtifact result) =>
             this.result = result;
 
-        public RecordingGenerator(string failureCode) =>
-            this.failureCode = failureCode;
+        public RecordingGenerator(
+            string failureCode,
+            DataRightsExportFailureDisposition disposition =
+                DataRightsExportFailureDisposition.Terminal) =>
+            this.failure = new DataRightsExportGenerationException(
+                failureCode,
+                disposition);
 
         public DataRightsExportGenerationRequest? Request { get; private set; }
 
@@ -245,9 +379,9 @@ public sealed class GenerateDataRightsExportTaskHandlerTests
             CancellationToken cancellationToken)
         {
             this.Request = request;
-            if (this.failureCode is not null)
+            if (this.failure is not null)
             {
-                throw new DataRightsExportGenerationException(this.failureCode);
+                throw this.failure;
             }
 
             return Task.FromResult(this.result!);

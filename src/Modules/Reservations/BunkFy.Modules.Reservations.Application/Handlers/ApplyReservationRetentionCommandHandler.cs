@@ -36,6 +36,7 @@ internal sealed class ApplyReservationRetentionCommandHandler(
             scopeContext.IsEnabled ? scopeContext.ScopeId : null;
         if (string.IsNullOrWhiteSpace(tenantId) ||
             command.ExecutionId == Guid.Empty ||
+            command.Attempt < 1 ||
             command.PropertyId == Guid.Empty ||
             command.ReservationId == Guid.Empty ||
             command.ExpectedReservationVersion < 1 ||
@@ -58,6 +59,7 @@ internal sealed class ApplyReservationRetentionCommandHandler(
                 StringComparison.Ordinal) ||
             execution.State !=
                 ReservationRetentionExecutionState.Running ||
+            execution.Attempt != command.Attempt ||
             !execution.MatchesCoordinate(
                 ReservationRetentionCoordinates.DataClassKey,
                 ReservationRetentionCoordinates
@@ -123,7 +125,7 @@ internal sealed class ApplyReservationRetentionCommandHandler(
         }
 
         DateTimeOffset nowUtc =
-            ToPersistencePrecision(clock.UtcNow);
+            ReservationMutationTime.Normalize(clock.UtcNow);
         ReservationRetentionEligibilityResult decision =
             eligibility.Evaluate(snapshot, nowUtc);
         if (decision.Status ==
@@ -252,15 +254,5 @@ internal sealed class ApplyReservationRetentionCommandHandler(
         return Result.Success(
             new ReservationRetentionMutationResult(
                 ReservationRetentionMutationStatus.Applied));
-    }
-
-    private static DateTimeOffset ToPersistencePrecision(
-        DateTimeOffset value)
-    {
-        const long ticksPerMicrosecond =
-            TimeSpan.TicksPerMillisecond / 1000;
-        return new(
-            value.Ticks - (value.Ticks % ticksPerMicrosecond),
-            value.Offset);
     }
 }

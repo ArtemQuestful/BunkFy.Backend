@@ -98,7 +98,7 @@ public sealed class UpdatePropertyCommandHandlerTests
                     operationId,
                     "  Updated House  ",
                     " UPDATED-HOUSE ",
-                    " UTC ",
+                    " Etc/UTC ",
                     ExpectedVersion: 1),
                 CancellationToken.None);
 
@@ -184,7 +184,7 @@ public sealed class UpdatePropertyCommandHandlerTests
                     Guid.NewGuid(),
                     "  Hostel One  ",
                     " HOSTEL-ONE ",
-                    " UTC ",
+                    " Etc/UTC ",
                     property.Version),
                 CancellationToken.None);
 
@@ -257,12 +257,389 @@ public sealed class UpdatePropertyCommandHandlerTests
         Assert.Empty(property.DomainEvents);
     }
 
+    [Fact]
+    public async Task Generic_update_preserves_the_exact_current_legacy_zone()
+    {
+        Property property = CreatePropertyWithPersistedTimeZone(
+            "Pacific Standard Time");
+        RecordingMutationOperationRepository operations = new();
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new RecordingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    Guid.NewGuid(),
+                    "Updated House",
+                    "updated-house",
+                    " Pacific Standard Time ",
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Pacific Standard Time", property.TimeZoneId.Value);
+        Assert.Equal("Updated House", property.Name.Value);
+        Assert.Equal(2, property.Version);
+        Assert.Single(operations.Added);
+    }
+
+    [Fact]
+    public async Task Omitted_time_zone_updates_details_and_preserves_current_primary()
+    {
+        Property property = CreateProperty();
+        RecordingMutationOperationRepository operations = new();
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new RecordingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    Guid.NewGuid(),
+                    "Updated House",
+                    "updated-house",
+                    TimeZoneId: null,
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Etc/UTC", property.TimeZoneId.Value);
+        Assert.Equal("Updated House", property.Name.Value);
+        Assert.Equal(2, property.Version);
+        Assert.Single(operations.Added);
+    }
+
+    [Fact]
+    public async Task Omitted_time_zone_updates_details_and_preserves_current_legacy_value()
+    {
+        Property property = CreatePropertyWithPersistedTimeZone(
+            "Pacific Standard Time");
+        RecordingMutationOperationRepository operations = new();
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new RecordingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    Guid.NewGuid(),
+                    "Updated House",
+                    "updated-house",
+                    TimeZoneId: null,
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Pacific Standard Time", property.TimeZoneId.Value);
+        Assert.Equal(2, property.Version);
+        Assert.Single(operations.Added);
+    }
+
+    [Fact]
+    public async Task Omitted_time_zone_retry_is_independent_of_current_property_state()
+    {
+        Property property = CreateProperty();
+        Guid operationId = Guid.NewGuid();
+        PropertyDetails originalDetails = UpdatedDetails();
+        PropertyMutationOperationRecord committed =
+            PropertyMutationOperationRecord.ForProperty(
+                operationId,
+                TestScopeContext.TenantId,
+                property.Id,
+                PropertyMutationKind.DetailsUpdate,
+                expectedVersion: 1,
+                PropertyDetailsUpdateFingerprint.ComputeV3(
+                    property.Id,
+                    expectedVersion: 1,
+                    originalDetails,
+                    requestedTimeZoneId: null),
+                new PropertyMutationReceiptDto(
+                    property.Id,
+                    PropertyStatus.Active,
+                    PropertyProcessingStatus.Unconfigured,
+                    Version: 2),
+                Now);
+        Assert.True(property.SetTimeZone(
+            PropertyTimeZoneId.Create("Europe/London").Value,
+            property.Version,
+            Guid.NewGuid(),
+            Now.AddMinutes(1)).IsSuccess);
+        Assert.True(property.Retire(
+            property.Version,
+            Guid.NewGuid(),
+            Now.AddMinutes(2)).IsSuccess);
+        property.ClearDomainEvents();
+        RecordingMutationOperationRepository operations = new(committed);
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    operationId,
+                    " Updated House ",
+                    " UPDATED-HOUSE ",
+                    TimeZoneId: null,
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Version);
+        Assert.Equal("Europe/London", property.TimeZoneId.Value);
+        Assert.Equal(PropertyState.Retired, property.Status);
+        Assert.Empty(operations.Added);
+        Assert.Empty(property.DomainEvents);
+    }
+
+    [Fact]
+    public async Task Omitted_and_supplied_time_zone_requests_do_not_share_an_operation()
+    {
+        Property property = CreateProperty();
+        Guid operationId = Guid.NewGuid();
+        RecordingMutationOperationRepository operations = new(
+            OperationRecord(
+                property.Id,
+                operationId,
+                expectedVersion: 1,
+                UpdatedDetails(),
+                resultVersion: 2));
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    operationId,
+                    "Updated House",
+                    "updated-house",
+                    TimeZoneId: null,
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.ManagementOperationConflict,
+            result.Error);
+    }
+
+    [Fact]
+    public async Task Generic_update_does_not_canonicalize_the_current_alias()
+    {
+        Property property = CreatePropertyWithPersistedTimeZone("UTC");
+        RecordingMutationOperationRepository operations = new();
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    Guid.NewGuid(),
+                    "Hostel One",
+                    "hostel-one",
+                    "Etc/UTC",
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.TimeZoneDedicatedOperationRequired,
+            result.Error);
+        Assert.Equal("UTC", property.TimeZoneId.Value);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(operations.Added);
+        Assert.Empty(property.DomainEvents);
+    }
+
+    [Fact]
+    public async Task Version_one_fingerprint_replays_after_the_v2_upgrade()
+    {
+        Property property = CreateProperty();
+        Guid operationId = Guid.NewGuid();
+        PropertyDetails updated = UpdatedDetails();
+        PropertyMutationOperationRecord legacy =
+            PropertyMutationOperationRecord.ForProperty(
+                operationId,
+                TestScopeContext.TenantId,
+                property.Id,
+                PropertyMutationKind.DetailsUpdate,
+                expectedVersion: 1,
+                PropertyDetailsUpdateFingerprint.ComputeV1(
+                    property.Id,
+                    expectedVersion: 1,
+                    updated,
+                    updated.TimeZoneId.Value),
+                new PropertyMutationReceiptDto(
+                    property.Id,
+                    PropertyStatus.Active,
+                    PropertyProcessingStatus.Unconfigured,
+                    Version: 2),
+                Now);
+        RecordingMutationOperationRepository operations = new(legacy);
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                UpdateCommand(operationId),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Version);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(operations.Added);
+        Assert.Empty(property.DomainEvents);
+    }
+
+    [Fact]
+    public async Task Version_two_canonical_alias_fingerprint_replays_after_v3()
+    {
+        Property property = CreatePropertyWithPersistedTimeZone("UTC");
+        Guid operationId = Guid.NewGuid();
+        PropertyDetails updated = PropertyDetails.RestorePersistedTimeZone(
+            "Updated House",
+            "updated-house",
+            "UTC").Value;
+        string versionTwoFingerprint = Assert.IsType<string>(
+            PropertyDetailsUpdateFingerprint.ComputeV2(
+                property.Id,
+                expectedVersion: 1,
+                updated));
+        PropertyMutationOperationRecord committed =
+            PropertyMutationOperationRecord.ForProperty(
+                operationId,
+                TestScopeContext.TenantId,
+                property.Id,
+                PropertyMutationKind.DetailsUpdate,
+                expectedVersion: 1,
+                versionTwoFingerprint,
+                new PropertyMutationReceiptDto(
+                    property.Id,
+                    PropertyStatus.Active,
+                    PropertyProcessingStatus.Unconfigured,
+                    Version: 2),
+                Now);
+        RecordingMutationOperationRepository operations = new(committed);
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                new(
+                    property.Id,
+                    operationId,
+                    "Updated House",
+                    "updated-house",
+                    " UTC ",
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Version);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(operations.Added);
+    }
+
+    [Fact]
+    public async Task Version_one_alias_fingerprint_replays_after_the_v2_upgrade()
+    {
+        Property property = CreatePropertyWithPersistedTimeZone("UTC");
+        Guid operationId = Guid.NewGuid();
+        string legacyFingerprint = PropertiesMutationFingerprint.Compute(
+            "bunkfy-properties-details-update/v1",
+            property.Id.ToString("N"),
+            "1",
+            "Updated House",
+            "updated-house",
+            "UTC");
+        PropertyMutationOperationRecord legacy =
+            PropertyMutationOperationRecord.ForProperty(
+                operationId,
+                TestScopeContext.TenantId,
+                property.Id,
+                PropertyMutationKind.DetailsUpdate,
+                expectedVersion: 1,
+                legacyFingerprint,
+                new PropertyMutationReceiptDto(
+                    property.Id,
+                    PropertyStatus.Active,
+                    PropertyProcessingStatus.Unconfigured,
+                    Version: 2),
+                Now);
+        RecordingMutationOperationRepository operations = new(legacy);
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                new UpdatePropertyCommand(
+                    property.Id,
+                    operationId,
+                    "Updated House",
+                    "updated-house",
+                    " UTC ",
+                    ExpectedVersion: 1),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Version);
+        Assert.Equal("UTC", property.TimeZoneId.Value);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(operations.Added);
+        Assert.Empty(property.DomainEvents);
+    }
+
+    [Fact]
+    public async Task Details_update_fails_closed_on_an_invalid_server_clock()
+    {
+        Property property = CreateProperty();
+        RecordingMutationOperationRepository operations = new();
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(property),
+            operations,
+            new RecordingOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator(),
+            new FixedClock(default)).HandleAsync(
+                UpdateCommand(Guid.NewGuid()),
+                CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.TimeSourceUnavailable,
+            result.Error);
+        Assert.Equal("Hostel One", property.Name.Value);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(operations.Added);
+        Assert.Empty(property.DomainEvents);
+    }
+
     private static UpdatePropertyCommandHandler CreateHandler(
         RecordingPropertyRepository properties,
         RecordingMutationOperationRepository operations,
         RecordingOperationLock operationLock,
         RecordingUniqueCoordinateLock uniqueCoordinates,
-        IIdGenerator ids)
+        IIdGenerator ids,
+        ISystemClock? clock = null)
     {
         TestScopeContext scopeContext = new();
         PropertiesMutationCoordinator mutations =
@@ -275,7 +652,7 @@ public sealed class UpdatePropertyCommandHandlerTests
             properties,
             new PropertyMutationOperationJournal(operations),
             mutations,
-            new TestClock(),
+            clock ?? new TestClock(),
             ids);
         return new(mutations, updates);
     }
@@ -286,14 +663,14 @@ public sealed class UpdatePropertyCommandHandlerTests
             operationId,
             "Updated House",
             "updated-house",
-            "UTC",
+            "Etc/UTC",
             ExpectedVersion: 1);
 
     private static PropertyDetails UpdatedDetails() =>
         PropertyDetails.Create(
             "Updated House",
             "updated-house",
-            "UTC").Value;
+            "Etc/UTC").Value;
 
     private static PropertyMutationOperationRecord OperationRecord(
         Guid propertyId,
@@ -306,10 +683,11 @@ public sealed class UpdatePropertyCommandHandlerTests
             propertyId,
             PropertyMutationKind.DetailsUpdate,
             expectedVersion,
-            PropertyDetailsUpdateFingerprint.Compute(
+            PropertyDetailsUpdateFingerprint.ComputeV3(
                 propertyId,
                 expectedVersion,
-                details),
+                details,
+                details.TimeZoneId.Value),
             new PropertyMutationReceiptDto(
                 propertyId,
                 PropertyStatus.Active,
@@ -331,6 +709,19 @@ public sealed class UpdatePropertyCommandHandlerTests
             Guid.NewGuid(),
             Now.AddDays(-1)).Value;
         property.ClearDomainEvents();
+        return property;
+    }
+
+    private static Property CreatePropertyWithPersistedTimeZone(
+        string timeZoneId)
+    {
+        Property property = LegacyPropertyTestFactory.Create(
+            PropertyId,
+            TestScopeContext.TenantId,
+            "Hostel One",
+            "hostel-one",
+            timeZoneId,
+            Now.AddDays(-1));
         return property;
     }
 
@@ -464,6 +855,11 @@ public sealed class UpdatePropertyCommandHandlerTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class FixedClock(DateTimeOffset value) : ISystemClock
+    {
+        public DateTimeOffset UtcNow => value;
     }
 
     private sealed class RecordingIdGenerator : IIdGenerator

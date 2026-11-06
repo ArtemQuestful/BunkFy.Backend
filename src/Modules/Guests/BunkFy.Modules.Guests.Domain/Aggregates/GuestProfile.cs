@@ -19,6 +19,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
     public const int NotesMaxLength = 4000;
     public const int ActorIdMaxLength = 200;
 
+    private string[] languageTags = [];
+
     private GuestProfile() { }
 
     private GuestProfile(Guid id, string scopeId) : base(id, scopeId) { }
@@ -36,6 +38,7 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
     public DateOnly? DateOfBirth { get; private set; }
     public string? NationalityCountryCode { get; private set; }
     public string? PreferredLanguageTag { get; private set; }
+    public string[] LanguageTags => [.. this.languageTags];
     public string? Notes { get; private set; }
     public GuestProfileState Status { get; private set; } = GuestProfileState.Active;
     public long Version { get; private set; } = 1;
@@ -62,7 +65,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
         string actorId,
         Guid eventId,
         DateTimeOffset nowUtc,
-        Guid? creationConfirmationId = null)
+        Guid? creationConfirmationId = null,
+        string[]? languageTags = null)
     {
         if (id == Guid.Empty)
         {
@@ -89,7 +93,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
             preferredLanguageTag,
             notes,
             actorId,
-            nowUtc);
+            nowUtc,
+            languageTags);
         if (values.IsFailure)
         {
             return Result.Failure<GuestProfile>(values.Error);
@@ -121,6 +126,7 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
             DateOfBirth = values.Value.DateOfBirth,
             NationalityCountryCode = values.Value.NationalityCountryCode,
             PreferredLanguageTag = values.Value.PreferredLanguageTag,
+            languageTags = GuestLanguageTags.ForCreation(values.Value.LanguageTags, values.Value.PreferredLanguageTag),
             Notes = values.Value.Notes,
             CreatedBy = values.Value.ActorId,
             CreatedAtUtc = nowUtc,
@@ -151,7 +157,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
         long expectedVersion,
         string actorId,
         Guid eventId,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        string[]? languageTags = null)
     {
         Result<GuestProfileUpdateOutcome> updated = this.UpdateWithOutcome(
             displayName,
@@ -165,7 +172,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
             expectedVersion,
             actorId,
             eventId,
-            nowUtc);
+            nowUtc,
+            languageTags);
         return updated.IsSuccess
             ? Result.Success()
             : Result.Failure(updated.Error);
@@ -183,7 +191,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
         long expectedVersion,
         string actorId,
         Guid eventId,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        string[]? languageTags = null)
     {
         Result ready = this.EnsureMutable(expectedVersion, eventId);
         if (ready.IsFailure)
@@ -201,7 +210,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
             preferredLanguageTag,
             notes,
             actorId,
-            nowUtc);
+            nowUtc,
+            languageTags);
         if (values.IsFailure)
         {
             return Result.Failure<GuestProfileUpdateOutcome>(values.Error);
@@ -215,7 +225,14 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
         Guid eventId,
         DateTimeOffset nowUtc)
     {
-        GuestProfileField[] changedFields = this.GetChangedFields(values);
+        Result<string[]> resolvedTags = GuestLanguageTags.ResolveUpdate(
+            this.languageTags, this.PreferredLanguageTag, values.PreferredLanguageTag, values.LanguageTags);
+        if (resolvedTags.IsFailure)
+        {
+            return Result.Failure<GuestProfileUpdateOutcome>(resolvedTags.Error);
+        }
+
+        GuestProfileField[] changedFields = this.GetChangedFields(values, resolvedTags.Value);
         long previousVersion = this.Version;
         this.DisplayName = values.DisplayName;
         this.DisplayNameSearch = NormalizeRequiredSearch(values.DisplayName);
@@ -228,6 +245,7 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
         this.DateOfBirth = values.DateOfBirth;
         this.NationalityCountryCode = values.NationalityCountryCode;
         this.PreferredLanguageTag = values.PreferredLanguageTag;
+        this.languageTags = resolvedTags.Value;
         this.Notes = values.Notes;
         this.LastChangedBy = values.ActorId;
         this.LastChangedAtUtc = nowUtc;
@@ -306,7 +324,8 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
                    this.PreferredLanguageTag,
                    values.PreferredLanguageTag,
                    StringComparison.Ordinal) &&
-               string.Equals(this.Notes, values.Notes, StringComparison.Ordinal);
+               string.Equals(this.Notes, values.Notes, StringComparison.Ordinal) &&
+               (values.LanguageTags is null || GuestLanguageTags.Equivalent(this.languageTags, values.LanguageTags));
     }
 
     private Result EnsureMutable(long expectedVersion, Guid eventId)
@@ -343,41 +362,4 @@ public sealed partial class GuestProfile : ScopedAggregateRoot<Guid>
 
     private static string NormalizeRequiredSearch(string value) => value.ToUpperInvariant();
 
-    private GuestProfileField[] GetChangedFields(GuestProfileChange values)
-    {
-        List<GuestProfileField> changed = [];
-        AddIfChanged(changed, GuestProfileField.DisplayName, this.DisplayName, values.DisplayName);
-        AddIfChanged(changed, GuestProfileField.LegalName, this.LegalName, values.LegalName);
-        AddIfChanged(changed, GuestProfileField.Email, this.Email, values.Email);
-        AddIfChanged(changed, GuestProfileField.Phone, this.Phone, values.Phone);
-        if (this.DateOfBirth != values.DateOfBirth)
-        {
-            changed.Add(GuestProfileField.DateOfBirth);
-        }
-
-        AddIfChanged(
-            changed,
-            GuestProfileField.NationalityCountryCode,
-            this.NationalityCountryCode,
-            values.NationalityCountryCode);
-        AddIfChanged(
-            changed,
-            GuestProfileField.PreferredLanguageTag,
-            this.PreferredLanguageTag,
-            values.PreferredLanguageTag);
-        AddIfChanged(changed, GuestProfileField.Notes, this.Notes, values.Notes);
-        return changed.ToArray();
-    }
-
-    private static void AddIfChanged(
-        List<GuestProfileField> changed,
-        GuestProfileField field,
-        string? current,
-        string? requested)
-    {
-        if (!string.Equals(current, requested, StringComparison.Ordinal))
-        {
-            changed.Add(field);
-        }
-    }
 }

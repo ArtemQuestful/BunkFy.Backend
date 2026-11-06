@@ -454,6 +454,11 @@ public sealed class StaffProcessingRestrictionCommandHandlerTests
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<StaffAccountDirectoryResponse> ResolveAccountDirectoryAsync(
+            IReadOnlyCollection<string> authSubjectIds,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<bool> EmployeeNumberExistsAsync(
             string employeeNumber,
             Guid? exceptStaffMemberId,

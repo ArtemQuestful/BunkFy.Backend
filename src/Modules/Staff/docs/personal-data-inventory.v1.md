@@ -1,4 +1,4 @@
-# staff Personal-Data Inventory v20
+# staff Personal-Data Inventory v21
 
 Generated from `staff.personal-data` schema v1.
 Catalogue approval: `engineering-default`.
@@ -13,7 +13,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff-audit | tenant-internal-audit | permission:staff.sensitive-profile.read<br>system:authorized-audit-consumer | system:staff-domain |
 | staff-data-holds | tenant-authorized-data-hold | permission:staff.data-holds.manage<br>permission:staff.sensitive-profile.read<br>system:staff.data-holds | permission:staff.data-holds.manage<br>system:staff.data-holds |
 | staff-data-rights-correction-receipts | tenant-approved-data-rights-operation | permission:data-rights.execute<br>system:staff.data-rights-correction | permission:data-rights.execute<br>system:staff.data-rights-correction |
-| staff-directory | tenant-property-authorized | permission:staff.read<br>system:staff-authorized-audience-reader | permission:staff.assign-properties<br>permission:staff.create<br>permission:staff.manage<br>permission:staff.manage-lifecycle<br>system:workspace-staff-onboarding |
+| staff-directory | tenant-property-authorized | permission:staff.read<br>system:staff-authorized-audience-reader<br>system:station-authorized-roster-reader | permission:staff.assign-properties<br>permission:staff.create<br>permission:staff.manage<br>permission:staff.manage-lifecycle<br>system:workspace-staff-onboarding |
 | staff-directory-request | tenant-property-authorized-request | permission:staff.read | permission:staff.read |
 | staff-employment-governance | tenant-sensitive-employment-governance | permission:staff.employment-governance.manage<br>permission:staff.sensitive-profile.read<br>system:staff.employment-governance | permission:staff.employment-governance.manage<br>system:staff.employment-governance |
 | staff-event-metadata | tenant-internal-messaging | system:authorized-module-consumer | system:staff-outbox |
@@ -146,7 +146,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.department | staff | linked-operational | standard | operational-directory | staff-entry | staff | customer-controller-bunk-fy-processor | staff-directory | staff.profile.job | staff-profile-lifecycle | staff-profile-editable | admin-input<br>admin-output<br>api-input<br>api-response<br>application-command<br>data-rights-export<br>integration-command<br>persistence | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.departure-effective-on | staff | lifecycle | standard | employment-lifecycle | staff-workflow | staff | customer-controller-bunk-fy-processor | staff-sensitive-profile | staff.profile.lifecycle | staff-profile-lifecycle | staff-employment-history | admin-input<br>api-input<br>application-command<br>data-rights-export<br>persistence | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.directory-items | staff | linked-operational | standard | staff-directory-presentation | system-derived | staff | customer-controller-bunk-fy-processor | staff-directory | staff.directory.collection | transient-response | staff-profile-editable | admin-output<br>api-response | customer-api<br>support | engineering-default |
-| staff.display-name | staff | direct-identifier | standard | staff-identification | staff-entry | staff | customer-controller-bunk-fy-processor | staff-directory | staff.profile.identity | staff-profile-lifecycle | staff-profile-editable | admin-input<br>admin-output<br>api-input<br>api-response<br>application-command<br>data-rights-export<br>integration-command<br>persistence<br>search-index | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
+| staff.display-name | staff | direct-identifier | standard | staff-identification | staff-entry | staff | customer-controller-bunk-fy-processor | staff-directory | staff.profile.identity | staff-profile-lifecycle | staff-profile-editable | admin-input<br>admin-output<br>api-input<br>api-response<br>application-command<br>data-rights-export<br>integration-command<br>persistence<br>projection-export<br>search-index | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.effective-from | staff | lifecycle | standard | assignment-lifecycle | staff-workflow | staff | customer-controller-bunk-fy-processor | staff-directory | staff.assignment.lifecycle | staff-assignment-history | staff-employment-history | admin-input<br>admin-output<br>api-input<br>api-response<br>application-command<br>data-rights-export<br>persistence | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.effective-to | staff | lifecycle | standard | assignment-lifecycle | staff-workflow | staff | customer-controller-bunk-fy-processor | staff-sensitive-profile | staff.assignment.lifecycle | staff-assignment-history | staff-employment-history | admin-input<br>admin-output<br>api-input<br>api-response<br>application-command<br>data-rights-export<br>persistence | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.employee-number | staff | pseudonymous-identifier | elevated | employment-administration | staff-entry | staff | customer-controller-bunk-fy-processor | staff-sensitive-profile | staff.profile.employee-identifier | staff-profile-lifecycle | staff-profile-editable | admin-input<br>admin-output<br>api-input<br>api-response<br>application-command<br>data-rights-export<br>integration-command<br>persistence<br>search-index | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
@@ -241,7 +241,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.restriction.actor-id | staff | linked-operational | standard | operator-attribution<br>restriction-accountability | authenticated-operator | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-record | staff-audit-attribution | admin-output<br>api-response<br>application-command<br>persistence | customer-api<br>intra-module<br>support | engineering-default |
 | staff.restriction.approval-revision | staff | linked-operational | standard | approved-operation-binding<br>restriction-accountability | approved-data-rights-case | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-record | staff-processing-restriction-control | admin-output<br>api-response<br>application-command<br>persistence | customer-api<br>intra-module<br>support | engineering-default |
 | staff.restriction.case-id | staff | linked-operational | standard | approved-operation-binding<br>case-traceability | approved-data-rights-case | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-record | staff-processing-restriction-control | admin-output<br>api-response<br>application-command<br>persistence | customer-api<br>intra-module<br>support | engineering-default |
-| staff.restriction.contract-version | staff | linked-operational | standard | fail-closed-contract-versioning | staff-restriction-contract | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-lifecycle | staff-processing-restriction-control | domain-event<br>integration-command<br>integration-event<br>persistence<br>projection-export | cross-module<br>intra-module | engineering-default |
+| staff.restriction.contract-version | staff | linked-operational | standard | fail-closed-contract-versioning | staff-restriction-contract | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-lifecycle | staff-processing-restriction-control | application-command<br>domain-event<br>integration-command<br>integration-event<br>persistence<br>projection-export | cross-module<br>intra-module | engineering-default |
 | staff.restriction.effective-state | staff | linked-operational | standard | effective-restriction<br>operational-suppression | approved-data-rights-case | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-lifecycle | staff-processing-restriction-control | admin-output<br>api-response<br>domain-event<br>integration-event<br>persistence | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.restriction.event-id | staff | linked-operational | standard | event-idempotency<br>restriction-accountability | staff-restriction-workflow | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | staff-processing-restriction-receipt | staff-processing-restriction-control | admin-output<br>api-response<br>domain-event<br>integration-event<br>persistence | cross-module<br>customer-api<br>intra-module<br>support | engineering-default |
 | staff.restriction.gate-decision | staff | linked-operational | standard | fail-closed-operational-admission | staff-restriction-gate | staff | customer-controller-bunk-fy-processor | staff-processing-restrictions | staff.processing-restriction-state | transient-response | staff-processing-restriction-control | projection-export | intra-module | engineering-default |
@@ -419,6 +419,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.audit-actor-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Entities.StaffPropertyAssignment | AssignedBy | persistence | staff-profile-lifecycle |
 | staff.audit-actor-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Entities.StaffPropertyAssignment | UnassignedBy | persistence | staff-profile-lifecycle |
 | staff.auth-subject-id | BunkFy.Modules.Staff.AdminApi | BunkFy.Modules.Staff.AdminApi.StaffAdminApiModule+StaffAuthSubjectRequest | AuthSubjectId | admin-input | transient-request |
+| staff.auth-subject-id | BunkFy.Modules.Staff.Api | BunkFy.Modules.Staff.Api.Requests.StaffAccountDirectoryResolveRequest | AuthSubjectIds | api-input | transient-request |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Api | BunkFy.Modules.Staff.Api.Requests.StaffAuthSubjectRequest | AuthSubjectId | api-input | transient-request |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.BootstrapStaffIdentityCommand | AuthSubjectId | application-command | transient-request |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.ProvisionStaffOnboardingCommand | AuthSubjectId | application-command | transient-request |
@@ -426,6 +427,9 @@ Engineering metadata is not legal or country-launch approval.
 | staff.auth-subject-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateCurrentStaffMemberCommand | AuthSubjectId | application-command | transient-request |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Ports.StaffMemberSafetyEvidence | AuthSubjectId | application-query | transient-request |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.GetCurrentStaffMemberQuery | AuthSubjectId | application-query | transient-request |
+| staff.auth-subject-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.ResolveStaffAccountDirectoryQuery | AuthSubjectIds | application-query | transient-request |
+| staff.auth-subject-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | AuthSubjectId | api-response | transient-response |
+| staff.auth-subject-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | AuthSubjectId | admin-output | transient-response |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAnonymisationRestoreState | AuthSubjectId | projection-export | transient-response |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffIdentityBootstrapRequest | AuthSubjectId | integration-command | transient-request |
 | staff.auth-subject-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCandidate | ExpectedAuthSubjectId | integration-command | transient-request |
@@ -610,6 +614,8 @@ Engineering metadata is not legal or country-launch approval.
 | staff.departure-effective-on | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.DepartStaffMemberCommand | EffectiveOn | application-command | transient-request |
 | staff.departure-effective-on | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Aggregates.StaffMember | DepartureEffectiveOn | persistence | staff-profile-lifecycle |
 | staff.departure-effective-on | BunkFy.Modules.Staff.Persistence | BunkFy.Modules.Staff.Persistence.Repositories.StaffProfileDataRightsExport | DepartureEffectiveOn | data-rights-export | staff-data-rights-export-fragment |
+| staff.directory-items | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryResponse | Items | api-response | transient-response |
+| staff.directory-items | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryResponse | Items | admin-output | transient-response |
 | staff.directory-items | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListResponse | Items | api-response | transient-response |
 | staff.directory-items | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListResponse | Items | admin-output | transient-response |
 | staff.directory-items | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListResponse | Items | api-response | transient-response |
@@ -626,6 +632,8 @@ Engineering metadata is not legal or country-launch approval.
 | staff.display-name | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.ProvisionStaffOnboardingCommand | DisplayName | application-command | transient-request |
 | staff.display-name | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateCurrentStaffMemberCommand | DisplayName | application-command | transient-request |
 | staff.display-name | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateStaffMemberCommand | DisplayName | application-command | transient-request |
+| staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | DisplayName | api-response | transient-response |
+| staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | DisplayName | admin-output | transient-response |
 | staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListItemDto | DisplayName | api-response | transient-response |
 | staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListItemDto | DisplayName | admin-output | transient-response |
 | staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryMemberDto | DisplayName | api-response | transient-response |
@@ -636,6 +644,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffOnboardingProvisioningRequest | DisplayName | integration-command | transient-request |
 | staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto | DisplayName | api-response | transient-response |
 | staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto | DisplayName | admin-output | transient-response |
+| staff.display-name | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffStationLabel | DisplayName | projection-export | transient-response |
 | staff.display-name | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Aggregates.StaffMember | DisplayName | persistence | staff-profile-lifecycle |
 | staff.display-name | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Aggregates.StaffMember | DisplayNameSearch | persistence | staff-profile-lifecycle |
 | staff.display-name | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Aggregates.StaffMember | DisplayNameSearch | search-index | staff-profile-lifecycle |
@@ -996,6 +1005,8 @@ Engineering metadata is not legal or country-launch approval.
 | staff.job-title | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.ProvisionStaffOnboardingCommand | JobTitle | application-command | transient-request |
 | staff.job-title | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateCurrentStaffMemberCommand | JobTitle | application-command | transient-request |
 | staff.job-title | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateStaffMemberCommand | JobTitle | application-command | transient-request |
+| staff.job-title | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | JobTitle | api-response | transient-response |
+| staff.job-title | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | JobTitle | admin-output | transient-response |
 | staff.job-title | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListItemDto | JobTitle | api-response | transient-response |
 | staff.job-title | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListItemDto | JobTitle | admin-output | transient-response |
 | staff.job-title | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryMemberDto | JobTitle | api-response | transient-response |
@@ -1142,6 +1153,8 @@ Engineering metadata is not legal or country-launch approval.
 | staff.record-version | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UnassignStaffPropertyCommand | ExpectedVersion | application-command | transient-request |
 | staff.record-version | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateCurrentStaffMemberCommand | ExpectedVersion | application-command | transient-request |
 | staff.record-version | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.UpdateStaffMemberCommand | ExpectedVersion | application-command | transient-request |
+| staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | Version | api-response | transient-response |
+| staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | Version | admin-output | transient-response |
 | staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAnonymisationRestoreState | Version | projection-export | transient-response |
 | staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDataRightsAuthorityState | Version | projection-export | transient-response |
 | staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDataRightsCorrectionReceiptDto | CurrentRecordVersion | api-response | transient-response |
@@ -1158,6 +1171,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffMemberMutationReceiptDto | Version | admin-output | transient-response |
 | staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto | Version | api-response | transient-response |
 | staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto | Version | admin-output | transient-response |
+| staff.record-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffStationLabel | Version | projection-export | transient-response |
 | staff.record-version | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Aggregates.StaffMember | Version | persistence | staff-profile-lifecycle |
 | staff.record-version | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.DataRights.StaffDataRightsCorrectionReceipt | CurrentRecordVersion | persistence | staff-data-rights-correction-receipt |
 | staff.record-version | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.DataRights.StaffDataRightsCorrectionReceipt | SelectedRecordVersion | persistence | staff-data-rights-correction-receipt |
@@ -1187,6 +1201,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.restriction.case-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.DataRights.StaffProcessingRestriction | ApplyCaseId | persistence | staff-processing-restriction-record |
 | staff.restriction.case-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.DataRights.StaffProcessingRestriction | ReleaseCaseId | persistence | staff-processing-restriction-record |
 | staff.restriction.case-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.DataRights.StaffProcessingRestrictionReceipt | CaseId | persistence | staff-processing-restriction-receipt |
+| staff.restriction.contract-version | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Commands.ReleaseStaffProcessingRestrictionCommand | LegacyUnboundTarget | application-command | transient-request |
 | staff.restriction.contract-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffProcessingRestrictionChangedIntegrationEvent | ContractVersion | integration-event | integration-message-journal |
 | staff.restriction.contract-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffProcessingRestrictionGateRequest | ContractVersion | integration-command | transient-request |
 | staff.restriction.contract-version | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffProcessingRestrictionGateResult | ObservedContractVersion | projection-export | transient-response |
@@ -1366,6 +1381,8 @@ Engineering metadata is not legal or country-launch approval.
 | staff.staff-member-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.GetStaffDirectoryMemberQuery | StaffMemberId | application-query | transient-request |
 | staff.staff-member-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.GetStaffMemberAtPropertyQuery | StaffMemberId | application-query | transient-request |
 | staff.staff-member-id | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.GetStaffMemberQuery | StaffMemberId | application-query | transient-request |
+| staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | StaffMemberId | api-response | transient-response |
+| staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | StaffMemberId | admin-output | transient-response |
 | staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAnonymisationRestoreState | StaffMemberId | projection-export | transient-response |
 | staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDataRightsAuthorityState | StaffMemberId | projection-export | transient-response |
 | staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDataRightsCorrectionReceiptDto | StaffMemberId | api-response | transient-response |
@@ -1384,6 +1401,7 @@ Engineering metadata is not legal or country-launch approval.
 | staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyAssignmentProvisioningRequest | StaffMemberId | integration-command | transient-request |
 | staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto | StaffMemberId | api-response | transient-response |
 | staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto | StaffMemberId | admin-output | transient-response |
+| staff.staff-member-id | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffStationLabel | StaffMemberId | projection-export | transient-response |
 | staff.staff-member-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Aggregates.StaffMember | Id | persistence | staff-profile-lifecycle |
 | staff.staff-member-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.DataRights.StaffDataRightsCorrectionReceipt | StaffMemberId | persistence | staff-data-rights-correction-receipt |
 | staff.staff-member-id | BunkFy.Modules.Staff.Domain | BunkFy.Modules.Staff.Domain.Entities.StaffPropertyAssignment | Id | persistence | staff-profile-lifecycle |
@@ -1392,6 +1410,8 @@ Engineering metadata is not legal or country-launch approval.
 | staff.staff-member-id | BunkFy.Modules.Staff.Persistence | BunkFy.Modules.Staff.Persistence.Repositories.StaffProfileDataRightsExport | StaffMemberId | data-rights-export | staff-data-rights-export-fragment |
 | staff.status | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.ListStaffMembersAtPropertyQuery | Status | application-query | transient-request |
 | staff.status | BunkFy.Modules.Staff.Application | BunkFy.Modules.Staff.Application.Queries.ListStaffMembersQuery | Status | application-query | transient-request |
+| staff.status | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | Status | api-response | transient-response |
+| staff.status | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto | Status | admin-output | transient-response |
 | staff.status | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffAnonymisationRestoreState | State | projection-export | transient-response |
 | staff.status | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDataRightsAuthorityState | State | projection-export | transient-response |
 | staff.status | BunkFy.Modules.Staff.Contracts | BunkFy.Modules.Staff.Contracts.StaffDirectoryListItemDto | Status | api-response | transient-response |

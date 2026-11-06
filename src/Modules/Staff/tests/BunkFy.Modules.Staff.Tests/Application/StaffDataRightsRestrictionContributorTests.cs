@@ -122,6 +122,79 @@ public sealed class StaffDataRightsRestrictionContributorTests
         Assert.Equal(0, dispatcher.CallCount);
     }
 
+    [Fact]
+    public async Task Targeted_release_dispatches_one_of_multiple_active_restrictions()
+    {
+        DataRightsRestrictionContributionRequest request =
+            CreateRequest(DataRightsRestrictionDirective.Release);
+        StaffProcessingRestrictionProjection projection = CreateProjection(request);
+        StaffProcessingRestriction[] active =
+        [
+            CreateActiveRestriction(request),
+            CreateActiveRestriction(request)
+        ];
+        StaffProcessingRestriction selected = active[1];
+        request = request with
+        {
+            TargetOwnerOperationId = selected.Id,
+            TargetOwnerOperationVersion = selected.Version
+        };
+        StaffProcessingRestrictionReceiptDto receipt = CreateReceiptDto(
+            request,
+            StaffProcessingRestrictionActionDto.Release,
+            restrictionVersion: selected.Version + 1,
+            projectionRevision: projection.Revision + 1,
+            effectiveRestricted: true,
+            restrictionId: selected.Id);
+        RecordingDispatcher dispatcher = new(Result.Success(receipt));
+        RecordingRestrictionRepository repository = new(active: active);
+        StaffDataRightsRestrictionContributor contributor = new(
+            dispatcher,
+            new StubProjectionRepository(projection),
+            repository,
+            new TestClock());
+
+        DataRightsRestrictionContributionResult result =
+            await contributor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(DataRightsRestrictionContributionStatus.Completed, result.Status);
+        Assert.True(result.OwnerProof?.EffectiveRestricted);
+        Assert.Equal(selected.Id, result.OwnerProof?.OwnerOperationId);
+        Assert.Equal(0, repository.ActiveListCount);
+        var command = Assert.IsType<
+            BunkFy.Modules.Staff.Application.Commands
+                .ReleaseStaffProcessingRestrictionCommand>(dispatcher.Command);
+        Assert.False(command.LegacyUnboundTarget);
+    }
+
+    [Fact]
+    public async Task Release_target_discovery_is_bounded_with_lookahead()
+    {
+        DataRightsRestrictionContributionRequest execution =
+            CreateRequest(DataRightsRestrictionDirective.Release);
+        StaffProcessingRestriction[] active = Enumerable.Range(
+                0,
+                DataRightsRestrictionContract.MaxReleaseTargets + 1)
+            .Select(_ => CreateActiveRestriction(execution))
+            .ToArray();
+        StaffDataRightsRestrictionContributor contributor = new(
+            new RecordingDispatcher(Result.Failure<
+                StaffProcessingRestrictionReceiptDto>(
+                    StaffApplicationErrors.RestrictionProjectionUnavailable)),
+            new NullProjectionRepository(),
+            new RecordingRestrictionRepository(active: active),
+            new TestClock());
+
+        DataRightsRestrictionTargetResolutionResult result =
+            await contributor.ResolveReleaseTargetsAsync(
+                CreateTargetRequest(execution),
+                CancellationToken.None);
+
+        Assert.Equal(DataRightsRestrictionTargetResolutionStatus.Completed, result.Status);
+        Assert.Equal(DataRightsRestrictionContract.MaxReleaseTargets, result.Targets?.Count);
+        Assert.True(result.LimitReached);
+    }
+
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
@@ -187,6 +260,17 @@ public sealed class StaffDataRightsRestrictionContributorTests
             StaffProcessingRestrictionContract.CurrentVersion,
             Now.AddHours(-1)).Value;
 
+    private static DataRightsRestrictionTargetResolutionRequest CreateTargetRequest(
+        DataRightsRestrictionContributionRequest request) =>
+        new(
+            DataRightsRestrictionContract.CurrentVersion,
+            request.TenantId,
+            request.PropertyId,
+            request.CaseId,
+            request.Coordinate,
+            request.DeadlineUtc,
+            DataRightsCaseType.StaffRights);
+
     private static StaffProcessingRestriction CreateActiveRestriction(
         DataRightsRestrictionContributionRequest request) =>
         StaffProcessingRestriction.Create(
@@ -248,12 +332,14 @@ public sealed class StaffDataRightsRestrictionContributorTests
         : IRequestDispatcher
     {
         public int CallCount { get; private set; }
+        public object? Command { get; private set; }
 
         public Task<Result<TResponse>> SendAsync<TResponse>(
             ICommand<TResponse> command,
             CancellationToken cancellationToken = default)
         {
             this.CallCount++;
+            this.Command = command;
             return Task.FromResult((Result<TResponse>)(object)result);
         }
 
@@ -319,7 +405,8 @@ public sealed class StaffDataRightsRestrictionContributorTests
         public Task<StaffProcessingRestriction?> GetAsync(
             Guid restrictionId,
             CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(this.active.SingleOrDefault(restriction =>
+                restriction.Id == restrictionId));
 
         public Task<IReadOnlyCollection<StaffProcessingRestriction>>
             ListActiveAsync(

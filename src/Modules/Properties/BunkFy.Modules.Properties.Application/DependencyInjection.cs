@@ -8,6 +8,7 @@ using Gma.Framework.Application.Composition;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using BunkFy.DataGovernance;
+using BunkFy.TimeZones;
 public static class DependencyInjection
 {
     public static IServiceCollection AddPropertiesApplication(this IServiceCollection services)
@@ -18,7 +19,10 @@ public static class DependencyInjection
         services.TryAddSingleton(_ => CountryPolicyRegistry.Create(
             [],
             [],
-            CountryPolicyRuntimeMode.Engineering));
+            CountryPolicyRuntimeMode.Engineering,
+            EmbeddedTzdbCountryPolicyTimeZoneRules.Instance));
+        services.TryAddSingleton(
+            TimeZoneRuntimeCompatibilityProbe.Default);
         services.AddScoped<PropertiesMutationCoordinator>();
         services.TryAddScoped<PropertyMutationOperationJournal>();
         services.TryAddScoped<PropertyDetailsUpdateCoordinator>();

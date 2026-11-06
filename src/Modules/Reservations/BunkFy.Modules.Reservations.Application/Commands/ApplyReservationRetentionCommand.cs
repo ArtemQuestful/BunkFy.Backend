@@ -4,6 +4,7 @@ using Gma.Framework.Cqrs;
 
 internal sealed record ApplyReservationRetentionCommand(
     Guid ExecutionId,
+    int Attempt,
     Guid PropertyId,
     Guid ReservationId,
     long ExpectedReservationVersion,

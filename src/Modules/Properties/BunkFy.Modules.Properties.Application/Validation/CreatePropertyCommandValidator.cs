@@ -17,5 +17,12 @@ internal sealed class CreatePropertyCommandValidator : ICommandValidator<CreateP
         {
             yield return error;
         }
+
+        foreach (string error in PropertiesValidation.ValidateActor(
+                     command.ActorId,
+                     required: true))
+        {
+            yield return error;
+        }
     }
 }

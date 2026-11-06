@@ -15,6 +15,9 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
     : ITenantTerminationContributor,
       ITenantTerminationExportContributor
 {
+    private const string DeadlineExceeded =
+        "OperationsNotifications.TenantTerminationDeadlineExceeded";
+
     public TenantTerminationContributorDescriptor Descriptor { get; } = new(
         OperationsNotificationsTenantTerminationMetadata.OwnerKey,
         TenantTerminationContract.CurrentVersion,
@@ -51,6 +54,18 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
         {
             return null;
         }
+    }
+
+    private DateTimeOffset GetUtcNowBeforeDeadline(
+        DateTimeOffset deadlineUtc)
+    {
+        DateTimeOffset observedAtUtc = clock.UtcNow;
+        if (observedAtUtc >= deadlineUtc)
+        {
+            throw new TimeoutException(DeadlineExceeded);
+        }
+
+        return observedAtUtc;
     }
 
     private static bool Matches(

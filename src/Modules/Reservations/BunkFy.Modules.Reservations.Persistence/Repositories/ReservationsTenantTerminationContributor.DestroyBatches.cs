@@ -4,6 +4,7 @@ using System.Globalization;
 using BunkFy.Modules.Reservations.Domain.DataRights;
 using BunkFy.Modules.Reservations.Domain.GuestRecords;
 using BunkFy.Modules.Reservations.Domain.Retention;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using BunkFy.Modules.Reservations.Persistence.TenantTermination;
 using Gma.Framework.Messaging.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -85,21 +86,20 @@ internal sealed partial class ReservationsTenantTerminationContributor
             ReservationsTenantDestroyStage.ExternalOperations =>
                 this.RemoveGuidBatchAsync(
                     operation,
-                    dbContext.ExternalOperations,
+                    dbContext.ExternalOperations
+                        .Where(item => item.ScopeId == tenantId),
                     externalOperation => externalOperation.Id,
                     cancellationToken),
             ReservationsTenantDestroyStage.ManagementOperations =>
-                this.RemoveBatchAsync(
+                this.RemoveManagementOperationBatchAsync(
                     operation,
-                    dbContext.ManagementOperations
-                        .OrderBy(item => item.ReservationId)
-                        .ThenBy(item => item.Id),
-                    item => $"{item.ReservationId:N}|{item.Id:N}",
+                    tenantId,
                     cancellationToken),
             ReservationsTenantDestroyStage.DetailsHistory =>
                 this.RemoveGuidBatchAsync(
                     operation,
-                    dbContext.ReservationDetailsHistory,
+                    dbContext.ReservationDetailsHistory
+                        .Where(item => item.ScopeId == tenantId),
                     entry => entry.Id,
                     cancellationToken),
             ReservationsTenantDestroyStage.DataHolds =>
@@ -177,7 +177,8 @@ internal sealed partial class ReservationsTenantTerminationContributor
             ReservationsTenantDestroyStage.GuestProfileProjections =>
                 this.RemoveGuidBatchAsync(
                     operation,
-                    dbContext.GuestProfileProjections,
+                    dbContext.GuestProfileProjections
+                        .Where(item => item.ScopeId == tenantId),
                     profile => profile.Id,
                     cancellationToken),
             ReservationsTenantDestroyStage.ProcessingRestrictionProjections =>
@@ -235,6 +236,46 @@ internal sealed partial class ReservationsTenantTerminationContributor
             source.OrderBy(idSelector),
             entity => getId(entity).ToString("N"),
             cancellationToken);
+    }
+
+    private async Task<bool> RemoveManagementOperationBatchAsync(
+        ReservationsTenantDestroyOperation operation,
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        ReservationStayAmendmentOperation[] children = await dbContext
+            .StayAmendmentOperations
+            .Where(item => item.ScopeId == tenantId)
+            .OrderBy(item => item.ReservationId)
+            .ThenBy(item => item.Id)
+            .Take(operation.BatchSize + 1)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (children.Length > 0)
+        {
+            ReservationStayAmendmentOperation[] selected = children
+                .Take(operation.BatchSize)
+                .ToArray();
+            dbContext.StayAmendmentOperations.RemoveRange(selected);
+            EnsureBatchRecorded(
+                operation,
+                selected
+                    .Select(item =>
+                        $"stay-amendment:{item.ReservationId:N}|{item.Id:N}")
+                    .ToArray(),
+                stageCompleted: false,
+                clock.UtcNow);
+            return true;
+        }
+
+        return await this.RemoveBatchAsync(
+            operation,
+            dbContext.ManagementOperations
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.ReservationId)
+                .ThenBy(item => item.Id),
+            item => $"management:{item.ReservationId:N}|{item.Id:N}",
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> RemoveReservationGuestRecordsBatchAsync(
@@ -323,12 +364,18 @@ internal sealed partial class ReservationsTenantTerminationContributor
             .ConfigureAwait(false) ||
         await dbContext.ArrivalReminders.AnyAsync(cancellationToken)
             .ConfigureAwait(false) ||
-        await dbContext.ExternalOperations.AnyAsync(cancellationToken)
-            .ConfigureAwait(false) ||
-        await dbContext.ManagementOperations.AnyAsync(cancellationToken)
-            .ConfigureAwait(false) ||
-        await dbContext.ReservationDetailsHistory.AnyAsync(cancellationToken)
-            .ConfigureAwait(false) ||
+        await dbContext.ExternalOperations.AnyAsync(
+            item => item.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
+        await dbContext.StayAmendmentOperations.AnyAsync(
+            item => item.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
+        await dbContext.ManagementOperations.AnyAsync(
+            item => item.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
+        await dbContext.ReservationDetailsHistory.AnyAsync(
+            item => item.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
         await dbContext.DataHolds.AnyAsync(cancellationToken)
             .ConfigureAwait(false) ||
         await dbContext.ProcessingRestrictions.AnyAsync(cancellationToken)
@@ -353,8 +400,9 @@ internal sealed partial class ReservationsTenantTerminationContributor
             .ConfigureAwait(false) ||
         await dbContext.GuestProcessingRestrictionProjections
             .AnyAsync(cancellationToken).ConfigureAwait(false) ||
-        await dbContext.GuestProfileProjections.AnyAsync(cancellationToken)
-            .ConfigureAwait(false) ||
+        await dbContext.GuestProfileProjections.AnyAsync(
+            item => item.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
         await dbContext.ProcessingRestrictionProjections
             .AnyAsync(cancellationToken).ConfigureAwait(false) ||
         await dbContext.PropertyProjections.AnyAsync(cancellationToken)

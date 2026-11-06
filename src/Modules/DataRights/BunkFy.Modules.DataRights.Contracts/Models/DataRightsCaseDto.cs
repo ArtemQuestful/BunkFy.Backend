@@ -22,4 +22,7 @@ public sealed record DataRightsCaseDto(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset LastChangedAtUtc,
     DataRightsApprovalEvidence? ApprovalEvidence,
-    DataRightsResponseDeadlineEvidence? ResponseDeadlineEvidence);
+    DataRightsResponseDeadlineEvidence? ResponseDeadlineEvidence,
+    int? RestrictionTargetingContractVersion = null,
+    DataRightsRestrictionReleaseTargetDto? RestrictionReleaseTarget = null,
+    DataRightsRestrictionExecutionProofDto? RestrictionExecutionProof = null);

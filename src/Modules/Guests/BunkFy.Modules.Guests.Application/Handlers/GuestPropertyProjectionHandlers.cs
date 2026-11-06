@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Guests.Application.Handlers;
 
 using Gma.Framework.Messaging;
+using BunkFy.Modules.Guests.Application.Policies;
 using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Properties.Contracts;
@@ -9,8 +10,11 @@ using BunkFy.Modules.Properties.Contracts;
 internal sealed class GuestPropertyCreatedHandler(IGuestPropertyProjectionRepository properties)
     : IIntegrationEventHandler<PropertyCreatedIntegrationEvent>
 {
-    public Task HandleAsync(PropertyCreatedIntegrationEvent integrationEvent, CancellationToken cancellationToken) =>
-        properties.ApplyTopologyAsync(
+    public async Task HandleAsync(
+        PropertyCreatedIntegrationEvent integrationEvent,
+        CancellationToken cancellationToken)
+    {
+        await properties.ApplyTopologyAsync(
             new(
                 integrationEvent.ScopeId,
                 integrationEvent.PropertyId,
@@ -18,21 +22,64 @@ internal sealed class GuestPropertyCreatedHandler(IGuestPropertyProjectionReposi
                 integrationEvent.TimeZoneId,
                 integrationEvent.Status,
                 integrationEvent.PropertyVersion),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await properties.ApplyTimeZoneAsync(
+            GuestPropertyTimeZoneEvidenceClassifier.Classify(
+                integrationEvent.ScopeId,
+                integrationEvent.PropertyId,
+                integrationEvent.TimeZoneId,
+                GuestPropertyTimeZoneEvidenceSource.Generic,
+                integrationEvent.PropertyVersion),
+            cancellationToken).ConfigureAwait(false);
+    }
 }
 
 [IntegrationEventHandler(GuestsModuleMetadata.PropertyUpdatedHandlerName)]
 internal sealed class GuestPropertyUpdatedHandler(IGuestPropertyProjectionRepository properties)
     : IIntegrationEventHandler<PropertyUpdatedIntegrationEvent>
 {
-    public Task HandleAsync(PropertyUpdatedIntegrationEvent integrationEvent, CancellationToken cancellationToken) =>
-        properties.ApplyTopologyAsync(
+    public async Task HandleAsync(
+        PropertyUpdatedIntegrationEvent integrationEvent,
+        CancellationToken cancellationToken)
+    {
+        await properties.ApplyTopologyAsync(
             new(
                 integrationEvent.ScopeId,
                 integrationEvent.PropertyId,
                 integrationEvent.Name,
                 integrationEvent.TimeZoneId,
                 integrationEvent.Status,
+                integrationEvent.PropertyVersion),
+            cancellationToken).ConfigureAwait(false);
+        await properties.ApplyTimeZoneAsync(
+            GuestPropertyTimeZoneEvidenceClassifier.Classify(
+                integrationEvent.ScopeId,
+                integrationEvent.PropertyId,
+                integrationEvent.TimeZoneId,
+                GuestPropertyTimeZoneEvidenceSource.Generic,
+                integrationEvent.PropertyVersion),
+            cancellationToken).ConfigureAwait(false);
+    }
+}
+
+[IntegrationEventHandler(
+    GuestsModuleMetadata.PropertyTimeZoneChangedHandlerName)]
+internal sealed class GuestPropertyTimeZoneChangedHandler(
+    IGuestPropertyProjectionRepository properties)
+    : IIntegrationEventHandler<PropertyTimeZoneChangedIntegrationEvent>
+{
+    public Task HandleAsync(
+        PropertyTimeZoneChangedIntegrationEvent integrationEvent,
+        CancellationToken cancellationToken) =>
+        properties.ApplyTimeZoneAsync(
+            new(
+                integrationEvent.ScopeId,
+                integrationEvent.PropertyId,
+                integrationEvent.TimeZoneId,
+                integrationEvent.TimeZoneId,
+                PropertyTimeZoneStatus.Canonical,
+                integrationEvent.CatalogVersion,
+                GuestPropertyTimeZoneEvidenceSource.Dedicated,
                 integrationEvent.PropertyVersion),
             cancellationToken);
 }

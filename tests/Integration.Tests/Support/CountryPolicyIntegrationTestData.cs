@@ -2,12 +2,19 @@ namespace Integration.Tests.Support;
 
 using System.Text;
 using BunkFy.DataGovernance;
+using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.DataRights.Persistence;
 using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Guests.Persistence;
+using BunkFy.Modules.Ingestion.Contracts;
+using BunkFy.Modules.Ingestion.Persistence;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Reservations.Contracts;
+using BunkFy.Modules.Reservations.Persistence;
 using BunkFy.Modules.Staff.Domain.Governance;
+using BunkFy.TimeZones;
 using Gma.Framework.Messaging;
-using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -37,7 +44,10 @@ internal static class CountryPolicyIntegrationTestData
             PolicyVersion,
             Artifact.ContentSha256,
             CountryLaunchStatus.Engineering)],
-        CountryPolicyRuntimeMode.Engineering);
+        CountryPolicyRuntimeMode.Engineering,
+        new CountryPolicyTimeZoneRules(
+            TryResolveTimeZone,
+            TimeZoneCalendarMath.TryAddCalendarPeriod));
 
     public static StaffEmploymentGovernanceBinding
         CreateStaffGovernanceBinding(DateTimeOffset evaluatedAtUtc) =>
@@ -70,6 +80,27 @@ internal static class CountryPolicyIntegrationTestData
         services.AddSingleton(Registry);
     }
 
+    private static bool TryResolveTimeZone(
+        string? timeZoneId,
+        out CountryPolicyTimeZoneResolution resolution)
+    {
+        if (!TimeZoneCatalog.Default.TryResolve(
+                timeZoneId,
+                out TimeZoneCatalogResolution? catalogResolution))
+        {
+            resolution = default;
+            return false;
+        }
+
+        resolution = new(
+            catalogResolution.RequestedTimeZoneId,
+            catalogResolution.CanonicalTimeZoneId,
+            catalogResolution.Kind == TimeZoneCatalogResolutionKind.Canonical
+                ? CountryPolicyTimeZoneResolutionKind.Canonical
+                : CountryPolicyTimeZoneResolutionKind.Alias);
+        return true;
+    }
+
     public static async Task ApplyActivationAsync(
         IServiceProvider services,
         string consumerModule,
@@ -79,15 +110,19 @@ internal static class CountryPolicyIntegrationTestData
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(services);
-        GuestsDbContext? guests = consumerModule == GuestsModuleMetadata.Name
-            ? services.GetRequiredService<GuestsDbContext>()
-            : null;
-        IDbContextTransaction? ownedTransaction = guests is not null &&
-                                                   guests.Database.CurrentTransaction is null
-            ? await guests.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
-            : null;
-
-        try
+        DbContext? consumerDbContext = consumerModule switch
+        {
+            DataRightsModuleMetadata.Name =>
+                services.GetRequiredService<DataRightsDbContext>(),
+            GuestsModuleMetadata.Name =>
+                services.GetRequiredService<GuestsDbContext>(),
+            IngestionModuleMetadata.Name =>
+                services.GetRequiredService<IngestionDbContext>(),
+            ReservationsModuleMetadata.Name =>
+                services.GetRequiredService<ReservationsDbContext>(),
+            _ => null
+        };
+        if (consumerDbContext is null)
         {
             await ApplyActivationCoreAsync(
                 services,
@@ -96,19 +131,19 @@ internal static class CountryPolicyIntegrationTestData
                 propertyId,
                 propertyVersion,
                 cancellationToken).ConfigureAwait(false);
-            if (ownedTransaction is not null)
-            {
-                await guests!.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                await ownedTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
+            return;
         }
-        finally
-        {
-            if (ownedTransaction is not null)
-            {
-                await ownedTransaction.DisposeAsync().ConfigureAwait(false);
-            }
-        }
+
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            consumerDbContext,
+            token => ApplyActivationCoreAsync(
+                services,
+                consumerModule,
+                tenantId,
+                propertyId,
+                propertyVersion,
+                token),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task ApplyActivationCoreAsync(

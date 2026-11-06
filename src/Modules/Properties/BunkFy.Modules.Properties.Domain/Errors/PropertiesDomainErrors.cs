@@ -47,6 +47,9 @@ public static class PropertiesDomainErrors
     public static readonly Error TimeZoneRequired = new("Properties.TimeZoneRequired", "A property time zone is required.");
     public static readonly Error TimeZoneTooLong = new("Properties.TimeZoneTooLong", "The property time zone is too long.");
     public static readonly Error TimeZoneInvalid = new("Properties.TimeZoneInvalid", "The property time zone is not valid.");
+    public static readonly Error TimeZoneDedicatedOperationRequired = new(
+        "Properties.TimeZoneDedicatedOperationRequired",
+        "Use the dedicated property time-zone operation to change the time zone.");
     public static readonly Error RoomNameRequired = new("Properties.RoomNameRequired", "A room name is required.");
     public static readonly Error RoomNameTooLong = new("Properties.RoomNameTooLong", "The room name is too long.");
     public static readonly Error PhysicalLabelTooLong = new("Properties.PhysicalLabelTooLong", "The physical label is too long.");

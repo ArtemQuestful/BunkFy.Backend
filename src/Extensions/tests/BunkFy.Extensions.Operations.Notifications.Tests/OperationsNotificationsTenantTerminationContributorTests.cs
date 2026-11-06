@@ -261,6 +261,29 @@ public sealed class OperationsNotificationsTenantTerminationContributorTests
     }
 
     [Fact]
+    public async Task Export_refuses_a_lifecycle_response_at_the_attempt_deadline()
+    {
+        TenantTerminationExportRequest request = Request();
+        var clock = new MutableClock(Now);
+        var lifecycle = OpenLifecycle(4) with
+        {
+            Export = (export, cancellationToken) =>
+            {
+                clock.UtcNow = request.Contribution.DeadlineUtc;
+                return EmptyPage(export, cancellationToken);
+            }
+        };
+        var sink = new CapturingSink();
+
+        await Assert.ThrowsAsync<TimeoutException>(() => CreateContributor(
+                lifecycle,
+                clock: clock)
+            .ExportAsync(request, sink, CancellationToken.None));
+
+        Assert.Empty(sink.Records);
+    }
+
+    [Fact]
     public async Task Destroy_reports_bounded_durable_scope_progress()
     {
         TenantTerminationContributionRequest request = DestroyRequest();
@@ -419,6 +442,59 @@ public sealed class OperationsNotificationsTenantTerminationContributorTests
     }
 
     [Fact]
+    public async Task Destroy_refuses_a_lifecycle_response_at_the_attempt_deadline()
+    {
+        TenantTerminationContributionRequest request = DestroyRequest();
+        var clock = new MutableClock(Now);
+        var lifecycle = OpenLifecycle(3) with
+        {
+            Destroy = (_, _) =>
+            {
+                clock.UtcNow = request.DeadlineUtc;
+                return Task.FromResult(new NotificationScopeDestroyResult(
+                    NotificationScopeDestroyStatus.Completed,
+                    null,
+                    Receipt(request.IdempotencyKey, 4, 1)));
+            }
+        };
+
+        await Assert.ThrowsAsync<TimeoutException>(() => CreateContributor(
+                lifecycle,
+                clock: clock)
+            .ExecuteAsync(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Destroy_retries_when_the_frozen_fence_changes_during_the_lifecycle_call()
+    {
+        TenantTerminationContributionRequest request = DestroyRequest();
+        var lifecycle = OpenLifecycle(3) with
+        {
+            Destroy = (_, _) => Task.FromResult(
+                new NotificationScopeDestroyResult(
+                    NotificationScopeDestroyStatus.Completed,
+                    null,
+                    Receipt(request.IdempotencyKey, 4, 1)))
+        };
+        var fences = new SequenceFenceReader(
+            Fence(),
+            Fence() with { Version = 6 });
+
+        TenantTerminationContributionResult result = await CreateContributor(
+                lifecycle,
+                fences)
+            .ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(
+            TenantTerminationContributionStatus.RetryRequired,
+            result.Status);
+        Assert.Equal(
+            "operations-notifications.termination.destroy-fence-changed",
+            result.ResultCode);
+        Assert.Equal(2, fences.ReadCount);
+    }
+
+    [Fact]
     public async Task Destroy_requires_the_matching_frozen_fence()
     {
         bool selected = false;
@@ -453,11 +529,12 @@ public sealed class OperationsNotificationsTenantTerminationContributorTests
     private static OperationsNotificationsTenantTerminationContributor
         CreateContributor(
             TestLifecycle lifecycle,
-            IWorkspaceTerminationFenceReader? fence = null) =>
+            IWorkspaceTerminationFenceReader? fence = null,
+            ISystemClock? clock = null) =>
         new(
             lifecycle,
             new TestScopeContext(),
-            new FixedClock(),
+            clock ?? new FixedClock(),
             fence ?? new TestFenceReader(Fence()));
 
     private static TestLifecycle OpenLifecycle(long revision) =>
@@ -698,6 +775,11 @@ public sealed class OperationsNotificationsTenantTerminationContributorTests
         public DateTimeOffset UtcNow => Now;
     }
 
+    private sealed class MutableClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
+    }
+
     private sealed class TestFenceReader(
         WorkspaceTerminationFenceSnapshot? snapshot)
         : IWorkspaceTerminationFenceReader
@@ -705,6 +787,23 @@ public sealed class OperationsNotificationsTenantTerminationContributorTests
         public Task<WorkspaceTerminationFenceSnapshot?> GetCurrentAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult(snapshot);
+    }
+
+    private sealed class SequenceFenceReader(
+        params WorkspaceTerminationFenceSnapshot?[] snapshots)
+        : IWorkspaceTerminationFenceReader
+    {
+        private int index;
+
+        public int ReadCount => this.index;
+
+        public Task<WorkspaceTerminationFenceSnapshot?> GetCurrentAsync(
+            CancellationToken cancellationToken = default)
+        {
+            int selected = Math.Min(this.index, snapshots.Length - 1);
+            this.index++;
+            return Task.FromResult(snapshots[selected]);
+        }
     }
 
     private sealed class CapturingSink : IDataRightsExportSink

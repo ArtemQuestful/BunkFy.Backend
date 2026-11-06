@@ -22,7 +22,10 @@ public static class GuestProfileMappings
         profile.CreatedAtUtc,
         profile.LastChangedBy,
         profile.LastChangedAtUtc,
-        profile.ArchivedAtUtc);
+        profile.ArchivedAtUtc)
+    {
+        LanguageTags = profile.LanguageTags
+    };
 
     public static GuestMutationReceiptDto ToMutationReceipt(this GuestProfile profile) => new(
         profile.Id,

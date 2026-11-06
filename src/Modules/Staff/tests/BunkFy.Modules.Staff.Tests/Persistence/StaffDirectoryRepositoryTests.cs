@@ -9,11 +9,76 @@ using BunkFy.Modules.Staff.Persistence.Repositories;
 using Gma.Framework.Pagination;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 [Trait("Category", "Unit")]
 public sealed class StaffDirectoryRepositoryTests
 {
+    private const string TenantA = "tenant-a";
+    private const string TenantB = "tenant-b";
+
+    [Fact]
+    public async Task Account_directory_resolves_only_requested_operational_members_in_the_current_tenant()
+    {
+        InMemoryDatabaseRoot root = new();
+        string databaseName = $"staff-account-directory-{Guid.NewGuid():N}";
+        StaffMember tenantMember = CreateMember("Ada Operator", "ada");
+        StaffMember otherTenantMember = CreateMember(
+            "Foreign Operator",
+            "foreign",
+            TenantB);
+
+        await using (StaffDbContext tenantA = CreateDbContext(
+            root,
+            databaseName,
+            TenantA))
+        {
+            tenantA.StaffMembers.Add(tenantMember);
+            tenantA.ProcessingRestrictionProjections.Add(
+                CreateRestrictionProjection(tenantMember));
+            await tenantA.SaveChangesAsync();
+        }
+
+        await using (StaffDbContext tenantB = CreateDbContext(
+            root,
+            databaseName,
+            TenantB))
+        {
+            tenantB.StaffMembers.Add(otherTenantMember);
+            tenantB.ProcessingRestrictionProjections.Add(
+                CreateRestrictionProjection(otherTenantMember));
+            await tenantB.SaveChangesAsync();
+        }
+
+        await using StaffDbContext queryContext = CreateDbContext(
+            root,
+            databaseName,
+            TenantA);
+        StaffMemberRepository repository = new(queryContext);
+
+        StaffAccountDirectoryResponse response =
+            await repository.ResolveAccountDirectoryAsync(
+                [
+                    tenantMember.AuthSubjectId!,
+                    otherTenantMember.AuthSubjectId!,
+                    "missing-subject"
+                ],
+                CancellationToken.None);
+
+        StaffAccountDirectoryEntryDto entry = Assert.Single(response.Items);
+        Assert.Equal(tenantMember.Id, entry.StaffMemberId);
+        Assert.Equal(tenantMember.AuthSubjectId, entry.AuthSubjectId);
+        Assert.Equal("Ada Operator", entry.DisplayName);
+        Assert.Equal("Manager", entry.JobTitle);
+        Assert.Equal(StaffStatus.Active, entry.Status);
+        Assert.DoesNotContain(
+            typeof(StaffAccountDirectoryEntryDto).GetProperties(),
+            property => property.Name is "LegalName" or "WorkEmail" or
+                "WorkPhone" or "EmployeeNumber" or "Department" or
+                "Assignments");
+    }
+
     [Fact]
     public async Task Directory_projection_is_active_property_scoped_and_searches_display_name_only()
     {
@@ -91,6 +156,69 @@ public sealed class StaffDirectoryRepositoryTests
             typeof(StaffDirectoryListItemDto).GetProperties(),
             property => property.Name is "LegalName" or "WorkEmail" or "WorkPhone" or
                 "EmployeeNumber" or "AuthSubjectId" or "Assignments");
+    }
+
+    [Fact]
+    public async Task Foreign_property_authority_does_not_expose_local_assignments()
+    {
+        InMemoryDatabaseRoot root = new();
+        string databaseName = $"staff-directory-scope-{Guid.NewGuid():N}";
+        Guid propertyId = Guid.NewGuid();
+
+        await using StaffDbContext tenantA = CreateDbContext(
+            root,
+            databaseName,
+            TenantA);
+        StaffMember member = CreateMember();
+        Assign(member, propertyId, isPrimary: true);
+        tenantA.StaffMembers.Add(member);
+        tenantA.ProcessingRestrictionProjections.Add(
+            CreateRestrictionProjection(member));
+        tenantA.PropertyProjections.Add(new StaffPropertyProjection(
+            TenantA,
+            propertyId,
+            string.Empty,
+            PropertyStatus.Retired,
+            1));
+        await tenantA.SaveChangesAsync();
+
+        await using (StaffDbContext tenantB = CreateDbContext(
+            root,
+            databaseName,
+            TenantB))
+        {
+            tenantB.PropertyProjections.Add(new StaffPropertyProjection(
+                TenantB,
+                propertyId,
+                "Foreign active property",
+                PropertyStatus.Active,
+                1));
+            await tenantB.SaveChangesAsync();
+        }
+
+        tenantA.ChangeTracker.Clear();
+        StaffMemberRepository repository = new(tenantA);
+        StaffDirectoryMemberDto directory = (await repository.GetDirectoryAsync(
+            member.Id,
+            CancellationToken.None))!;
+        StaffDirectoryMemberDto? propertyDirectory =
+            await repository.GetDirectoryAtPropertyAsync(
+                propertyId,
+                member.Id,
+                CancellationToken.None);
+        StaffPropertyDirectoryListResponse propertyList =
+            await repository.ListDirectoryAtPropertyAsync(
+                propertyId,
+                search: null,
+                status: null,
+                new PageRequest(
+                    PageRequest.DefaultPage,
+                    PageRequest.DefaultPageSize),
+                CancellationToken.None);
+
+        Assert.Empty(directory.Assignments);
+        Assert.Null(propertyDirectory);
+        Assert.Empty(propertyList.Items);
     }
 
     [Fact]
@@ -183,9 +311,10 @@ public sealed class StaffDirectoryRepositoryTests
 
     private static StaffMember CreateMember(
         string displayName = "Ada Operator",
-        string identity = "private") => StaffMember.Create(
+        string identity = "private",
+        string scopeId = TenantA) => StaffMember.Create(
         Guid.NewGuid(),
-        "tenant-a",
+        scopeId,
         displayName,
         $"{displayName} Legal",
         $"{identity}@example.test",
@@ -224,9 +353,19 @@ public sealed class StaffDirectoryRepositoryTests
             .Options,
         new TestScopeContext());
 
-    private sealed class TestScopeContext : IScopeContext
+    private static StaffDbContext CreateDbContext(
+        InMemoryDatabaseRoot root,
+        string databaseName,
+        string scopeId) => new(
+        new DbContextOptionsBuilder<StaffDbContext>()
+            .UseInMemoryDatabase(databaseName, root)
+            .Options,
+        new TestScopeContext(scopeId));
+
+    private sealed class TestScopeContext(string scopeId = TenantA)
+        : IScopeContext
     {
         public bool IsEnabled => true;
-        public string ScopeId => "tenant-a";
+        public string ScopeId { get; } = scopeId;
     }
 }

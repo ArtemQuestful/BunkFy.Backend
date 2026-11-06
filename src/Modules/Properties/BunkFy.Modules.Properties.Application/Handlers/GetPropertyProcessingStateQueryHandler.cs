@@ -33,6 +33,12 @@ internal sealed class GetPropertyProcessingStateQueryHandler(
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
+        if (!PropertiesObservationTime.IsValid(nowUtc))
+        {
+            return Result.Failure<PropertyProcessingStateDto>(
+                PropertiesApplicationErrors.TimeSourceUnavailable);
+        }
+
         (PropertyProcessingEffectiveStatus effectiveStatus, string reasonCode) = this.Evaluate(property, nowUtc);
         return Result.Success(new PropertyProcessingStateDto(
             property.Id,

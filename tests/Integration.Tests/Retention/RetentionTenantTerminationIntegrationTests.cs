@@ -1,5 +1,6 @@
 namespace Integration.Tests.Retention;
 
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Retention.Domain.Aggregates;
@@ -288,6 +289,9 @@ public sealed partial class RetentionTenantTerminationIntegrationTests
         builder.Services.AddSingleton<ISystemClock>(
             new TestClock());
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddRetentionPersistence();
         return builder.Services.BuildServiceProvider();
     }

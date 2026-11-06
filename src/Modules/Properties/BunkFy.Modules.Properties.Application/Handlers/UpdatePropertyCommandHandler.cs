@@ -23,16 +23,6 @@ internal sealed class UpdatePropertyCommandHandler(
                 PropertiesApplicationErrors.ManagementOperationInvalid);
         }
 
-        Result<PropertyDetails> details = PropertyDetails.Create(
-            command.Name,
-            command.Code,
-            command.TimeZoneId);
-        if (details.IsFailure)
-        {
-            return Result.Failure<PropertyMutationReceiptDto>(
-                details.Error);
-        }
-
         Property? property = await mutations
             .AcquirePropertyAsync(
                 command.PropertyId,
@@ -42,11 +32,31 @@ internal sealed class UpdatePropertyCommandHandler(
             return Result.Failure<PropertyMutationReceiptDto>(PropertiesDomainErrors.PropertyNotFound);
         }
 
+        Result<PropertyDetails> details;
+        try
+        {
+            details = PropertyDetails.RestorePersistedTimeZone(
+                command.Name,
+                command.Code,
+                command.TimeZoneId ?? property.TimeZoneId.Value);
+        }
+        catch (ArgumentException)
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                PropertiesDomainErrors.TimeZoneInvalid);
+        }
+        if (details.IsFailure)
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                details.Error);
+        }
+
         return await updates.ExecuteAsync(
             property,
             command.OperationId,
             command.ExpectedVersion,
             details.Value,
+            command.TimeZoneId,
             cancellationToken).ConfigureAwait(false);
     }
 }

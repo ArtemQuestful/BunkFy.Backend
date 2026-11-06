@@ -7,10 +7,32 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 internal sealed class InventoryAllocationConfiguration : IEntityTypeConfiguration<InventoryAllocation>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(EntityTypeBuilder<InventoryAllocation> builder)
     {
         builder.ToTable("allocations", table =>
         {
+            table.HasCheckConstraint(
+                "CK_allocations_coordinates",
+                $"\"Id\" <> '{EmptyGuid}' AND " +
+                $"\"ReservationId\" <> '{EmptyGuid}' AND " +
+                $"\"AllocationRequestId\" <> '{EmptyGuid}' AND " +
+                $"\"PropertyId\" <> '{EmptyGuid}' AND " +
+                "length(trim(\"ScopeId\")) > 0");
+            table.HasCheckConstraint(
+                "CK_allocations_stay_and_version",
+                "\"Arrival\" < \"Departure\" AND \"Version\" >= 1");
+            table.HasCheckConstraint(
+                "CK_allocations_lifecycle",
+                "(\"Status\" = 1 AND \"Rejection\" = 0 AND " +
+                "\"ReleaseRequestId\" IS NULL AND \"ReleasedAtUtc\" IS NULL) OR " +
+                "(\"Status\" = 2 AND \"Rejection\" BETWEEN 1 AND 6 AND " +
+                "\"ReleaseRequestId\" IS NULL AND \"ReleasedAtUtc\" IS NULL) OR " +
+                "(\"Status\" = 3 AND \"Rejection\" = 0 AND " +
+                $"\"ReleaseRequestId\" IS NOT NULL AND \"ReleaseRequestId\" <> '{EmptyGuid}' AND " +
+                "\"ReleasedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" >= \"CreatedAtUtc\")");
             table.HasCheckConstraint(
                 "CK_allocations_anonymisation_state",
                 "(\"IsAnonymised\" = TRUE AND \"AnonymisedAtUtc\" IS NOT NULL) OR " +
@@ -44,9 +66,15 @@ internal sealed class InventoryAllocationConfiguration : IEntityTypeConfiguratio
 
 internal sealed class InventoryAllocationUnitConfiguration : IEntityTypeConfiguration<InventoryAllocationUnit>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(EntityTypeBuilder<InventoryAllocationUnit> builder)
     {
-        builder.ToTable("allocation_units");
+        builder.ToTable("allocation_units", table => table.HasCheckConstraint(
+            "CK_allocation_units_coordinates",
+            $"\"Id\" <> '{EmptyGuid}' AND \"AllocationId\" <> '{EmptyGuid}' AND " +
+            "length(trim(\"ScopeId\")) > 0"));
         builder.HasKey(unit => new { unit.ScopeId, unit.AllocationId, unit.Id });
         builder.Property(unit => unit.ScopeId).HasMaxLength(128).IsRequired();
         builder.Ignore(unit => unit.InventoryUnitId);

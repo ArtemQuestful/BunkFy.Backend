@@ -1,5 +1,7 @@
 namespace BunkFy.Modules.Reservations.Application.Ports;
 
+using BunkFy.Modules.Reservations.Contracts.Stations;
+
 public interface IReservationManagementOperationRepository
 {
     Task<ReservationManagementOperationRecord?> GetAsync(
@@ -10,7 +12,19 @@ public interface IReservationManagementOperationRepository
     Task AddAsync(
         ReservationManagementOperationRecord operation,
         CancellationToken cancellationToken);
+
+    Task<ReservationStationAttributionRead> GetStationAttributionAsync(Guid reservationId, Guid operationId,
+        CancellationToken cancellationToken) => Task.FromResult(new ReservationStationAttributionRead(false));
+
+    Task<StationCheckOutOutcomeState> ReadCheckOutStateAsync(Guid propertyId, Guid reservationId, long resultingVersion,
+        CancellationToken cancellationToken) => Task.FromResult(StationCheckOutOutcomeState.Unavailable);
+
+    Task AddStationAsync(ReservationManagementOperationRecord operation, StationCheckInProvenance provenance,
+        long resultingVersion, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Station attribution is unavailable.");
 }
+
+public sealed record ReservationStationAttributionRead(bool Supported, StationCheckInProvenance? Provenance = null, long ResultingVersion = 0);
 
 public sealed record ReservationManagementOperationRecord(
     Guid OperationId,
@@ -52,6 +66,18 @@ public sealed record ReservationManagementOperationRecord(
             this.RequestFingerprint,
             requestFingerprint,
             StringComparison.Ordinal);
+
+    public bool MatchesStayAmendment(
+        long expectedDetailsRevision,
+        string requestFingerprint) =>
+        this.Kind == ReservationManagementOperationKind.StayAmendment &&
+        this.ExpectedVersion is null &&
+        this.ExpectedDetailsRevision == expectedDetailsRevision &&
+        this.BusinessDate is null &&
+        string.Equals(
+            this.RequestFingerprint,
+            requestFingerprint,
+            StringComparison.Ordinal);
 }
 
 public enum ReservationManagementOperationKind
@@ -62,5 +88,6 @@ public enum ReservationManagementOperationKind
     NoShow = 3,
     CheckOut = 4,
     GuestDetails = 5,
-    InventoryAmendment = 6
+    InventoryAmendment = 6,
+    StayAmendment = 7
 }

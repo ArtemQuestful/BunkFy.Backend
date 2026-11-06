@@ -29,7 +29,7 @@ public sealed class DataRightsCorrectionExecutionTests
     }
 
     [Fact]
-    public void Claim_is_actor_bound_renewable_only_after_expiry_and_coordinate_exact()
+    public void Claim_is_exclusive_while_active_and_transferable_only_after_expiry()
     {
         DataRightsCase dataRightsCase = CreateApprovedCase();
         long selectedCaseVersion = dataRightsCase.Version;
@@ -84,18 +84,63 @@ public sealed class DataRightsCorrectionExecutionTests
             Now.AddMinutes(15)).IsSuccess);
         Assert.Equal(Now, execution.StartedAtUtc);
         Assert.Equal(1, execution.Version);
-        Assert.Equal(
-            "DataRights.CorrectionExecutionConflict",
-            execution.Renew(
-                "user:other",
-                Now.AddMinutes(11),
-                Now.AddMinutes(21)).Error.Code);
         Assert.True(execution.Renew(
-            "user:executor",
+            "user:other",
             Now.AddMinutes(11),
             Now.AddMinutes(21)).IsSuccess);
         Assert.Equal(Now.AddMinutes(11), execution.StartedAtUtc);
+        Assert.Equal("user:other", execution.ExecutedBy);
         Assert.Equal(2, execution.Version);
+        Assert.Equal(
+            "DataRights.CorrectionExecutionConflict",
+            execution.Renew(
+                "user:executor",
+                Now.AddMinutes(12),
+                Now.AddMinutes(22)).Error.Code);
+    }
+
+    [Fact]
+    public void Delayed_authorized_completion_survives_expiry_and_takeover()
+    {
+        DataRightsCase dataRightsCase = CreateApprovedCase();
+        long selectedCaseVersion = dataRightsCase.Version;
+        Assert.True(dataRightsCase.BeginCorrectionExecution(
+            selectedCaseVersion,
+            "user:executor",
+            Now).IsSuccess);
+        DataRightsSubjectCoordinate subject = dataRightsCase.SelectedSubjects.Single();
+        DataRightsCorrectionExecution execution = DataRightsCorrectionExecution.Create(
+            Guid.NewGuid(),
+            dataRightsCase.ScopeId,
+            dataRightsCase.Kind,
+            dataRightsCase.PropertyId!.Value,
+            dataRightsCase.Id,
+            selectedCaseVersion,
+            dataRightsCase.ExecutionRevision!.Value,
+            dataRightsCase.DecisionRevision!.Value,
+            subject,
+            "guests.guest-profile.correction.v1",
+            "user:executor",
+            Now,
+            Now.AddMinutes(10)).Value;
+        DateTimeOffset ownerCommittedAt = Now.AddMinutes(10).AddSeconds(1);
+
+        Assert.True(execution.Renew(
+            "user:other",
+            Now.AddMinutes(11),
+            Now.AddMinutes(21)).IsSuccess);
+        var completed = execution.Complete(
+            execution.Version,
+            receiptContractVersion: 1,
+            Guid.NewGuid(),
+            subject.RecordVersion + 1,
+            changedFieldCount: 1,
+            new string('a', 64),
+            new string('b', 64),
+            ownerCommittedAt);
+
+        Assert.True(completed.IsSuccess, completed.Error.Code);
+        Assert.Equal(ownerCommittedAt, execution.CompletedAtUtc);
     }
 
     [Fact]

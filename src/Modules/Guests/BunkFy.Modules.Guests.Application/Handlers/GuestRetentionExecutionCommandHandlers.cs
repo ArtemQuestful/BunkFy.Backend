@@ -26,7 +26,7 @@ internal sealed class BeginGuestRetentionExecutionCommandHandler(
         if (!IsExpectedRequest(request, scopeContext))
         {
             return Result.Failure<GuestRetentionExecutionStart>(
-                BunkFy.Modules.Guests.Domain.Errors.GuestsDomainErrors
+                Domain.Errors.GuestsDomainErrors
                     .RetentionExecutionCoordinateInvalid);
         }
 
@@ -86,12 +86,47 @@ internal sealed class BeginGuestRetentionExecutionCommandHandler(
                      request.ExecutionPolicyVersion))
         {
             return Result.Failure<GuestRetentionExecutionStart>(
-                BunkFy.Modules.Guests.Domain.Errors.GuestsDomainErrors
+                Domain.Errors.GuestsDomainErrors
                     .RetentionExecutionCoordinateInvalid);
         }
-        else if (execution.State == GuestRetentionExecutionState.Running &&
-                 request.Attempt > execution.Attempt)
+        else if (
+            (execution.State is
+                GuestRetentionExecutionState.Running or
+                GuestRetentionExecutionState.Failed) &&
+            request.Attempt > execution.Attempt)
         {
+            Result retryable = execution.ValidateRetry(
+                request.Attempt,
+                request.StartedAtUtc,
+                request.DeadlineUtc);
+            if (retryable.IsFailure)
+            {
+                return Result.Failure<GuestRetentionExecutionStart>(
+                    retryable.Error);
+            }
+
+            if (execution.State == GuestRetentionExecutionState.Failed)
+            {
+                GuestRetentionSweepCheckpoint? checkpoint =
+                    await executions.GetCheckpointAsync(
+                        GuestRetentionCoordinates.DataClassKey,
+                        cancellationToken).ConfigureAwait(false);
+                if (checkpoint is null)
+                {
+                    return Result.Failure<GuestRetentionExecutionStart>(
+                        GuestsApplicationErrors.RetentionProofConflict);
+                }
+
+                Result prepared = checkpoint.PrepareRetry(
+                    execution,
+                    request.StartedAtUtc);
+                if (prepared.IsFailure)
+                {
+                    return Result.Failure<GuestRetentionExecutionStart>(
+                        prepared.Error);
+                }
+            }
+
             Result retried = execution.BeginRetry(
                 request.Attempt,
                 request.StartedAtUtc,
@@ -102,11 +137,14 @@ internal sealed class BeginGuestRetentionExecutionCommandHandler(
                     retried.Error);
             }
         }
-        else if (execution.State == GuestRetentionExecutionState.Running &&
-                 request.Attempt != execution.Attempt)
+        else if (
+            (execution.State is
+                GuestRetentionExecutionState.Running or
+                GuestRetentionExecutionState.Failed) &&
+            request.Attempt != execution.Attempt)
         {
             return Result.Failure<GuestRetentionExecutionStart>(
-                BunkFy.Modules.Guests.Domain.Errors.GuestsDomainErrors
+                Domain.Errors.GuestsDomainErrors
                     .RetentionExecutionCoordinateInvalid);
         }
 
@@ -196,6 +234,7 @@ internal sealed class CompleteGuestRetentionExecutionCommandHandler(
 
         Result completed = execution.Complete(
             command.State,
+            command.Attempt,
             command.ScannedCount,
             command.RemainingCount,
             command.OutcomeCode,
@@ -205,6 +244,13 @@ internal sealed class CompleteGuestRetentionExecutionCommandHandler(
         {
             return Result.Failure<RetentionContributionResult>(
                 completed.Error);
+        }
+
+        if (command.State == GuestRetentionExecutionState.Failed)
+        {
+            return Result.Success(
+                BeginGuestRetentionExecutionCommandHandler.ToResult(
+                    execution));
         }
 
         Result advanced = checkpoint.Advance(

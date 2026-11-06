@@ -6,12 +6,13 @@ using Gma.Framework.Results;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using BunkFy.Modules.Ingestion.Application.Commands;
+using BunkFy.Modules.Ingestion.Application.Contributors;
 using BunkFy.Modules.Ingestion.Application.Ports;
 using BunkFy.Modules.Ingestion.Contracts;
 
 internal sealed class RedactExpiredSensitiveHistoryCommandHandler(
     ISensitiveHistoryRetentionRepository retention,
-    IIngestionRetentionExecutionRepository executions,
+    IngestionRetentionMutationCoordinator retentionMutations,
     IngestionSourceMutationCoordinator sourceMutations,
     IScopeContext scopeContext,
     ISystemClock clock)
@@ -30,6 +31,18 @@ internal sealed class RedactExpiredSensitiveHistoryCommandHandler(
         {
             return Result.Failure<SensitiveHistoryRedactionBatchResult>(
                 IngestionApplicationErrors.RetentionTaskOptionsInvalid);
+        }
+
+        Result<IngestionRetentionExecutionLease> execution =
+            await retentionMutations.AcquireRunningAsync(
+                command.RetentionExecutionId,
+                command.RetentionAttempt,
+                IngestionRetentionCoordinates.SensitiveHistoryDataClass,
+                cancellationToken).ConfigureAwait(false);
+        if (execution.IsFailure)
+        {
+            return Result.Failure<SensitiveHistoryRedactionBatchResult>(
+                execution.Error);
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
@@ -61,20 +74,12 @@ internal sealed class RedactExpiredSensitiveHistoryCommandHandler(
                     .ToArray(),
                 nowUtc,
                 cancellationToken).ConfigureAwait(false);
-        if (command.RetentionExecutionId is { } executionId &&
+        if (execution.Value.Execution is { } currentExecution &&
             result.TotalCount > 0)
         {
-            IngestionRetentionExecution? execution =
-                await executions.GetAsync(
-                    executionId,
-                    cancellationToken).ConfigureAwait(false);
-            if (execution is null)
-            {
-                return Result.Failure<SensitiveHistoryRedactionBatchResult>(
-                    IngestionApplicationErrors.RetentionExecutionNotFound);
-            }
-
-            Result recorded = execution.RecordAffected(result.TotalCount);
+            Result recorded = currentExecution.RecordAffected(
+                command.RetentionAttempt!.Value,
+                result.TotalCount);
             if (recorded.IsFailure)
             {
                 return Result.Failure<SensitiveHistoryRedactionBatchResult>(

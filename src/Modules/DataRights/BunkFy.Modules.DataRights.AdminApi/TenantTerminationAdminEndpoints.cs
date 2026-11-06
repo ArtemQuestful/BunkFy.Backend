@@ -47,6 +47,43 @@ internal static class TenantTerminationAdminEndpoints
                 errorStatusCodes: ErrorStatusCodes).ConfigureAwait(false);
         }).Produces<TenantTerminationOperatorStatusDto>();
 
+        group.MapGet(
+            "/{caseId:guid}/processes/{processId:guid}/export/{artifactId:guid}/download",
+            async (
+                Guid caseId,
+                Guid processId,
+                Guid artifactId,
+                HttpContext context,
+                AdminApiExecutor executor,
+                IRequestDispatcher dispatcher,
+                CancellationToken cancellationToken) =>
+            {
+                ApplyDownloadResponseHeaders(context.Response);
+                return await executor.ExecuteAsync(
+                    context,
+                    AdminOperation.Create(
+                        DataRightsAdminOperationNames
+                            .TenantTerminationExportDownload,
+                        DataRightsAdminPermissions
+                            .TenantTerminationExportDownload),
+                    requireTenant: true,
+                    token => dispatcher.SendAsync(
+                        new PrepareTenantTerminationExportDownloadCommand(
+                            caseId,
+                            processId,
+                            artifactId,
+                            Actor(context)),
+                        token),
+                    cancellationToken,
+                    onSuccess: download => Results.Stream(
+                        download.Content,
+                        contentType: "application/zip",
+                        fileDownloadName: download.FileName,
+                        enableRangeProcessing: false),
+                    errorStatusCodes: ErrorStatusCodes).ConfigureAwait(false);
+            })
+            .Produces(StatusCodes.Status200OK, contentType: "application/zip");
+
         group.MapPost("/requests", async (
             TenantTerminationRequest request,
             HttpContext context,
@@ -136,6 +173,48 @@ internal static class TenantTerminationAdminEndpoints
                 cancellationToken,
                 errorStatusCodes: ErrorStatusCodes).ConfigureAwait(false);
         }).Produces<TenantTerminationStartDto>();
+
+        group.MapPost(
+            "/{caseId:guid}/processes/{processId:guid}/export/{artifactId:guid}/confirm",
+            async (
+                Guid caseId,
+                Guid processId,
+                Guid artifactId,
+                TenantTerminationExportConfirmationRequest request,
+                HttpContext context,
+                AdminApiExecutor executor,
+                IRequestDispatcher dispatcher,
+                CancellationToken cancellationToken) =>
+            {
+                ApplySensitiveResponseHeaders(context.Response);
+                return await executor.ExecuteAsync(
+                    context,
+                    AdminOperation.Create(
+                        DataRightsAdminOperationNames
+                            .TenantTerminationExportConfirm,
+                        DataRightsAdminPermissions
+                            .TenantTerminationExportConfirm),
+                    requireTenant: true,
+                    token => request.Confirmed
+                        ? dispatcher.SendAsync(
+                            new ConfirmTenantTerminationExportCommand(
+                                caseId,
+                                processId,
+                                artifactId,
+                                request.ExportOperationRevision,
+                                request.ExpectedProcessVersion,
+                                request.ExpectedArtifactVersion,
+                                request.FrozenRevisionSha256,
+                                request.FragmentSetSha256,
+                                Actor(context)),
+                            token)
+                        : Task.FromResult(Result.Failure<
+                            TenantTerminationProcessDto>(
+                                AdminErrors.ConfirmationRequired)),
+                    cancellationToken,
+                    errorStatusCodes: ErrorStatusCodes).ConfigureAwait(false);
+            })
+            .Produces<TenantTerminationProcessDto>();
 
         group.MapPost("/processes/{processId:guid}/retry", async (
             Guid processId,
@@ -242,6 +321,14 @@ internal static class TenantTerminationAdminEndpoints
         response.Headers.Expires = "0";
     }
 
+    private static void ApplyDownloadResponseHeaders(HttpResponse response)
+    {
+        ApplySensitiveResponseHeaders(response);
+        response.Headers.XContentTypeOptions = "nosniff";
+        response.Headers.ContentSecurityPolicy = "sandbox";
+        response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
+    }
+
     private static readonly ApiErrorStatusCodeMap ErrorStatusCodes =
         ApiErrorStatusCodeMap.Create(
         [
@@ -249,6 +336,10 @@ internal static class TenantTerminationAdminEndpoints
                 StatusCodes.Status404NotFound),
             new(DataRightsApplicationErrors.TenantTerminationProcessNotFound.Code,
                 StatusCodes.Status404NotFound),
+            new(DataRightsApplicationErrors.TenantTerminationExportArtifactNotFound.Code,
+                StatusCodes.Status404NotFound),
+            new(DataRightsApplicationErrors.TenantTerminationExportArtifactExpired.Code,
+                StatusCodes.Status410Gone),
             new(DataRightsApplicationErrors.TenantTerminationContributorCatalogInvalid.Code,
                 StatusCodes.Status503ServiceUnavailable),
             new(DataRightsApplicationErrors.TenantTerminationReplayIntentInvalid.Code,
@@ -268,6 +359,12 @@ internal static class TenantTerminationAdminEndpoints
             new(DataRightsApplicationErrors.TenantTerminationExecutionStateInvalid.Code,
                 StatusCodes.Status409Conflict),
             new(DataRightsApplicationErrors.TenantTerminationCancellationProofInvalid.Code,
+                StatusCodes.Status409Conflict),
+            new(DataRightsApplicationErrors.TenantTerminationExportArtifactNotAvailable.Code,
+                StatusCodes.Status409Conflict),
+            new(DataRightsApplicationErrors.TenantTerminationExportVerificationFailed.Code,
+                StatusCodes.Status409Conflict),
+            new(DataRightsApplicationErrors.TenantTerminationExportConfirmationInvalid.Code,
                 StatusCodes.Status409Conflict),
             new(DataRightsApplicationErrors.VersionConflict.Code,
                 StatusCodes.Status409Conflict),
@@ -295,6 +392,14 @@ internal static class TenantTerminationAdminEndpoints
 
     internal sealed record TenantTerminationProcessVersionRequest(
         long ExpectedProcessVersion,
+        bool Confirmed);
+
+    internal sealed record TenantTerminationExportConfirmationRequest(
+        long ExportOperationRevision,
+        long ExpectedProcessVersion,
+        long ExpectedArtifactVersion,
+        string FrozenRevisionSha256,
+        string FragmentSetSha256,
         bool Confirmed);
 
     internal sealed record TenantTerminationRecoveryRequest(

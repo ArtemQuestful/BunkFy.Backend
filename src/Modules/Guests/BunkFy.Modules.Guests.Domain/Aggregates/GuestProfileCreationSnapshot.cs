@@ -33,7 +33,8 @@ public sealed class GuestProfileCreationSnapshot
         string? notes,
         string? actorId,
         DateTimeOffset nowUtc,
-        Guid? creationConfirmationId = null)
+        Guid? creationConfirmationId = null,
+        string[]? languageTags = null)
     {
         if (creationConfirmationId == Guid.Empty)
         {
@@ -51,12 +52,17 @@ public sealed class GuestProfileCreationSnapshot
             preferredLanguageTag,
             notes,
             actorId,
-            nowUtc);
+            nowUtc,
+            languageTags);
         return values.IsSuccess
             ? Result.Success(new GuestProfileCreationSnapshot(
                 originPropertyId,
                 creationConfirmationId,
-                values.Value))
+                values.Value with
+                {
+                    LanguageTags = GuestLanguageTags.ForCreation(
+                        values.Value.LanguageTags, values.Value.PreferredLanguageTag)
+                }))
             : Result.Failure<GuestProfileCreationSnapshot>(values.Error);
     }
 }

@@ -276,6 +276,69 @@ public sealed class GuestProfileManagementIdempotencyTests
         clock ?? new TestClock(),
         new TestIdGenerator());
 
+    [Fact]
+    public void Omitted_language_collection_retains_the_historic_v1_fingerprint_bytes()
+    {
+        GuestProfileChange request = GuestProfileChange.Create("Maya Chen", null,
+            "maya@example.test", null, new DateOnly(1990, 2, 3), "GB", "en-GB",
+            "Quiet room.", "operator", Now).Value;
+        string fingerprint = GuestManagementOperationFingerprint.Update(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222"), 1, request);
+        Assert.Equal("99fcf36b3f9b85378fe07d7760f4a29b6bd81c6d546af5e36e0e1062d74a6257", fingerprint);
+    }
+
+    [Fact]
+    public async Task Explicit_language_replay_uses_request_identity_before_later_profile_version()
+    {
+        GuestProfile profile = CreateProfile();
+        RecordingGuestRepository profiles = new(profile);
+        RecordingManagementOperationRepository operations = new();
+        UpdateGuestProfileCommandHandler handler = CreateUpdateHandler(profiles, operations);
+        UpdateGuestProfileCommand command = UpdateCommand(profile, Guid.NewGuid()) with
+        {
+            LanguageTags = ["en-GB", "fr"]
+        };
+        Result<GuestMutationReceiptDto> first = await handler.HandleAsync(command, CancellationToken.None);
+        Assert.True(first.IsSuccess);
+        UpdateGuestProfileCommand later = command with
+        {
+            OperationId = Guid.NewGuid(),
+            ExpectedVersion = profile.Version,
+            LanguageTags = ["en-gb", "de"]
+        };
+        Assert.True((await handler.HandleAsync(later, CancellationToken.None)).IsSuccess);
+        Result<GuestMutationReceiptDto> replay = await handler.HandleAsync(
+            command with { LanguageTags = ["FR", "en-gb", "fr"] }, CancellationToken.None);
+        Assert.True(replay.IsSuccess);
+        Assert.Equal(first.Value, replay.Value);
+        Assert.Equal(3, profile.Version);
+        Assert.Contains("de", profile.LanguageTags);
+        Assert.Equal(GuestsApplicationErrors.ManagementOperationConflict,
+            (await handler.HandleAsync(command with { LanguageTags = ["en-gb", "it"] }, CancellationToken.None)).Error);
+        Assert.Equal(GuestsApplicationErrors.ManagementOperationConflict,
+            (await handler.HandleAsync(command with { LanguageTags = null }, CancellationToken.None)).Error);
+    }
+
+    [Fact]
+    public async Task Explicit_empty_and_omitted_update_have_distinct_replay_identity()
+    {
+        GuestProfile profile = CreateProfile();
+        RecordingGuestRepository profiles = new(profile);
+        RecordingManagementOperationRepository operations = new();
+        UpdateGuestProfileCommandHandler handler = CreateUpdateHandler(profiles, operations);
+        UpdateGuestProfileCommand command = UpdateCommand(profile, Guid.NewGuid()) with
+        {
+            PreferredLanguageTag = null,
+            LanguageTags = []
+        };
+        Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
+        Assert.Equal(GuestsApplicationErrors.ManagementOperationConflict,
+            (await handler.HandleAsync(command with { LanguageTags = null }, CancellationToken.None)).Error);
+        Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
+        Assert.Empty(profile.LanguageTags);
+    }
+
     private static ArchiveGuestProfileCommandHandler CreateArchiveHandler(
         RecordingGuestRepository profiles,
         IGuestManagementOperationRepository operations,

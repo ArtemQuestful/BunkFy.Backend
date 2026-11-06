@@ -1,5 +1,6 @@
 namespace BunkFy.Modules.Workspaces.Persistence.Repositories;
 
+using System.Linq.Expressions;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Application.Ports;
@@ -28,6 +29,9 @@ internal sealed class WorkspacesDataRightsExportContributor(
         "staff-access-plan-property";
     public const string StaffOnboardingCorrectionReceiptRecordType =
         "staff-onboarding-correction-receipt";
+    public const string StaffOnboardingRecoveryReceiptRecordType =
+        WorkspacesDataRightsCoordinates
+            .StaffOnboardingRecoveryReceiptRecordType;
     public const string StaffDeferredClaimWithdrawalRecordType =
         "staff-deferred-claim-withdrawal";
     public const string StaffOnboardingProcessingRestrictionRecordType =
@@ -85,6 +89,13 @@ internal sealed class WorkspacesDataRightsExportContributor(
                     cancellationToken),
             WorkspacesDataRightsCoordinates.StaffAccessProcessRecordType =>
                 this.ExportAccessProcessAsync(
+                    tenantId,
+                    coordinate,
+                    sink,
+                    cancellationToken),
+            WorkspacesDataRightsCoordinates
+                .StaffOnboardingRecoveryReceiptRecordType =>
+                this.ExportRecoveryReceiptAsync(
                     tenantId,
                     coordinate,
                     sink,
@@ -210,6 +221,19 @@ internal sealed class WorkspacesDataRightsExportContributor(
                 .Take(MaximumChildRecords + 1)
                 .ToArrayAsync(cancellationToken)
                 .ConfigureAwait(false);
+        WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport[]
+            recoveryReceipts = await dbContext
+                .StaffOnboardingRecoveryReceipts
+                .AsNoTracking()
+                .Where(receipt =>
+                    receipt.ScopeId == tenantId &&
+                    receipt.ApplicationId == record.Id)
+                .OrderBy(receipt => receipt.RecordedAtUtc)
+                .ThenBy(receipt => receipt.Id)
+                .Take(MaximumChildRecords + 1)
+                .Select(RecoveryReceiptApplicantProjection)
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
         WorkspaceStaffOnboardingProcessingRestriction[] restrictions =
             await dbContext.StaffOnboardingProcessingRestrictions
                 .AsNoTracking()
@@ -234,6 +258,7 @@ internal sealed class WorkspacesDataRightsExportContributor(
                     .ToArrayAsync(cancellationToken)
                     .ConfigureAwait(false);
         if (receipts.Length +
+                recoveryReceipts.Length +
                 restrictions.Length +
                 restrictionReceipts.Length >
             MaximumChildRecords)
@@ -273,6 +298,20 @@ internal sealed class WorkspacesDataRightsExportContributor(
                     receipt.Id,
                     receipt.CurrentRecordVersion,
                     export),
+                cancellationToken).ConfigureAwait(false);
+            recordCount = checked(recordCount + 1);
+        }
+
+        foreach (
+            WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport receipt in
+            recoveryReceipts)
+        {
+            await sink.WriteAsync(
+                WorkspacesDataRightsExportSchema.CreateRecord(
+                    StaffOnboardingRecoveryReceiptRecordType,
+                    receipt.ReceiptId,
+                    receipt.ContractVersion,
+                    receipt),
                 cancellationToken).ConfigureAwait(false);
             recordCount = checked(recordCount + 1);
         }
@@ -334,6 +373,42 @@ internal sealed class WorkspacesDataRightsExportContributor(
 
         return Result.Success(
             DataRightsSubjectExportResult.Success(recordCount));
+    }
+
+    private async Task<DataRightsSubjectExportResult>
+        ExportRecoveryReceiptAsync(
+            string tenantId,
+            DataRightsSubjectCoordinate coordinate,
+            IDataRightsExportSink sink,
+            CancellationToken cancellationToken)
+    {
+        WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport? receipt =
+            await dbContext.StaffOnboardingRecoveryReceipts
+                .AsNoTracking()
+                .Where(candidate =>
+                    candidate.ScopeId == tenantId &&
+                    candidate.Id == coordinate.RecordId)
+                .Select(RecoveryReceiptSubjectProjection)
+                .SingleOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (receipt is null)
+        {
+            return DataRightsSubjectExportResult.NotFound();
+        }
+
+        if (receipt.ContractVersion != coordinate.RecordVersion)
+        {
+            return DataRightsSubjectExportResult.Stale();
+        }
+
+        await sink.WriteAsync(
+            WorkspacesDataRightsExportSchema.CreateRecord(
+                StaffOnboardingRecoveryReceiptRecordType,
+                receipt.ReceiptId,
+                receipt.ContractVersion,
+                receipt),
+            cancellationToken).ConfigureAwait(false);
+        return DataRightsSubjectExportResult.Success(1);
     }
 
     private async Task<
@@ -634,5 +709,156 @@ internal sealed class WorkspacesDataRightsExportContributor(
             tenantId?.Trim(),
             StringComparison.Ordinal) &&
         !propertyId.HasValue;
+
+    internal static readonly Expression<Func<
+        WorkspaceStaffOnboardingRecoveryReceipt,
+        WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport>>
+        RecoveryReceiptProjection = receipt => new(
+            receipt.Id,
+            receipt.ScopeId,
+            receipt.ContractVersion,
+            receipt.OperationId,
+            receipt.ApplicationId,
+            receipt.SourceId,
+            receipt.StaffMemberId,
+            receipt.TriggerKind,
+            receipt.TriggerId,
+            receipt.ApplicantSubjectId,
+            receipt.PlanCreatorActorId,
+            receipt.RecoveryActorId,
+            receipt.EffectiveSystemActorId,
+            receipt.RequestSha256,
+            receipt.ExpectedApplicationVersion,
+            receipt.SelectedApplicationVersion,
+            receipt.SelectedApplicationStatus,
+            receipt.ResultingApplicationVersion,
+            receipt.ResultingApplicationStatus,
+            receipt.CurrentProfileId,
+            receipt.CurrentProfileVersion,
+            receipt.PropertyCount,
+            receipt.TargetSetSha256,
+            receipt.OrganizationRevision,
+            receipt.MembershipId,
+            receipt.MembershipVersion,
+            receipt.MembershipStatus,
+            receipt.StaffTenantRevision,
+            receipt.StaffMemberVersion,
+            receipt.StaffStateProofSha256,
+            receipt.StaffPropertySetSha256,
+            receipt.AccessManagementRevision,
+            receipt.AccessFactsSha256,
+            receipt.OrganizationVerification,
+            receipt.StaffVerification,
+            receipt.AccessVerification,
+            receipt.Outcome,
+            receipt.Reason,
+            receipt.AccessMutationPerformed,
+            receipt.OrganizationObservedAtUtc,
+            receipt.StaffObservedAtUtc,
+            receipt.AccessObservedAtUtc,
+            receipt.RecordedAtUtc);
+
+    // A selected onboarding record is the applicant/linked Staff surface. It
+    // may disclose the applicant's own subject binding, but not identifiers
+    // for the plan creator, recovery operator, or effective system actor.
+    private static readonly Expression<Func<
+        WorkspaceStaffOnboardingRecoveryReceipt,
+        WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport>>
+        RecoveryReceiptApplicantProjection = receipt => new(
+            receipt.Id,
+            receipt.ScopeId,
+            receipt.ContractVersion,
+            receipt.OperationId,
+            receipt.ApplicationId,
+            receipt.SourceId,
+            receipt.StaffMemberId,
+            receipt.TriggerKind,
+            receipt.TriggerId,
+            receipt.ApplicantSubjectId,
+            null,
+            null,
+            null,
+            receipt.RequestSha256,
+            receipt.ExpectedApplicationVersion,
+            receipt.SelectedApplicationVersion,
+            receipt.SelectedApplicationStatus,
+            receipt.ResultingApplicationVersion,
+            receipt.ResultingApplicationStatus,
+            receipt.CurrentProfileId,
+            receipt.CurrentProfileVersion,
+            receipt.PropertyCount,
+            receipt.TargetSetSha256,
+            receipt.OrganizationRevision,
+            receipt.MembershipId,
+            receipt.MembershipVersion,
+            receipt.MembershipStatus,
+            receipt.StaffTenantRevision,
+            receipt.StaffMemberVersion,
+            receipt.StaffStateProofSha256,
+            receipt.StaffPropertySetSha256,
+            receipt.AccessManagementRevision,
+            receipt.AccessFactsSha256,
+            receipt.OrganizationVerification,
+            receipt.StaffVerification,
+            receipt.AccessVerification,
+            receipt.Outcome,
+            receipt.Reason,
+            receipt.AccessMutationPerformed,
+            receipt.OrganizationObservedAtUtc,
+            receipt.StaffObservedAtUtc,
+            receipt.AccessObservedAtUtc,
+            receipt.RecordedAtUtc);
+
+    // Recovery receipts are discoverable for each attributed actor, but the
+    // generic export contract does not carry the verified discovery subject.
+    // A direct receipt selection therefore exports the audit facts without
+    // disclosing any raw actor identifier to a different participant.
+    private static readonly Expression<Func<
+        WorkspaceStaffOnboardingRecoveryReceipt,
+        WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport>>
+        RecoveryReceiptSubjectProjection = receipt => new(
+            receipt.Id,
+            receipt.ScopeId,
+            receipt.ContractVersion,
+            receipt.OperationId,
+            receipt.ApplicationId,
+            receipt.SourceId,
+            receipt.StaffMemberId,
+            receipt.TriggerKind,
+            receipt.TriggerId,
+            null,
+            null,
+            null,
+            null,
+            receipt.RequestSha256,
+            receipt.ExpectedApplicationVersion,
+            receipt.SelectedApplicationVersion,
+            receipt.SelectedApplicationStatus,
+            receipt.ResultingApplicationVersion,
+            receipt.ResultingApplicationStatus,
+            receipt.CurrentProfileId,
+            receipt.CurrentProfileVersion,
+            receipt.PropertyCount,
+            receipt.TargetSetSha256,
+            receipt.OrganizationRevision,
+            receipt.MembershipId,
+            receipt.MembershipVersion,
+            receipt.MembershipStatus,
+            receipt.StaffTenantRevision,
+            receipt.StaffMemberVersion,
+            receipt.StaffStateProofSha256,
+            receipt.StaffPropertySetSha256,
+            receipt.AccessManagementRevision,
+            receipt.AccessFactsSha256,
+            receipt.OrganizationVerification,
+            receipt.StaffVerification,
+            receipt.AccessVerification,
+            receipt.Outcome,
+            receipt.Reason,
+            receipt.AccessMutationPerformed,
+            receipt.OrganizationObservedAtUtc,
+            receipt.StaffObservedAtUtc,
+            receipt.AccessObservedAtUtc,
+            receipt.RecordedAtUtc);
 
 }

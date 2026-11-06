@@ -79,13 +79,148 @@ public sealed class GetOwnWorkspaceStaffOnboardingProfileAuthorityTests
         Result<WorkspaceStaffOnboardingDto> result = await read.WaitAsync(
             TimeSpan.FromSeconds(5));
 
-        Assert.Equal(
-            WorkspaceStaffOnboardingApplicationErrors
-                .ProfileMutationAuthorityUnavailable,
-            result.Error);
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal(application.Id, result.Value.ApplicationId);
+        Assert.Equal(WorkspaceStaffOnboardingStatus.Submitted, result.Value.Status);
+        AssertProfileWithheld(result.Value);
         Assert.Equal(1, outcomes.ReadCount);
         Assert.Equal("Applicant Profile", application.DisplayName);
     }
+
+    [Fact]
+    public async Task Completed_application_remains_readable_after_Staff_owns_the_identity()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        Guid staffMemberId = Guid.NewGuid();
+        Guid resolutionEventId = Guid.NewGuid();
+        Assert.True(application.ObserveClaimAccepted(Guid.NewGuid(), 1, Now).IsSuccess);
+        Assert.True(application.BindAcceptedMembership(Guid.NewGuid(), 1, Now).IsSuccess);
+        Assert.True(application.MarkStaffReady(
+            staffMemberId, resolutionEventId, Guid.NewGuid(), Now).IsSuccess);
+        Assert.True(application.Complete(Now).IsSuccess);
+        MutableOutcomeReader outcomes = new([])
+        {
+            Outcome = new(application.Id,
+                StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Resolved,
+                staffMemberId,
+                StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Active,
+                StaffWorkspaceOnboardingIdentityAnchorSubjectMatch.Exact,
+                application.Version,
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition.CompletedRedacted,
+                resolutionEventId)
+        };
+        GetOwnWorkspaceStaffOnboardingQueryHandler handler = CreateHandler(
+            application, new RecordingOperationLock([]), outcomes,
+            new InlineReadBoundary([]));
+
+        Result<WorkspaceStaffOnboardingDto> result = await handler.HandleAsync(
+            Query(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal(WorkspaceStaffOnboardingStatus.Completed, result.Value.Status);
+        Assert.Equal(staffMemberId, result.Value.StaffMemberId);
+        Assert.Equal(application.Version, result.Value.Version);
+        AssertProfileWithheld(result.Value);
+    }
+
+    [Fact]
+    public async Task Failed_application_remains_visible_without_exposing_a_Staff_owned_profile()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        Guid staffMemberId = Guid.NewGuid();
+        Guid resolutionEventId = Guid.NewGuid();
+        Assert.True(application.ObserveClaimAccepted(Guid.NewGuid(), 1, Now).IsSuccess);
+        Assert.True(application.BindAcceptedMembership(Guid.NewGuid(), 1, Now).IsSuccess);
+        Assert.True(application.MarkStaffReady(
+            staffMemberId, resolutionEventId, Guid.NewGuid(), Now).IsSuccess);
+        Assert.True(application.Fail("Workspaces.AccessProvisioningFailed", Now).IsSuccess);
+        MutableOutcomeReader outcomes = new([])
+        {
+            Outcome = new(application.Id,
+                StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Unresolved,
+                staffMemberId,
+                StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Active,
+                StaffWorkspaceOnboardingIdentityAnchorSubjectMatch.Exact,
+                WorkspaceApplicationVersion: null,
+                ResolutionDisposition: null,
+                resolutionEventId)
+        };
+        GetOwnWorkspaceStaffOnboardingQueryHandler handler = CreateHandler(
+            application, new RecordingOperationLock([]), outcomes,
+            new InlineReadBoundary([]));
+
+        Result<WorkspaceStaffOnboardingDto> result = await handler.HandleAsync(
+            Query(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal(WorkspaceStaffOnboardingStatus.Failed, result.Value.Status);
+        Assert.Equal(application.FailureCode, result.Value.FailureCode);
+        AssertProfileWithheld(result.Value);
+    }
+
+    [Fact]
+    public async Task Uncertain_Staff_evidence_withholds_all_profile_fields_without_hiding_local_status()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        MutableOutcomeReader outcomes = new([])
+        {
+            Outcome = new(application.Id,
+                StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Corrupt,
+                Guid.NewGuid(),
+                StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Unknown,
+                StaffWorkspaceOnboardingIdentityAnchorSubjectMatch.Unknown,
+                WorkspaceApplicationVersion: null,
+                ResolutionDisposition: null,
+                ResolutionEventId: null)
+        };
+        GetOwnWorkspaceStaffOnboardingQueryHandler handler = CreateHandler(
+            application, new RecordingOperationLock([]), outcomes,
+            new InlineReadBoundary([]));
+
+        Result<WorkspaceStaffOnboardingDto> result = await handler.HandleAsync(
+            Query(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal(application.Id, result.Value.ApplicationId);
+        Assert.Equal(WorkspaceStaffOnboardingStatus.Submitted, result.Value.Status);
+        Assert.Null(result.Value.StaffMemberId);
+        AssertProfileWithheld(result.Value);
+        Assert.Equal("Applicant Profile", application.DisplayName);
+    }
+
+    [Fact]
+    public async Task Outcome_for_another_application_is_still_refused()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        MutableOutcomeReader outcomes = new([])
+        {
+            Outcome = new(Guid.NewGuid(),
+                StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Corrupt,
+                StaffMemberId: null,
+                StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Unknown,
+                StaffWorkspaceOnboardingIdentityAnchorSubjectMatch.Unknown,
+                WorkspaceApplicationVersion: null,
+                ResolutionDisposition: null)
+        };
+        GetOwnWorkspaceStaffOnboardingQueryHandler handler = CreateHandler(
+            application, new RecordingOperationLock([]), outcomes,
+            new InlineReadBoundary([]));
+
+        InvalidOperationException rejected =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                handler.HandleAsync(Query(), CancellationToken.None));
+
+        Assert.Equal("Staff identity-anchor outcome coordinates are invalid.",
+            rejected.Message);
+        Assert.Equal("Applicant Profile", application.DisplayName);
+    }
+
+    private static void AssertProfileWithheld(WorkspaceStaffOnboardingDto application) =>
+        Assert.All<string?>([
+            application.VerifiedAccountEmail, application.DisplayName,
+            application.LegalName, application.WorkEmail, application.WorkPhone,
+            application.EmployeeNumber, application.JobTitle, application.Department
+        ], value => Assert.Null(value));
 
     [Fact]
     public async Task Read_boundary_failure_does_not_touch_or_disclose_application()
@@ -312,7 +447,7 @@ public sealed class GetOwnWorkspaceStaffOnboardingProfileAuthorityTests
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

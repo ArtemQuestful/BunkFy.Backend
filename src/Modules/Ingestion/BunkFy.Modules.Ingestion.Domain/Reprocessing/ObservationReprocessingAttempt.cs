@@ -65,7 +65,8 @@ public sealed class ObservationReprocessingAttempt : ScopedAggregateRoot<Guid>
             return Result.Failure<ObservationReprocessingAttempt>(IngestionDomainErrors.ReprocessingParserInvalid);
         }
 
-        if (normalizedActor.Length is 0 or > RequestedByMaxLength || reservationExpiresAtUtc <= requestedAtUtc)
+        if (normalizedActor.Length is 0 or > RequestedByMaxLength || requestedAtUtc == default ||
+            reservationExpiresAtUtc <= requestedAtUtc)
         {
             return Result.Failure<ObservationReprocessingAttempt>(IngestionDomainErrors.ReprocessingRequestInvalid);
         }
@@ -86,7 +87,8 @@ public sealed class ObservationReprocessingAttempt : ScopedAggregateRoot<Guid>
 
     public Result Start(Guid taskRunId, int taskAttempt, DateTimeOffset nowUtc, DateTimeOffset reservationExpiresAtUtc)
     {
-        if (taskRunId != this.TaskRunId || taskAttempt <= 0 || reservationExpiresAtUtc <= nowUtc)
+        if (taskRunId != this.TaskRunId || taskAttempt <= 0 ||
+            nowUtc < (this.StartedAtUtc ?? this.RequestedAtUtc) || reservationExpiresAtUtc <= nowUtc)
         {
             return Result.Failure(IngestionDomainErrors.ReprocessingTaskInvalid);
         }
@@ -117,7 +119,7 @@ public sealed class ObservationReprocessingAttempt : ScopedAggregateRoot<Guid>
         DateTimeOffset reservationExpiresAtUtc)
     {
         if (this.State != ObservationReprocessingState.Running || taskAttempt != this.LastTaskAttempt ||
-            reservationExpiresAtUtc <= nowUtc)
+            !this.StartedAtUtc.HasValue || nowUtc < this.StartedAtUtc || reservationExpiresAtUtc <= nowUtc)
         {
             return Result.Failure(IngestionDomainErrors.ReprocessingTaskInvalid);
         }
@@ -147,13 +149,14 @@ public sealed class ObservationReprocessingAttempt : ScopedAggregateRoot<Guid>
         if (this.State != ObservationReprocessingState.Running || parsedCount < 0 || acceptedCount < 0 ||
             duplicateCount < 0 || rejectedCount < 0 ||
             (long)acceptedCount + duplicateCount + rejectedCount != parsedCount ||
-            (noMatch && parsedCount != 0))
+            (noMatch && parsedCount != 0) || !this.StartedAtUtc.HasValue || nowUtc < this.StartedAtUtc)
         {
             return Result.Failure(IngestionDomainErrors.ReprocessingOutcomeInvalid);
         }
 
         string? normalizedReason = string.IsNullOrWhiteSpace(reasonCode) ? null : NormalizeError(reasonCode);
-        if ((noMatch || rejectedCount > 0) && normalizedReason is null)
+        bool requiresReason = noMatch || rejectedCount > 0;
+        if (requiresReason != (normalizedReason is not null))
         {
             return Result.Failure(IngestionDomainErrors.ReprocessingErrorInvalid);
         }
@@ -175,7 +178,8 @@ public sealed class ObservationReprocessingAttempt : ScopedAggregateRoot<Guid>
 
     public Result Fail(string errorCode, DateTimeOffset nowUtc)
     {
-        if (this.State is not (ObservationReprocessingState.Queued or ObservationReprocessingState.Running))
+        if (this.State is not (ObservationReprocessingState.Queued or ObservationReprocessingState.Running) ||
+            nowUtc < (this.StartedAtUtc ?? this.RequestedAtUtc))
         {
             return Result.Failure(IngestionDomainErrors.ReprocessingNotActive);
         }
@@ -213,7 +217,8 @@ public sealed class ObservationReprocessingAttempt : ScopedAggregateRoot<Guid>
 
     private Result Terminate(ObservationReprocessingState state, string errorCode, DateTimeOffset nowUtc)
     {
-        if (this.State is not (ObservationReprocessingState.Queued or ObservationReprocessingState.Running))
+        if (this.State is not (ObservationReprocessingState.Queued or ObservationReprocessingState.Running) ||
+            nowUtc < (this.StartedAtUtc ?? this.RequestedAtUtc))
         {
             return Result.Failure(IngestionDomainErrors.ReprocessingNotActive);
         }

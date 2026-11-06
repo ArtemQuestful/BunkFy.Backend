@@ -1,4 +1,4 @@
-﻿namespace BunkFy.Modules.DataRights.Admin.Contracts;
+namespace BunkFy.Modules.DataRights.Admin.Contracts;
 
 public static class DataRightsAdminOperationNames
 {
@@ -10,6 +10,10 @@ public static class DataRightsAdminOperationNames
         "data-rights.tenant-termination.decide";
     public const string TenantTerminationStart =
         "data-rights.tenant-termination.start";
+    public const string TenantTerminationExportDownload =
+        "data-rights.tenant-termination.export.download";
+    public const string TenantTerminationExportConfirm =
+        "data-rights.tenant-termination.export.confirm";
     public const string TenantTerminationRetry =
         "data-rights.tenant-termination.retry";
     public const string TenantTerminationCancel =

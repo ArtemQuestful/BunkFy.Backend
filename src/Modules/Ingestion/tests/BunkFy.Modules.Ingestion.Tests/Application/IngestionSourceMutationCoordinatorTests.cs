@@ -282,6 +282,12 @@ public sealed class IngestionSourceMutationCoordinatorTests
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task AcquireRetentionExecutionAsync(
+            string tenantId,
+            Guid executionId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task AcquireConnectionWriteAsync(
             string tenantId,
             Guid connectionId,

@@ -24,6 +24,12 @@ public sealed record WorkspaceStaffOnboardingDto(
     DateTimeOffset LastChangedAtUtc);
 
 public sealed record WorkspaceStaffOnboardingListResponse(
+    IReadOnlyList<WorkspaceStaffOnboardingDto> Items,
+    int Page,
+    int PageSize,
+    bool HasMore);
+
+public sealed record WorkspaceStaffOnboardingSummaryListResponse(
     IReadOnlyList<WorkspaceStaffOnboardingActionableSummaryDto> Items,
     int Page,
     int PageSize,

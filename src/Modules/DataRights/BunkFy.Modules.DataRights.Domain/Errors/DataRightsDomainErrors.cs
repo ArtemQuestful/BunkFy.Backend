@@ -94,6 +94,12 @@ public static class DataRightsDomainErrors
     public static readonly Error RestrictionExecutionInvalid = new(
         "DataRights.RestrictionExecutionInvalid",
         "The case does not contain one executable processing restriction.");
+    public static readonly Error RestrictionReleaseTargetInvalid = new(
+        "DataRights.RestrictionReleaseTargetInvalid",
+        "The processing-restriction release target is invalid.");
+    public static readonly Error RestrictionReleaseTargetRequired = new(
+        "DataRights.RestrictionReleaseTargetRequired",
+        "Select one processing-restriction release target before review.");
     public static readonly Error RestrictionExecutionProofInvalid = new(
         "DataRights.RestrictionExecutionProofInvalid",
         "The processing-restriction owner proof is invalid.");

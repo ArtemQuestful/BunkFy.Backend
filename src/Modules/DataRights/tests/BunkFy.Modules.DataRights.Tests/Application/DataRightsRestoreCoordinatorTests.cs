@@ -212,6 +212,161 @@ public sealed class DataRightsRestoreCoordinatorTests
         Assert.Same(prerequisite.Request, contributor.Request);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Normal_restore_boundary_return_after_cancellation_stops_checkpoint_progression(
+        bool cancelAfterRead)
+    {
+        using CancellationTokenSource source = new();
+        (DataRightsRestoreCoordinator coordinator, DataRightsRestoreScope scope, List<string> calls) =
+            CreateLegacyCoordinator(
+                cancelAfterRead
+                    ? _ => source.Cancel()
+                    : null,
+                cancelAfterRead
+                    ? null
+                    : _ => source.Cancel());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            coordinator.ReconcileAsync(
+                scope,
+                scopeSnapshotSha256: new string('e', 64),
+                source.Token));
+
+        Assert.Equal(
+            cancelAfterRead
+                ? ["query", "read"]
+                : ["query", "read", "prepare", "owner"],
+            calls);
+    }
+
+    [Fact]
+    public async Task Normal_restore_prerequisite_return_after_cancellation_does_not_invoke_owner()
+    {
+        using CancellationTokenSource source = new();
+        (DataRightsRestoreCoordinator coordinator, DataRightsRestoreScope scope, List<string> calls) =
+            CreateScopedCoordinator(_ => source.Cancel());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            coordinator.ReconcileAsync(
+                scope,
+                scopeSnapshotSha256: new string('e', 64),
+                source.Token));
+
+        Assert.Equal(
+            ["query", "read", "prepare", "decrypt", "prerequisite"],
+            calls);
+    }
+
+    private static (
+        DataRightsRestoreCoordinator Coordinator,
+        DataRightsRestoreScope Scope,
+        List<string> Calls) CreateLegacyCoordinator(
+            Action<CancellationToken>? afterRead,
+            Action<CancellationToken>? afterRestore)
+    {
+        HmacDataRightsRecordPseudonymizer pseudonymizer =
+            ProtectedLedgerTestData.CreatePseudonymizer((1, 'a'));
+        AesGcmDataRightsReplayEnvelopeProtector protector =
+            ProtectedLedgerTestData.CreateProtector(
+                pseudonymizer,
+                activeKeyVersion: 1,
+                (1, 'r'));
+        Guid recordId = Guid.NewGuid();
+        DataRightsProcessingLedgerEntry ledger =
+            ProtectedLedgerTestData.CreateLedger(
+                pseudonymizer,
+                "tenant-a",
+                sequence: 1,
+                DataRightsProcessingLedgerEntry.GenesisEntrySha256,
+                recordId);
+        DataRightsLedgerDelta delta =
+            ProtectedLedgerTestData.CreateDelta(
+                protector,
+                ledger,
+                recordId);
+        DataRightsLedgerDeltaCursor targetCursor = new(
+            TenantSequence: 1,
+            ledger.EntrySha256,
+            StorageMacSha256: new string('c', 64));
+        List<string> calls = [];
+        DataRightsRestoreCoordinator coordinator = new(
+            new RecordingDispatcher(targetCursor, calls),
+            new StubDeltaStore(
+                delta,
+                targetCursor,
+                calls,
+                afterRead),
+            new StubReplayProtector(recordId),
+            [new StubContributor(ledger, calls, afterRestore)],
+            new TestScopeContext(),
+            new FixedTimeProvider(
+                ProtectedLedgerTestData.Now.AddHours(2)));
+        DataRightsRestoreScope scope = new(
+            DataRightsRestoreScope.CurrentContractVersion,
+            "tenant-a",
+            new DataRightsLedgerDeltaCheckpoint(
+                DataRightsLedgerDeltaCheckpoint.CurrentContractVersion,
+                targetCursor,
+                IntegrityKeyVersion: 1,
+                CheckpointMacSha256: new string('d', 64)));
+        return (coordinator, scope, calls);
+    }
+
+    private static (
+        DataRightsRestoreCoordinator Coordinator,
+        DataRightsRestoreScope Scope,
+        List<string> Calls) CreateScopedCoordinator(
+            Action<CancellationToken> afterPrerequisite)
+    {
+        HmacDataRightsRecordPseudonymizer pseudonymizer =
+            ProtectedLedgerTestData.CreatePseudonymizer((1, 'a'));
+        AesGcmDataRightsReplayEnvelopeProtector envelopeProtector =
+            ProtectedLedgerTestData.CreateProtector(
+                pseudonymizer,
+                activeKeyVersion: 1,
+                (1, 'r'));
+        Guid recordId = Guid.NewGuid();
+        DataRightsProcessingLedgerEntry ledger =
+            ProtectedLedgerTestData.CreateStaffLedger(
+                pseudonymizer,
+                "tenant-a",
+                sequence: 1,
+                DataRightsProcessingLedgerEntry.GenesisEntrySha256,
+                recordId);
+        DataRightsLedgerDeltaCursor targetCursor = new(
+            TenantSequence: 1,
+            ledger.EntrySha256,
+            StorageMacSha256: new string('c', 64));
+        List<string> calls = [];
+        DataRightsRestoreCoordinator coordinator = new(
+            new RecordingDispatcher(targetCursor, calls),
+            new StubDeltaStore(
+                ProtectedLedgerTestData.CreateDelta(
+                    envelopeProtector,
+                    ledger,
+                    recordId),
+                targetCursor,
+                calls),
+            new StubReplayProtector(recordId, calls),
+            [],
+            new TestScopeContext(),
+            new FixedTimeProvider(
+                ProtectedLedgerTestData.Now.AddHours(2)),
+            [new StubRestorePrerequisite(ledger, calls, afterPrerequisite)],
+            [new StubScopedContributor(ledger, calls)]);
+        DataRightsRestoreScope scope = new(
+            DataRightsRestoreScope.CurrentContractVersion,
+            "tenant-a",
+            new DataRightsLedgerDeltaCheckpoint(
+                DataRightsLedgerDeltaCheckpoint.CurrentContractVersion,
+                targetCursor,
+                IntegrityKeyVersion: 1,
+                CheckpointMacSha256: new string('d', 64)));
+        return (coordinator, scope, calls);
+    }
+
     private sealed class RecordingDispatcher(
         DataRightsLedgerDeltaCursor target,
         List<string> calls)
@@ -274,7 +429,8 @@ public sealed class DataRightsRestoreCoordinatorTests
     private sealed class StubDeltaStore(
         DataRightsLedgerDelta delta,
         DataRightsLedgerDeltaCursor target,
-        List<string> calls)
+        List<string> calls,
+        Action<CancellationToken>? afterRead = null)
         : IDataRightsLedgerDeltaStore
     {
         public Task<DataRightsLedgerDeltaPage> ReadAfterAsync(
@@ -284,6 +440,7 @@ public sealed class DataRightsRestoreCoordinatorTests
             CancellationToken cancellationToken)
         {
             calls.Add("read");
+            afterRead?.Invoke(cancellationToken);
             return Task.FromResult(new DataRightsLedgerDeltaPage(
                 DataRightsLedgerDeltaPage.CurrentContractVersion,
                 [delta],
@@ -331,7 +488,8 @@ public sealed class DataRightsRestoreCoordinatorTests
 
     private sealed class StubContributor(
         DataRightsProcessingLedgerEntry ledger,
-        List<string> calls)
+        List<string> calls,
+        Action<CancellationToken>? afterRestore = null)
         : IDataRightsAnonymisationRestoreContributor
     {
         public string OwnerKey => ledger.OwnerKey;
@@ -348,6 +506,7 @@ public sealed class DataRightsRestoreCoordinatorTests
             calls.Add("owner");
             this.RecordId = request.RecordId;
             this.ResultingRecordVersion = request.ResultingRecordVersion;
+            afterRestore?.Invoke(cancellationToken);
             return Task.FromResult(
                 DataRightsAnonymisationRestoreResult.Completed(
                     new(
@@ -362,7 +521,8 @@ public sealed class DataRightsRestoreCoordinatorTests
 
     private sealed class StubRestorePrerequisite(
         DataRightsProcessingLedgerEntry ledger,
-        List<string> calls)
+        List<string> calls,
+        Action<CancellationToken>? afterExecute = null)
         : IDataRightsAnonymisationRestorePrerequisiteV3
     {
         public string OwnerKey => ledger.OwnerKey;
@@ -385,6 +545,7 @@ public sealed class DataRightsRestoreCoordinatorTests
             calls.Add("prerequisite");
             this.Request = request;
             this.RecordId = request.RecordId;
+            afterExecute?.Invoke(cancellationToken);
             return Task.FromResult(
                 DataRightsAnonymisationRestorePrerequisiteResult.Completed(
                     DataRightsAnonymisationRestoreContractV3.CurrentVersion));

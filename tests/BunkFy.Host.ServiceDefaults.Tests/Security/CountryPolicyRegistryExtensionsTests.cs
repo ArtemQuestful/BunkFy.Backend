@@ -21,6 +21,62 @@ public sealed class CountryPolicyRegistryExtensionsTests
     }
 
     [Fact]
+    public void Version_two_pack_uses_the_composed_embedded_tzdb_rules()
+    {
+        string root = CreateTemporaryDirectory();
+        string packs = Directory.CreateDirectory(
+            Path.Combine(root, "packs")).FullName;
+        string source = Path.Combine(
+            AppContext.BaseDirectory,
+            "CountryPolicies",
+            "example-hostel-policy.v2.json");
+        string destination = Path.Combine(
+            packs,
+            "example-hostel-policy.v2.json");
+        File.Copy(source, destination);
+
+        try
+        {
+            CountryPolicyPackArtifact artifact = CountryPolicyPackJson.Parse(
+                File.ReadAllBytes(destination));
+            HostApplicationBuilder builder = Host.CreateApplicationBuilder(
+                new HostApplicationBuilderSettings
+                {
+                    ContentRootPath = root,
+                    EnvironmentName = Environments.Development
+                });
+            string section =
+                CountryPolicyRegistryExtensions.ConfigurationSection;
+            builder.Configuration[$"{section}:PackDirectory"] = "packs";
+            builder.Configuration[$"{section}:Allowlist:0:OperatingCountryCode"] =
+                artifact.Document.OperatingCountryCode;
+            builder.Configuration[$"{section}:Allowlist:0:PolicyId"] =
+                artifact.Document.PolicyId;
+            builder.Configuration[$"{section}:Allowlist:0:PolicyVersion"] =
+                artifact.Document.PolicyVersion.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
+            builder.Configuration[$"{section}:Allowlist:0:ContentSha256"] =
+                artifact.ContentSha256;
+            builder.Configuration[$"{section}:Allowlist:0:LaunchStatus"] =
+                nameof(CountryLaunchStatus.Engineering);
+
+            builder.AddBunkFyCountryPolicies();
+
+            using ServiceProvider provider =
+                builder.Services.BuildServiceProvider();
+            CountryPolicyDescriptor descriptor = Assert.Single(provider
+                .GetRequiredService<CountryPolicyRegistry>()
+                .ListPolicies());
+            Assert.Equal(2, descriptor.PolicyVersion);
+            Assert.True(descriptor.SupportsRightsResponseDeadlines);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Configured_pack_directory_must_exist()
     {
         string root = CreateTemporaryDirectory();

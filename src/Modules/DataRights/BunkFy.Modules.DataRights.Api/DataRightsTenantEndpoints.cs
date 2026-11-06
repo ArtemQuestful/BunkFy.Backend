@@ -11,6 +11,7 @@ using Gma.Framework.Api.Results;
 using Gma.Framework.Api.Tenancy;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Pagination;
+using Gma.Framework.Results;
 using Gma.Framework.Security;
 using Gma.Framework.Tenancy.AccessControl.AspNetCore;
 using Microsoft.AspNetCore.Builder;
@@ -77,6 +78,7 @@ internal static class DataRightsTenantEndpoints
                 ? Results.Unauthorized()
                 : (await dispatcher.SendAsync(
                     new CreateDataRightsCaseCommand(
+                        request.OperationId,
                         DataRightsCaseScope.Staff,
                         request.RequestedOperations,
                         request.RestrictionDirective,
@@ -257,23 +259,35 @@ internal static class DataRightsTenantEndpoints
 
     private static void MapDiscovery(RouteGroupBuilder group)
     {
-        group.MapGet("/{caseId:guid}/subjects", async (
+        group.MapGet("/{caseId:guid}/subjects", (
             Guid caseId,
             HttpContext context,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
-        {
-            DataRightsSensitiveResponseHeaders.Apply(context.Response);
-            return (await dispatcher.QueryAsync(
-                new GetDataRightsSelectedSubjectsQuery(
-                    DataRightsCaseScope.Staff,
-                    caseId),
-                cancellationToken).ConfigureAwait(false))
-                .ToHttpResult(DataRightsEndpointSupport.ErrorStatusCodes);
-        })
+            DataRightsDiscoveryEndpoints.GetSelectedSubjectsAsync(
+                DataRightsCaseScope.Staff,
+                caseId,
+                context,
+                dispatcher,
+                cancellationToken))
             .Produces<DataRightsSelectedSubjectsResponse>()
             .RequireTenant()
             .RequireTenantPermission(DataRightsAdminPermissionCodes.Discover);
+
+        group.MapGet("/{caseId:guid}/review-evidence", (
+            Guid caseId,
+            HttpContext context,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            DataRightsDiscoveryEndpoints.GetSelectedSubjectsAsync(
+                DataRightsCaseScope.Staff,
+                caseId,
+                context,
+                dispatcher,
+                cancellationToken))
+            .Produces<DataRightsSelectedSubjectsResponse>()
+            .RequireTenant()
+            .RequireTenantPermission(DataRightsAdminPermissionCodes.Review);
 
         group.MapPost("/{caseId:guid}/subjects/discover", async (
             Guid caseId,
@@ -283,7 +297,8 @@ internal static class DataRightsTenantEndpoints
             CancellationToken cancellationToken) =>
         {
             DataRightsSensitiveResponseHeaders.Apply(context.Response);
-            return (await dispatcher.QueryAsync(
+            Result<DataRightsSubjectDiscoveryResponse> result =
+                await dispatcher.QueryAsync(
                 new DiscoverDataRightsSubjectsQuery(
                     DataRightsCaseScope.Staff,
                     caseId,
@@ -295,8 +310,8 @@ internal static class DataRightsTenantEndpoints
                         request.DateOfBirth,
                         request.AccountSubjectId),
                     request.OwnerKey),
-                cancellationToken).ConfigureAwait(false))
-                .ToHttpResult(DataRightsEndpointSupport.ErrorStatusCodes);
+                    cancellationToken).ConfigureAwait(false);
+            return DataRightsEndpointSupport.ToHttpResult(context, result);
         })
             .Produces<DataRightsSubjectDiscoveryResponse>()
             .RequireTenant()

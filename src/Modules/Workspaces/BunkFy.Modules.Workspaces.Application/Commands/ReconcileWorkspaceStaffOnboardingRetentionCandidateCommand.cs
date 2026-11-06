@@ -3,6 +3,8 @@ namespace BunkFy.Modules.Workspaces.Application.Commands;
 using Gma.Framework.Cqrs;
 
 internal sealed record ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand(
+    Guid ExecutionId,
+    int Attempt,
     Guid ApplicationId,
     long ExpectedVersion)
     : ITransactionalCommand<WorkspaceStaffOnboardingRetentionReconciliation>;

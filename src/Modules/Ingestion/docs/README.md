@@ -22,6 +22,9 @@ The current foundation contains:
 - versioned connection-owned polling schedules projected into tenant-scoped GMA TaskRuntime occurrences;
 - bounded raw-payload reads and strict `reservation.v1` normalization, including optional minute-precision expected local arrival/departure times;
 - durable reservation source links, source ordering, dispatch attempts, and versioned non-PII operational baselines;
+- model-owned PostgreSQL invariants for source-link, dispatch, proposal, and
+  reprocessing identity, state, version, chronology, result evidence,
+  sensitive-history, and anonymisation shapes;
 - contracts-only resolution of an exact dispatch correlation to its stable reservation source-link id for cross-module notification projection;
 - asynchronous create/change/amend/cancel requests with correlated Reservations outcomes and deferred receipt recovery;
 - strict operational-baseline classification of guest-only changes versus allocation-affecting amendments;
@@ -120,6 +123,14 @@ HTTP downloads are forced to opaque attachments with cache prevention and conten
 
 Raw payloads default to a 30-day retention period configured by `Ingestion:Retention:RawPayloadRetention` (valid range: one hour through ten years). Each receipt stores the deadline assigned when it is accepted, so later configuration changes do not silently rewrite existing retention obligations. Only processed or rejected receipts can be claimed; pending/applying proposals and non-expired reprocessing reservations keep source evidence out of the claim query. Reprocessing reservations expire automatically and are not substitutes for legal holds. The `purge-expired-raw-payloads` TaskRuntime job uses a durable claim before deleting MinIO content and finalizes the receipt afterward; the same task retry can resume immediately, another task can recover a stale claim, and an already-missing object is successful idempotent deletion. Admin API and CLI enqueue this tenant-scoped job behind `ingestion.retention.manage` and explicit confirmation.
 
+Automatic Retention executions additionally fence every owner mutation by the
+exact current attempt under one tenant-qualified transaction lock. Attempt
+advance, raw claim, raw completion, sensitive-history redaction, and terminal
+completion serialize on that stable execution coordinate before source-graph
+locking or candidate discovery. Manual TaskRuntime maintenance jobs retain
+their coordinate-free owner-idempotency path. See
+[Ingestion Retention Attempt Fencing Task](../../../docs/planning/ingestion-retention-attempt-fencing-task.md).
+
 DataRights uses exact product reservation or Ingestion-owned reservation
 source-link coordinates only; no raw-provider or fuzzy identity search is
 available. A selected coordinate streams its reachable source link, receipts,
@@ -190,6 +201,15 @@ New evidence is written under a deterministic receipt key before the PostgreSQL 
 
 Normalized proposal diffs and reservation dispatch snapshots have an independent terminal retention policy configured by `Ingestion:Retention:SensitiveHistoryRetention`, defaulting to 90 days with the same bounded range. Pending/applying proposals, pending dispatches, and accepted cancellations have no deadline and keep their evidence. Every genuine terminal transition persists its deadline; `redact-expired-reservation-history` later nulls only the sensitive body and retains reason code, state, actor, decision reason, correlation, revisions, errors, and lifecycle timestamps. Proposal list responses never include diff bodies. Detail reads state whether sensitive history is available or redacted.
 
+Data Rights may reduce a terminal source graph before that automatic deadline,
+but only as one complete owner transition: reservation/provider identifiers and
+sensitive bodies are cleared together with matching redaction/anonymisation
+evidence. The migration adopts the older SQL-only reason and retention checks
+into model metadata without stealing their historical ownership. It does not
+repair malformed hosted rows; release rollout must preflight the target data,
+and a named constraint failure requires an operator-approved repair. See
+[Ingestion Source Graph Authoritative State Integrity Task](../../../docs/planning/ingestion-source-graph-authoritative-state-integrity-task.md).
+
 Automatic schedule provisioning is intentionally not global: the current platform has no authoritative tenant-enumeration contract. Deployments must enqueue or schedule one scoped occurrence per tenant until that contract exists. Source links retain only arrival, departure, and sorted inventory-unit identity in strict versioned JSON.
 
 Property legal holds are separate permanent audit records protected by `ingestion.legal-holds.manage`. Any active hold excludes the property's otherwise-eligible raw payloads and normalized history in the candidate SQL itself. Overlapping holds remain effective until the final release. Hold changes and retention batches share an optimistic property fence, while placement fails if an external raw-payload deletion is already in progress. Health reports active-hold and held-backlog counts but never reasons. The adapter-owned `json.file-drop` quarantine is outside these holds because malformed node-local input may not have a trustworthy property identity; it uses a separate bounded local retention policy, while export and audited quarantine holds remain deferred.
@@ -198,7 +218,7 @@ Connection health keeps its operational state factual: `NoActivity`, `RunActive`
 
 Health also reports whether the current host knows the connection's adapter descriptor and still supports its execution mode, together with protocol/configuration schema versions. This detects deployment composition drift without claiming that a registered adapter is operationally healthy.
 
-Focused Docker coverage proves PostgreSQL, MinIO, JetStream, exact deduplication, worker-downtime recovery, automatic reservation creation, accepted and rejected allocation amendments, fresh worker restarts, the staff-conflict proposal path, real-token property-scoped connection management and health, separately authorized raw-payload retrieval, retention migration backfill, active-proposal evidence protection, legacy PII baseline reduction, normalized-history redaction and constraints, overlapping legal holds and fence conflicts, protected-ledger restore replay, anti-resurrection barriers, physical object purge, concurrent one-time adapter credential issuance and idempotent revocation, tenant/connection denial, direct push acceptance/replay, standalone and remote-leased runner delivery plus checkpointing, queued JSON file-drop receipt/archive/quarantine behavior, real SMTP-to-IMAP reservation acquisition and poison-message progress through GreenMail, tenant-termination export across all 16 streams with cross-tenant revision isolation and frozen-write serialization, crash-safe tenant destruction across raw objects and derived/source receipt lineage, and Admin API/CLI confirmation. Vendor-specific connectors, federated workload identity, remote fleet discovery, orphan reconciliation, irreversible anonymisation execution, and broader operational workflows remain later slices.
+Focused Docker coverage proves PostgreSQL, MinIO, JetStream, exact deduplication, worker-downtime recovery, automatic reservation creation, accepted and rejected allocation amendments, fresh worker restarts, the staff-conflict proposal path, real-token property-scoped connection management and health, separately authorized raw-payload retrieval, retention migration backfill, active-proposal evidence protection, legacy PII baseline reduction, normalized-history redaction and constraints, source-graph authoritative-state constraints and guarded rollback after early rights-driven anonymisation, overlapping legal holds and fence conflicts, protected-ledger restore replay, anti-resurrection barriers, physical object purge, concurrent one-time adapter credential issuance and idempotent revocation, tenant/connection denial, direct push acceptance/replay, standalone and remote-leased runner delivery plus checkpointing, queued JSON file-drop receipt/archive/quarantine behavior, real SMTP-to-IMAP reservation acquisition and poison-message progress through GreenMail, tenant-termination export across all 16 streams with cross-tenant revision isolation and frozen-write serialization, crash-safe tenant destruction across raw objects and derived/source receipt lineage, and Admin API/CLI confirmation. Vendor-specific connectors, federated workload identity, remote fleet discovery, orphan reconciliation, irreversible anonymisation execution, and broader operational workflows remain later slices.
 
 Retained rejected evidence can be parsed again without reopening the source receipt; the durable attempt, lineage, and retention-fence contract is in [Ingestion Source Reprocessing Task](../../../docs/planning/ingestion-source-reprocessing-task.md).
 

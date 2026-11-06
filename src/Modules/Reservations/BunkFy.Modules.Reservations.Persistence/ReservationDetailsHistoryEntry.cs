@@ -1,8 +1,9 @@
 namespace BunkFy.Modules.Reservations.Persistence;
 
 using BunkFy.Modules.Reservations.Domain.Aggregates;
+using Gma.Framework.Domain;
 
-public sealed class ReservationDetailsHistoryEntry
+public sealed class ReservationDetailsHistoryEntry : IScopedEntity
 {
     private ReservationDetailsHistoryEntry() { }
 

@@ -66,6 +66,9 @@ public interface IStaffMemberRepository
         StaffStatus? status,
         PageRequest pageRequest,
         CancellationToken cancellationToken);
+    Task<StaffAccountDirectoryResponse> ResolveAccountDirectoryAsync(
+        IReadOnlyCollection<string> authSubjectIds,
+        CancellationToken cancellationToken);
     Task<bool> EmployeeNumberExistsAsync(string employeeNumber, Guid? exceptStaffMemberId,
         CancellationToken cancellationToken);
     Task<bool> AuthSubjectExistsAsync(string authSubjectId, Guid? exceptStaffMemberId,

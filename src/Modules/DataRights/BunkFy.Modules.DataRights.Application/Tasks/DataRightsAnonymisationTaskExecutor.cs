@@ -249,28 +249,16 @@ internal sealed class DataRightsAnonymisationTaskExecutor(
                 execute,
             CancellationToken cancellationToken)
     {
-        TimeSpan remaining = deadlineUtc - clock.UtcNow;
-        if (remaining <= TimeSpan.Zero)
-        {
-            throw new TimeoutException(
-                "DataRights.AnonymisationPrerequisiteDeadlineExceeded");
-        }
-
-        using CancellationTokenSource deadline =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(remaining);
-
-        DataRightsAnonymisationExecutionPrerequisiteResult result;
-        try
-        {
-            result = await execute(deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-            when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                "DataRights.AnonymisationPrerequisiteDeadlineExceeded");
-        }
+        DataRightsDeadlineExecution<
+            DataRightsAnonymisationExecutionPrerequisiteResult> execution =
+            await DataRightsDeadlineExecutor.ExecuteAsync(
+                clock,
+                deadlineUtc,
+                "DataRights.AnonymisationPrerequisiteDeadlineExceeded",
+                execute,
+                cancellationToken).ConfigureAwait(false);
+        DataRightsAnonymisationExecutionPrerequisiteResult result =
+            execution.Value;
 
         if (!IsValidPrerequisiteResult(contractVersion, result))
         {
@@ -290,33 +278,20 @@ internal sealed class DataRightsAnonymisationTaskExecutor(
                 execute,
             CancellationToken cancellationToken)
     {
-        TimeSpan remaining = deadlineUtc - clock.UtcNow;
-        if (remaining <= TimeSpan.Zero)
-        {
-            throw new TimeoutException(
-                "DataRights.AnonymisationOwnerDeadlineExceeded");
-        }
-
-        using CancellationTokenSource deadline =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(remaining);
-
-        DataRightsAnonymisationContributionResult result;
-        try
-        {
-            result = await execute(deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-            when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                "DataRights.AnonymisationOwnerDeadlineExceeded");
-        }
+        DataRightsDeadlineExecution<DataRightsAnonymisationContributionResult>
+            execution = await DataRightsDeadlineExecutor.ExecuteAsync(
+                clock,
+                deadlineUtc,
+                "DataRights.AnonymisationOwnerDeadlineExceeded",
+                execute,
+                cancellationToken).ConfigureAwait(false);
+        DataRightsAnonymisationContributionResult result = execution.Value;
 
         if (!IsValidResult(
                 contractVersion,
                 selectedRecordVersion,
                 deadlineUtc,
+                execution.ObservedAtUtc,
                 result))
         {
             throw new InvalidOperationException(
@@ -330,6 +305,7 @@ internal sealed class DataRightsAnonymisationTaskExecutor(
         int contractVersion,
         long selectedRecordVersion,
         DateTimeOffset deadlineUtc,
+        DateTimeOffset observedAtUtc,
         DataRightsAnonymisationContributionResult? result)
     {
         if (result is null || result.ContractVersion != contractVersion)
@@ -354,7 +330,8 @@ internal sealed class DataRightsAnonymisationTaskExecutor(
                     DataRightsExecutionWorkItem.OwnerCodeMaxLength) &&
                 IsSha256(proof.ReceiptSha256) &&
                 proof.CompletedAtUtc != default &&
-                proof.CompletedAtUtc <= deadlineUtc;
+                proof.CompletedAtUtc <= observedAtUtc &&
+                proof.CompletedAtUtc < deadlineUtc;
         }
 
         return result.Status is

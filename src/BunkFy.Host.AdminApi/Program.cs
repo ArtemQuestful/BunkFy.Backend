@@ -43,6 +43,7 @@ using BunkFy.Extensions.Workspaces;
 using BunkFy.Host.ServiceDefaults;
 using BunkFy.Host.ServiceDefaults.Production;
 using BunkFy.Host.ServiceDefaults.Security;
+using BunkFy.Host.ServiceDefaults.Security.Stations;
 using BunkFy.Host.AdminApi.Security;
 using Gma.Framework.Administration.Api;
 using Gma.Framework.Api.OpenApi;
@@ -123,6 +124,7 @@ builder.AddAdminApiModule<RetentionAdminApiModule>();
 builder.AddAdminApiModule<DataRightsAdminApiModule>();
 builder.AddAdminApiModule<WorkspacesAdminApiModule>();
 
+builder.AddBunkFyStationK0();
 builder.AddServiceDefaults();
 builder.AddGmaProductionHttp();
 builder.Services.AddGmaEntityFrameworkReadinessCheck<AdminDbContext>("administration-database");
@@ -153,5 +155,6 @@ app.UseAuthorization();
 
 app.MapDefaultEndpoints();
 app.MapAdminApiModules();
+app.ValidateBunkFyStationK0("admin");
 
 app.Run();

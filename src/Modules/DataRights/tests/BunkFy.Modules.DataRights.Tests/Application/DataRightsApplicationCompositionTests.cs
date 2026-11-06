@@ -5,6 +5,7 @@ using BunkFy.Modules.DataRights.Application.Handlers;
 using BunkFy.Modules.DataRights.Application.Tasks;
 using BunkFy.Modules.DataRights.Contracts;
 using Gma.Framework.Tasks;
+using Gma.Framework.Tenancy;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -35,7 +36,7 @@ public sealed class DataRightsApplicationCompositionTests
                         registration.TaskName,
                         registration.PayloadVersion));
 
-        Assert.Equal(11, registrations.Count);
+        Assert.Equal(13, registrations.Count);
         Assert.Equal(
             DataRightsTaskExecutionPolicy.AnonymisationOwnerHandlerTimeout,
             registrations[(
@@ -84,12 +85,24 @@ public sealed class DataRightsApplicationCompositionTests
                 DeleteExpiredDataRightsExportArtifactPayload.PayloadVersion),
             (GenerateTenantTerminationExportArtifactPayload.TaskName,
                 GenerateTenantTerminationExportArtifactPayload.PayloadVersion),
+            (DeleteExpiredTenantTerminationExportArtifactPayload.TaskName,
+                DeleteExpiredTenantTerminationExportArtifactPayload.PayloadVersion),
+            (DeleteExpiredTenantTerminationExportFragmentPayload.TaskName,
+                DeleteExpiredTenantTerminationExportFragmentPayload.PayloadVersion),
             (DispatchDataRightsResponseDeadlineAlertsPayload.TaskName,
                 DispatchDataRightsResponseDeadlineAlertsPayload.PayloadVersion)
         ];
         Assert.All(
             fallbackTasks,
             taskName => Assert.Null(registrations[taskName].HandlerTimeout));
+        Assert.False(registrations[(
+            DeleteExpiredTenantTerminationExportArtifactPayload.TaskName,
+            DeleteExpiredTenantTerminationExportArtifactPayload
+                .PayloadVersion)].IsTenantScoped());
+        Assert.False(registrations[(
+            DeleteExpiredTenantTerminationExportFragmentPayload.TaskName,
+            DeleteExpiredTenantTerminationExportFragmentPayload
+                .PayloadVersion)].IsTenantScoped());
     }
 
     [Fact]
@@ -121,6 +134,8 @@ public sealed class DataRightsApplicationCompositionTests
         await using ServiceProvider provider = services.BuildServiceProvider();
         ITenantTerminationTaskScheduler scheduler = provider
             .GetRequiredService<ITenantTerminationTaskScheduler>();
+        ITenantTerminationExportRetentionScheduler retention = provider
+            .GetRequiredService<ITenantTerminationExportRetentionScheduler>();
 
         InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
             () => scheduler.EnqueueVerificationAsync(
@@ -130,5 +145,25 @@ public sealed class DataRightsApplicationCompositionTests
                 CancellationToken.None));
 
         Assert.Equal(UnavailableTenantTerminationTaskScheduler.ErrorCode, failure.Message);
+
+        InvalidOperationException retentionFailure =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                retention.EnqueueArtifactCleanupAsync(
+                    "tenant-a",
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    operationRevision: 1,
+                    new DateTimeOffset(
+                        2026,
+                        8,
+                        16,
+                        12,
+                        0,
+                        0,
+                        TimeSpan.Zero),
+                    CancellationToken.None));
+        Assert.Equal(
+            UnavailableTenantTerminationTaskScheduler.ErrorCode,
+            retentionFailure.Message);
     }
 }

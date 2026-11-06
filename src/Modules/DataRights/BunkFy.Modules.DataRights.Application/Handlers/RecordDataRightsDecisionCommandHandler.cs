@@ -49,6 +49,7 @@ internal sealed class RecordDataRightsDecisionCommandHandler(
                     command.CaseId,
                     dataRightsCase.SelectedSubjects,
                     cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (policy.IsFailure)
             {
                 return Result.Failure<DataRightsCaseDto>(policy.Error);

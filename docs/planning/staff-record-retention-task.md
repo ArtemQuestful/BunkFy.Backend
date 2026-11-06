@@ -1,6 +1,6 @@
 # Staff Record Automatic Retention Task
 
-Status: implementation complete
+Status: implementation complete; retry and provider-integrity follow-up complete
 Date: 2026-07-30
 
 ## Goal
@@ -114,6 +114,9 @@ workspace subject identifiers.
   acquiring the existing Staff operation lock.
 - Persist a Staff-owned execution so a Retention retry returns exact
   accumulated affected counts after a mid-batch process failure.
+- Fence every owner mutation and completion to the active Retention attempt.
+  Failed evidence does not advance the fair-scan cursor; a later attempt
+  reopens the execution and resumes from the proven failed cursor.
 - Advance the cursor only with a durable terminal owner result, wrap at the
   end, and let already-anonymised records replay as exact no-ops.
 

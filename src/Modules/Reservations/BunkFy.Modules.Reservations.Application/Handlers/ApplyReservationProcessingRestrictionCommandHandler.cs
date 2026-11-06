@@ -61,7 +61,12 @@ internal sealed class ApplyReservationProcessingRestrictionCommandHandler(
                 cancellationToken).ConfigureAwait(false);
         if (existing is not null)
         {
-            return Replay(existing, command);
+            ReservationProcessingRestriction? replayRestriction =
+                await restrictions.GetAsync(
+                    command.PropertyId,
+                    existing.RestrictionId,
+                    cancellationToken).ConfigureAwait(false);
+            return Replay(existing, replayRestriction, command, actorId);
         }
 
         CountryPolicyDecision policyDecision = await countryPolicy.EvaluateAsync(
@@ -210,9 +215,17 @@ internal sealed class ApplyReservationProcessingRestrictionCommandHandler(
 
     private static Result<ReservationProcessingRestrictionReceiptDto> Replay(
         ReservationProcessingRestrictionReceipt receipt,
-        ApplyReservationProcessingRestrictionCommand command)
+        ReservationProcessingRestriction? restriction,
+        ApplyReservationProcessingRestrictionCommand command,
+        string actorId)
     {
         if (receipt.Action != ReservationProcessingRestrictionAction.Apply ||
+            restriction is null ||
+            restriction.Id != receipt.RestrictionId ||
+            !string.Equals(
+                restriction.AppliedBy,
+                actorId,
+                StringComparison.Ordinal) ||
             receipt.PropertyId != command.PropertyId ||
             receipt.ReservationId != command.ReservationId ||
             receipt.CaseId != command.CaseId ||

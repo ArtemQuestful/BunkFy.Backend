@@ -53,6 +53,8 @@ internal sealed partial class PropertiesTenantTerminationContributor
                         room => room.ScopeId == tenantId),
                     room => room.Id,
                     cancellationToken),
+            // The append-only ledger guard reads durable Stage 12. Persist an empty
+            // Stage 11 -> 12 transition before selecting protected ledger rows.
             PropertiesTenantDestroyStage.PropertyMutationOperations =>
                 this.RemoveBatchAsync(
                     operation,
@@ -64,6 +66,12 @@ internal sealed partial class PropertiesTenantTerminationContributor
                     item => $"{item.PropertyId:N}|" +
                         $"{(int)item.ResourceKind}|{item.ResourceId:N}|" +
                         $"{item.Id:N}",
+                    cancellationToken,
+                    stopAfterEmptyStageAdvance: true),
+            PropertiesTenantDestroyStage.PropertyTimeZoneOperations =>
+                this.RemovePropertyTimeZoneOperationBatchAsync(
+                    operation,
+                    tenantId,
                     cancellationToken),
             PropertiesTenantDestroyStage.Properties =>
                 this.RemoveGuidBatchAsync(
@@ -105,11 +113,44 @@ internal sealed partial class PropertiesTenantTerminationContributor
             cancellationToken);
     }
 
+    private async Task<bool> RemovePropertyTimeZoneOperationBatchAsync(
+        PropertiesTenantDestroyOperation operation,
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        PropertyTimeZoneOperation[] loaded = await dbContext
+            .PropertyTimeZoneOperations
+            .Where(item => item.ScopeId == tenantId)
+            .OrderBy(item => item.PropertyId)
+            .ThenBy(item => item.OperationId)
+            .Take(operation.BatchSize + 1)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (loaded.Length == 0)
+        {
+            EnsureStageAdvanced(operation, clock.UtcNow);
+            return false;
+        }
+
+        PropertyTimeZoneOperation[] selected = loaded
+            .Take(operation.BatchSize)
+            .ToArray();
+        dbContext.RemoveRange(selected);
+        EnsureBatchRecorded(
+            operation,
+            selected.Select(item =>
+                $"{item.PropertyId:N}|{item.OperationId:N}").ToArray(),
+            stageCompleted: false,
+            clock.UtcNow);
+        return true;
+    }
+
     private async Task<bool> RemoveBatchAsync<TEntity>(
         PropertiesTenantDestroyOperation operation,
         IQueryable<TEntity> source,
         Func<TEntity, string> keySelector,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool stopAfterEmptyStageAdvance = false)
         where TEntity : class
     {
         TEntity[] loaded = await source
@@ -119,7 +160,7 @@ internal sealed partial class PropertiesTenantTerminationContributor
         if (loaded.Length == 0)
         {
             EnsureStageAdvanced(operation, clock.UtcNow);
-            return false;
+            return stopAfterEmptyStageAdvance;
         }
 
         TEntity[] selected = loaded.Take(operation.BatchSize).ToArray();
@@ -276,6 +317,9 @@ internal sealed partial class PropertiesTenantTerminationContributor
             cancellationToken)
             .ConfigureAwait(false) ||
         await dbContext.PropertyMutationOperations.AnyAsync(
+            operation => operation.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
+        await dbContext.PropertyTimeZoneOperations.AnyAsync(
             operation => operation.ScopeId == tenantId,
             cancellationToken).ConfigureAwait(false) ||
         await dbContext.Properties.AnyAsync(

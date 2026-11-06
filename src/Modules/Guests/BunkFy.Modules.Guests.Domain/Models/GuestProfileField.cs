@@ -10,5 +10,6 @@ public enum GuestProfileField
     DateOfBirth = 5,
     NationalityCountryCode = 6,
     PreferredLanguageTag = 7,
-    Notes = 8
+    Notes = 8,
+    LanguageTags = 9
 }

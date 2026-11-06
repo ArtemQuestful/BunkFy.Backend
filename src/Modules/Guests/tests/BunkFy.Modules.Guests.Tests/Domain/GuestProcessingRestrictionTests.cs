@@ -86,6 +86,35 @@ public sealed class GuestProcessingRestrictionTests
     }
 
     [Fact]
+    public void Release_requires_a_case_distinct_from_the_apply_decision()
+    {
+        DateTimeOffset appliedAtUtc = new(2026, 7, 24, 16, 0, 0, TimeSpan.Zero);
+        Guid applyCaseId = Guid.NewGuid();
+        GuestProcessingRestriction restriction = GuestProcessingRestriction.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            applyCaseId,
+            applyApprovalRevision: 4,
+            applySelectedGuestVersion: 7,
+            "staff:privacy",
+            appliedAtUtc).Value;
+
+        Result release = restriction.Release(
+            applyCaseId,
+            releaseApprovalRevision: 5,
+            releaseSelectedGuestVersion: 7,
+            expectedVersion: 1,
+            "staff:privacy",
+            appliedAtUtc.AddMinutes(1));
+
+        Assert.Equal("Guests.RestrictionApprovalInvalid", release.Error.Code);
+        Assert.Equal(GuestProcessingRestrictionState.Active, restriction.Status);
+        Assert.Equal(1, restriction.Version);
+    }
+
+    [Fact]
     public void Receipt_binds_action_versions_actor_and_effective_outcome()
     {
         Result<GuestProcessingRestrictionReceipt> invalidApply =
@@ -111,6 +140,29 @@ public sealed class GuestProcessingRestrictionTests
         Assert.Equal(
             "Guests.RestrictionReceiptTransitionInvalid",
             invalidApply.Error.Code);
+
+        Result<GuestProcessingRestrictionReceipt> invalidReleaseVersion =
+            GuestProcessingRestrictionReceipt.Create(
+                Guid.NewGuid(),
+                "tenant-a",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                GuestProcessingRestrictionAction.Release,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                3,
+                5,
+                1,
+                3,
+                8,
+                effectiveRestricted: false,
+                "staff:privacy",
+                Guid.NewGuid(),
+                new DateTimeOffset(2026, 7, 24, 16, 0, 0, TimeSpan.Zero));
+        Assert.Equal(
+            "Guests.RestrictionReceiptVersionInvalid",
+            invalidReleaseVersion.Error.Code);
 
         GuestProcessingRestrictionReceipt release =
             GuestProcessingRestrictionReceipt.Create(

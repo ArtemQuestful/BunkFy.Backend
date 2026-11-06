@@ -34,6 +34,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
     private static readonly Dictionary<Type, HashSet<string>> NonPersonalMembers = new()
     {
         [typeof(WorkspaceStaffOnboardingListResponse)] = PaginationMembers(),
+        [typeof(WorkspaceStaffOnboardingSummaryListResponse)] = PaginationMembers(),
         [typeof(WorkspaceStaffAccessProcessListResponse)] = PaginationMembers(),
         [typeof(WorkspaceStaffJoinSourceListResponse)] = PaginationMembers(),
         [typeof(WorkspaceStaffIdentityAnchorSourcePage)] =
@@ -91,7 +92,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
     [Fact]
     public void Identity_anchor_cutover_evidence_is_pseudonymous_and_transient()
     {
-        Assert.Equal(15, Catalogue.CatalogVersion);
+        Assert.Equal(18, Catalogue.CatalogVersion);
         Assert.Equal(
             WorkspacesTenantTerminationMetadata.PersonalDataCatalogVersion,
             Catalogue.CatalogVersion);
@@ -340,6 +341,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
     private static Type[] PersistenceTypes() =>
     [
         typeof(WorkspaceStaffOnboarding),
+        typeof(WorkspaceStaffOnboardingRecoveryReceipt),
         typeof(WorkspaceStaffDeferredClaimWithdrawal),
         typeof(WorkspaceStaffOnboardingCorrectionReceipt),
         typeof(WorkspaceStaffOnboardingProcessingRestriction),
@@ -353,6 +355,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
         typeof(WorkspaceStaffAccessPlan),
         typeof(WorkspaceStaffAccessPlanProperty),
         typeof(WorkspaceStaffRetentionCorrelationReceipt),
+        typeof(WorkspaceStaffOnboardingRetentionExecution),
         typeof(WorkspaceStaffIdentityAnchorSweepCheckpoint),
         typeof(WorkspaceStaffHistoricalNoProvisionReceipt),
         typeof(WorkspaceTerminationFence),
@@ -372,7 +375,8 @@ public sealed class WorkspacesPersonalDataCatalogTests
                      typeof(ReplaceWorkspaceJoinSourceRequest),
                      typeof(UpdateWorkspaceMemberAccessRequest),
                      typeof(
-                         WorkspaceStaffOnboardingDataRightsCorrectionRequest)
+                         WorkspaceStaffOnboardingDataRightsCorrectionRequest),
+                     typeof(WorkspaceStaffOnboardingRecoveryAttemptRequest)
                  })
         {
             yield return (PersonalDataSurface.ApiInput, type);
@@ -385,6 +389,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
                      typeof(DenyWorkspaceStaffAccessCommand),
                      typeof(RetryWorkspaceStaffAccessProcessCommand),
                      typeof(RetryWorkspaceStaffOnboardingCommand),
+                     typeof(AttemptWorkspaceStaffOnboardingRecoveryCommand),
                      typeof(PrepareWorkspaceStaffAccessPlanCommand),
                      typeof(ActivateWorkspaceStaffAccessPlanCommand),
                      typeof(
@@ -411,6 +416,16 @@ public sealed class WorkspacesPersonalDataCatalogTests
                          WorkspaceStaffCorrelationAnonymisationRestoreRequest)
                      ,
                      typeof(
+                         BeginWorkspaceStaffOnboardingRetentionExecutionCommand),
+                     typeof(
+                         WorkspaceStaffOnboardingRetentionExecutionStart),
+                     typeof(
+                         ListWorkspaceStaffOnboardingRetentionCandidatesCommand),
+                     typeof(
+                         ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand),
+                     typeof(
+                         CompleteWorkspaceStaffOnboardingRetentionExecutionCommand),
+                     typeof(
                          PrepareWorkspaceStaffIdentityAnchorSweepPageCommand),
                      typeof(
                          AdvanceWorkspaceStaffIdentityAnchorSweepCommand),
@@ -429,6 +444,10 @@ public sealed class WorkspacesPersonalDataCatalogTests
         }
 
         yield return (PersonalDataSurface.ApplicationQuery, typeof(GetOwnWorkspaceStaffOnboardingQuery));
+        yield return (PersonalDataSurface.ApplicationQuery, typeof(GetWorkspaceStaffOnboardingReviewQuery));
+        yield return (
+            PersonalDataSurface.ApplicationQuery,
+            typeof(GetLatestWorkspaceStaffOnboardingRecoveryAttemptQuery));
         yield return (
             PersonalDataSurface.ApplicationQuery,
             typeof(GetWorkspaceStaffIdentityAnchorSweepStatusQuery));
@@ -471,6 +490,8 @@ public sealed class WorkspacesPersonalDataCatalogTests
                  {
                      typeof(WorkspaceStaffOnboardingDto),
                      typeof(WorkspaceStaffOnboardingListResponse),
+                     typeof(WorkspaceStaffOnboardingSummaryListResponse),
+                     typeof(WorkspaceStaffOnboardingActionableSummaryDto),
                      typeof(WorkspaceMemberAccessDto),
                      typeof(WorkspaceMemberAccessAssignmentDto),
                      typeof(WorkspaceStaffJoinSourceDto),
@@ -481,7 +502,8 @@ public sealed class WorkspacesPersonalDataCatalogTests
                      typeof(
                          WorkspaceStaffOnboardingDataRightsCorrectionTargetDto),
                      typeof(
-                         WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto)
+                         WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto),
+                     typeof(WorkspaceStaffOnboardingRecoveryAttemptDto)
                  })
         {
             yield return (PersonalDataSurface.ApiResponse, type);
@@ -518,9 +540,13 @@ public sealed class WorkspacesPersonalDataCatalogTests
                      typeof(
                          WorkspaceStaffOnboardingCorrectionReceiptDataRightsExport),
                      typeof(
+                         WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport),
+                     typeof(
                          WorkspaceStaffOnboardingProcessingRestrictionDataRightsExport),
                      typeof(
                          WorkspaceStaffOnboardingProcessingRestrictionReceiptDataRightsExport),
+                     typeof(
+                         WorkspaceStaffOnboardingRetentionExecutionDataRightsExport),
                      typeof(
                          WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport)
                  })

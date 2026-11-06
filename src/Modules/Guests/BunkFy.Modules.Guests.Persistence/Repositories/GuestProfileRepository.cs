@@ -104,7 +104,10 @@ internal sealed class GuestProfileRepository(
                         ? GuestStatus.Archived
                         : GuestStatus.Unknown,
                 profile.LastChangedBy,
-                profile.LastChangedAtUtc))
+                profile.LastChangedAtUtc)
+            {
+                LanguageTags = profile.LanguageTags
+            })
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
         return new(

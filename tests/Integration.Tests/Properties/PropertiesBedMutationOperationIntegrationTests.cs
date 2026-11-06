@@ -55,7 +55,8 @@ public sealed class PropertiesBedMutationOperationIntegrationTests
                 propertyId,
                 "Harbour House",
                 "harbour-house",
-                "UTC")).ConfigureAwait(false);
+                "UTC",
+                "system:integration-test")).ConfigureAwait(false);
         Assert.True(propertyCreated.IsSuccess, propertyCreated.Error.Code);
 
         Guid roomOperationId = Guid.NewGuid();

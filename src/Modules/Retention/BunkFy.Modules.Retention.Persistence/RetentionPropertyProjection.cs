@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Retention.Persistence;
 
 using Gma.Framework.Domain;
+using Gma.Framework.Naming;
 
 public sealed class RetentionPropertyProjection : IScopedEntity
 {
@@ -12,7 +13,22 @@ public sealed class RetentionPropertyProjection : IScopedEntity
         bool isActive,
         long topologySourceVersion)
     {
-        this.ScopeId = scopeId;
+        this.ScopeId = TenantIds.Normalize(scopeId);
+        if (id == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A Retention property projection requires a property id.",
+                nameof(id));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(topologySourceVersion);
+        if (topologySourceVersion == 0 && isActive)
+        {
+            throw new ArgumentException(
+                "An unknown Retention property projection cannot be active.",
+                nameof(isActive));
+        }
+
         this.Id = id;
         this.IsKnown = topologySourceVersion > 0;
         this.IsActive = isActive;
@@ -35,8 +51,20 @@ public sealed class RetentionPropertyProjection : IScopedEntity
 
     public void ApplyTopology(bool isActive, long sourceVersion)
     {
-        if (sourceVersion <= this.TopologySourceVersion)
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceVersion);
+        if (sourceVersion < this.TopologySourceVersion)
         {
+            return;
+        }
+
+        if (sourceVersion == this.TopologySourceVersion)
+        {
+            if (!this.IsKnown || this.IsActive != isActive)
+            {
+                throw new InvalidOperationException(
+                    "Retention.PropertyTopologyProjectionConflict");
+            }
+
             return;
         }
 
@@ -50,12 +78,25 @@ public sealed class RetentionPropertyProjection : IScopedEntity
         int retentionPolicyVersion,
         long sourceVersion)
     {
-        if (sourceVersion <= this.PolicySourceVersion)
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retentionPolicyVersion);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceVersion);
+        if (sourceVersion < this.PolicySourceVersion)
         {
             return;
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retentionPolicyVersion);
+        if (sourceVersion == this.PolicySourceVersion)
+        {
+            if (!this.IsKnown ||
+                this.IsProcessingEnabled != isProcessingEnabled ||
+                this.RetentionPolicyVersion != retentionPolicyVersion)
+            {
+                throw new InvalidOperationException(
+                    "Retention.PropertyPolicyProjectionConflict");
+            }
+
+            return;
+        }
 
         this.IsKnown = true;
         this.IsProcessingEnabled = isProcessingEnabled;

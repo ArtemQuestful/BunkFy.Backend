@@ -9,6 +9,7 @@ using BunkFy.Modules.Retention.Persistence;
 using BunkFy.Modules.Retention.Persistence.Repositories;
 using BunkFy.Modules.Retention.Persistence.TenantTermination;
 using BunkFy.Modules.Workspaces.Contracts;
+using Gma.Framework.Messaging.Infrastructure;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
@@ -63,13 +64,14 @@ public sealed class RetentionTenantTerminationContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("retention.termination.exported", result.ResultCode);
-        Assert.Equal(2, result.AffectedCount);
+        Assert.Equal(3, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(1, result.ResultingProofRevision);
         Assert.Equal(
             [
                 RetentionTenantTerminationMetadata.ExecutionRecordType,
-                RetentionTenantTerminationMetadata.ScheduleStateRecordType
+                RetentionTenantTerminationMetadata.ScheduleStateRecordType,
+                RetentionTenantTerminationMetadata.RunRetryRequestRecordType
             ],
             first.Records.Select(record => record.RecordType).ToArray());
         Assert.Equal(
@@ -80,6 +82,11 @@ public sealed class RetentionTenantTerminationContributorTests
         Assert.Equal(
             PropertyId,
             Field(first.Records[1], "retention.property-reference")
+                .GetGuid());
+        Assert.Equal(
+            ExecutionId,
+            Field(first.Records[2], "retention.run-retry-request")
+                .GetProperty("runId")
                 .GetGuid());
         Assert.Equal(
             [
@@ -259,7 +266,7 @@ public sealed class RetentionTenantTerminationContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("retention.termination.destroyed", result.ResultCode);
-        Assert.Equal(4, result.AffectedCount);
+        Assert.Equal(7, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(2, result.ResultingProofRevision);
         Assert.Empty(await context.TenantDestroyOperations.ToListAsync());
@@ -311,6 +318,37 @@ public sealed class RetentionTenantTerminationContributorTests
     }
 
     [Fact]
+    public async Task Destroy_waits_for_an_active_outbox_lease()
+    {
+        MutableFenceReader fences = new();
+        await using RetentionDbContext context = CreateContext(fences);
+        OutboxMessage message = CreateOutboxMessage(Guid.NewGuid());
+        message.MarkClaimed("retention-worker", Now, TimeSpan.FromMinutes(2));
+        context.OutboxMessages.Add(message);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        fences.Current = FrozenFence();
+        RetentionTenantTerminationContributor contributor = new(
+            context,
+            new TestScopeContext(),
+            new TestClock(),
+            fences);
+
+        TenantTerminationContributionResult result =
+            await contributor.ExecuteAsync(
+                DestroyRequest(),
+                CancellationToken.None);
+
+        Assert.Equal(
+            TenantTerminationContributionStatus.RetryRequired,
+            result.Status);
+        Assert.Equal(
+            "retention.termination.destroy-outbox-busy",
+            result.ResultCode);
+        Assert.Single(await context.OutboxMessages.ToListAsync());
+    }
+
+    [Fact]
     public void Destroy_progress_rejects_a_batch_above_the_persisted_bound()
     {
         RetentionTenantDestroyOperation operation = Assert.IsType<
@@ -324,7 +362,7 @@ public sealed class RetentionTenantTerminationContributorTests
                 Now));
 
         Assert.False(operation.RecordBatch(
-            RetentionTenantDestroyStage.InboxMessages,
+            RetentionTenantDestroyStage.OutboxMessages,
             RetentionTenantDestroyOperation.MaximumBatchSize + 1,
             Digest,
             stageCompleted: false,
@@ -333,7 +371,7 @@ public sealed class RetentionTenantTerminationContributorTests
         Assert.Equal(0, operation.CompletedBatchCount);
 
         Assert.True(operation.RecordBatch(
-            RetentionTenantDestroyStage.InboxMessages,
+            RetentionTenantDestroyStage.OutboxMessages,
             RetentionTenantDestroyOperation.MaximumBatchSize,
             Digest,
             stageCompleted: false,
@@ -371,8 +409,35 @@ public sealed class RetentionTenantTerminationContributorTests
             holdReviewDueAtUtc: null).IsSuccess);
         schedule.RecordCompleted(execution);
 
+        RetentionRunRetryRequest retry =
+            RetentionRunRetryRequest.Create(
+                Guid.Parse("61000000-0000-0000-0000-000000000001"),
+                Guid.Parse("62000000-0000-0000-0000-000000000001"),
+                TenantId,
+                ExecutionId,
+                "ingestion",
+                "raw-source-evidence",
+                RetentionExecutionTargetKind.Property,
+                PropertyId,
+                executionPolicyVersion: 3,
+                evidenceVersion: schedule.Version,
+                FrozenAtUtc.AddMinutes(-10),
+                scheduledAtUtc: null).Value;
+
         context.Executions.Add(execution);
         context.ScheduleStates.Add(schedule);
+        context.RunRetryRequests.Add(retry);
+        context.OutboxMessages.Add(CreateOutboxMessage(
+            Guid.Parse("63000000-0000-0000-0000-000000000001")));
+        context.InboxMessages.Add(InboxMessage.Create(
+            Guid.Parse("64000000-0000-0000-0000-000000000001"),
+            RetentionModuleMetadata.RunRetryRequestedHandlerName,
+            "bunkfy.retention.retention-run-retry-requested.v1",
+            RetentionRunRetryRequestedIntegrationEvent.EventType,
+            RetentionRunRetryRequestedIntegrationEvent.EventVersion,
+            TenantId,
+            FrozenAtUtc.AddMinutes(-10),
+            FrozenAtUtc.AddMinutes(-10)));
         context.TenantProjections.Add(new(
             TenantId,
             Guid.NewGuid(),
@@ -441,11 +506,23 @@ public sealed class RetentionTenantTerminationContributorTests
 
     private static async Task<bool> HasOwnerRecordsAsync(
         RetentionDbContext context) =>
+        await context.OutboxMessages.AnyAsync() ||
         await context.InboxMessages.AnyAsync() ||
+        await context.RunRetryRequests.AnyAsync() ||
         await context.ScheduleStates.AnyAsync() ||
         await context.Executions.AnyAsync() ||
         await context.PropertyProjections.AnyAsync() ||
         await context.TenantProjections.AnyAsync();
+
+    private static OutboxMessage CreateOutboxMessage(Guid id) => new(
+        id,
+        "bunkfy.retention.retention-run-retry-requested.v1",
+        RetentionRunRetryRequestedIntegrationEvent.EventType,
+        RetentionRunRetryRequestedIntegrationEvent.EventVersion,
+        TenantId,
+        FrozenAtUtc.AddMinutes(-10),
+        "{}",
+        FrozenAtUtc.AddMinutes(-10));
 
     private static RetentionDbContext CreateContext(
         IWorkspaceTerminationFenceReader fences)

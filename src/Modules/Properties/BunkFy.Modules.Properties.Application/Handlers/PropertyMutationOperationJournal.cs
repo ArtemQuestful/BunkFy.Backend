@@ -32,6 +32,32 @@ internal sealed class PropertyMutationOperationJournal(
             cancellationToken);
     }
 
+    public Task<PropertyMutationReplayDecision<PropertyMutationReceiptDto>>
+        InspectPropertyAsync(
+        Property property,
+        Guid operationId,
+        PropertyMutationKind kind,
+        long expectedVersion,
+        string fingerprint,
+        string? compatibleFingerprint,
+        string? secondCompatibleFingerprint,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+        return this.InspectAsync(
+            property.Id,
+            PropertyMutationResourceKind.Property,
+            property.Id,
+            operationId,
+            kind,
+            expectedVersion,
+            fingerprint,
+            compatibleFingerprint,
+            secondCompatibleFingerprint,
+            static operation => operation.ToPropertyReceipt(),
+            cancellationToken);
+    }
+
     public Task<PropertyMutationReplayDecision<RoomMutationReceiptDto>>
         InspectRoomAsync(
         Guid propertyId,
@@ -90,6 +116,29 @@ internal sealed class PropertyMutationOperationJournal(
             static operation => operation.ToBedBatchReceipt(),
             cancellationToken);
 
+    private Task<PropertyMutationReplayDecision<TReceipt>> InspectAsync<TReceipt>(
+        Guid propertyId,
+        PropertyMutationResourceKind resourceKind,
+        Guid resourceId,
+        Guid operationId,
+        PropertyMutationKind kind,
+        long expectedVersion,
+        string fingerprint,
+        Func<PropertyMutationOperationRecord, TReceipt> receiptFactory,
+        CancellationToken cancellationToken)
+        where TReceipt : class => this.InspectAsync(
+            propertyId,
+            resourceKind,
+            resourceId,
+            operationId,
+            kind,
+            expectedVersion,
+            fingerprint,
+            compatibleFingerprint: null,
+            secondCompatibleFingerprint: null,
+            receiptFactory,
+            cancellationToken);
+
     private async Task<PropertyMutationReplayDecision<TReceipt>> InspectAsync<TReceipt>(
         Guid propertyId,
         PropertyMutationResourceKind resourceKind,
@@ -98,6 +147,8 @@ internal sealed class PropertyMutationOperationJournal(
         PropertyMutationKind kind,
         long expectedVersion,
         string fingerprint,
+        string? compatibleFingerprint,
+        string? secondCompatibleFingerprint,
         Func<PropertyMutationOperationRecord, TReceipt> receiptFactory,
         CancellationToken cancellationToken)
         where TReceipt : class
@@ -113,13 +164,30 @@ internal sealed class PropertyMutationOperationJournal(
             return PropertyMutationReplayDecision<TReceipt>.Missing;
         }
 
-        return existing.Matches(
-            kind,
-            propertyId,
-            resourceKind,
-            resourceId,
-            expectedVersion,
-            fingerprint)
+        bool matches = existing.Matches(
+                kind,
+                propertyId,
+                resourceKind,
+                resourceId,
+                expectedVersion,
+                fingerprint) ||
+            (compatibleFingerprint is not null &&
+             existing.Matches(
+                 kind,
+                 propertyId,
+                 resourceKind,
+                 resourceId,
+                 expectedVersion,
+                 compatibleFingerprint)) ||
+            (secondCompatibleFingerprint is not null &&
+             existing.Matches(
+                 kind,
+                 propertyId,
+                 resourceKind,
+                 resourceId,
+                 expectedVersion,
+                 secondCompatibleFingerprint));
+        return matches
             ? PropertyMutationReplayDecision<TReceipt>.Exact(
                 receiptFactory(existing))
             : PropertyMutationReplayDecision<TReceipt>.Conflict;

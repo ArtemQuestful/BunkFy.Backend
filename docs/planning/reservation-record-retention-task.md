@@ -1,6 +1,6 @@
 # Reservation Record Retention Task
 
-Status: published; implementation and exact-candidate gates complete
+Status: complete; hosted execution proof remains a release gate
 
 ## Outcome
 
@@ -91,7 +91,7 @@ guest links.
 
 It writes:
 
-- an append-only retention execution and fair-scan checkpoint;
+- a durable, versioned retention execution and fair-scan checkpoint;
 - an append-only retention anonymisation receipt containing only owner-local
   coordinates, selected/resulting versions, terminal trigger, deadline,
   policy digest, reduction counts, event id, actor, and completion time;
@@ -104,13 +104,78 @@ automatic retention decision cannot be restored through a rights-case replay.
 The retention receipt raises the existing reservation-anonymised event so
 owner projections and downstream module contracts remain coherent.
 
+### Attempt fencing and failed-attempt recovery
+
+Task Runtime and Retention use two deliberately different counters. Task
+Runtime `Attempt` remains the per-run retry-budget counter and restarts when an
+operator invokes `RetryAsync`. The persisted, monotonic `LeaseGeneration`
+survives that operation and is the value Retention stores and forwards through
+its execution and owner-contract field named `Attempt`. Reservations therefore
+fences owner work to a lease generation, not to the resettable Task Runtime
+budget counter.
+
+If lease reclaim reaches a central Retention execution that is already
+`Completed` or `Blocked`, Retention replays that terminal aggregate without
+redispatching Reservations. If Reservations committed terminal owner evidence
+before the worker committed central completion, a newer lease generation opens
+a forward-only central recovery window and redispatches only to obtain the
+owner's exact replay. The Reservations execution and receipt remain unchanged;
+when their completion predates the new central start, only the central result's
+completion time is normalized to that new start before central persistence.
+This preserves immutable owner proof while satisfying the new central window.
+
+The Retention request attempt is carried through every owner mutation and the
+owner completion command. A mutation is admitted only when the matching
+Reservations execution is `Running` for the same tenant, data class,
+execution-policy version, and exact attempt. Completion is likewise fenced to
+the active attempt. A late worker from an earlier attempt can therefore neither
+anonymise another record nor terminalize or advance the cursor of a newer
+attempt.
+
+`Failed` is terminal evidence for the current attempt. Replaying that same
+attempt returns the persisted status, counts, outcome code, completion time,
+and hold timestamp exactly; correcting the underlying condition does not
+silently reopen it. Recovery requires a strictly higher lease generation,
+exposed to the owner as a new attempt, and its start cannot precede the prior
+failed completion. Starting that attempt retains the cumulative affected count,
+clears the current-attempt terminal result, and starts from the failed
+execution's original cursor.
+Already-applied records are recognized through their retention receipt and
+tombstone, so the required rescan does not duplicate mutation or proof.
+
+A newly failed completion never advances the fair-scan checkpoint. The retry
+therefore normally observes the unchanged starting ordinal and leaves the
+checkpoint untouched until a non-failed completion succeeds. Compatibility
+recovery for a legacy row that advanced on failure is deliberately narrow: the
+execution must still be `Failed`; tenant, data class, and policy version must
+match; retry time must be at or after the persisted completion; the checkpoint
+must name that exact execution; and its update timestamp must equal that exact
+completion timestamp. Only then is it rewound to the execution's starting
+ordinal and disassociated from the failed execution. A checkpoint belonging to
+another execution, carrying a different timestamp, or otherwise newer or
+ambiguous fails closed.
+
+Owner mutation and completion timestamps are converted to UTC and truncated to
+PostgreSQL's microsecond precision before persistence and response creation.
+This includes non-UTC clocks and sub-microsecond .NET ticks, so the first result,
+the durable execution/receipt, and exact replay expose the same completion
+instant.
+
 ### Fairness and efficiency
 
 - Scan the indexed, non-anonymised terminal set by monotonic
   `ProjectionOrdinal`.
 - Persist one cursor per tenant, data class, and execution-policy version.
-- Read at most `ScanSize + 1` candidate heads and load bounded related facts
-  with set-based queries.
+- Validate `ScanSize` independently at configuration and repository boundaries
+  as 1 through 1,000. Read at most `ScanSize + 1` candidate heads for end
+  detection, but fully materialize at most `ScanSize` candidates and load their
+  related facts with set-based queries.
+- Materialize at most 64 governance acknowledgements per property from one
+  coherent, bounded policy statement. A 65th row visible to that statement
+  withholds the property's governance policy and produces a fail-closed
+  policy-unavailable result. A later policy change is observed by the
+  mutation-time reload or the next scan rather than mixed into the earlier
+  snapshot.
 - Mutate at most `MutationBatchSize` records per occurrence.
 - Reset the cursor only after reaching the end, so a large tenant cannot starve
   later records and newly terminal earlier ordinals are picked up on the next
@@ -138,6 +203,14 @@ owner projections and downstream module contracts remain coherent.
 
 ## Evidence
 
+- The current local hardening pass is not hosted or deployment evidence.
+  Focused retention tests pass 42/42, the complete Reservations and Retention
+  unit suites pass 365/365 and 50/50, and the strict touched-project builds
+  have zero warnings or errors. The exact PostgreSQL provider scenarios pass
+  2/2; the consolidated Reservations Docker admission passes 25/25; and both
+  saga facts pass twice consecutively. The post-rebase repository matrix,
+  hosted checks, and deployed proof remain separate release gates for this
+  amendment.
 - Focused Reservations retention tests pass 24/24, including domain,
   eligibility, contributor, mutation, policy-version cursor, append-only
   receipt, tenant boundary, and model constraints.

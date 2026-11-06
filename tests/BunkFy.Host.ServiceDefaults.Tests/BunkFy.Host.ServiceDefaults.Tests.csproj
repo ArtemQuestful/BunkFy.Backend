@@ -13,8 +13,15 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\BunkFy.Host.ServiceDefaults\BunkFy.Host.ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\src\Shared\BunkFy.DataGovernance\BunkFy.DataGovernance.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Api\Gma.Framework.Api\Gma.Framework.Api.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Api\Gma.Framework.Api.Production\Gma.Framework.Api.Production.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)FileManagement\Gma.Framework.FileManagement.Minio\Gma.Framework.FileManagement.Minio.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Observability\Gma.Framework.Observability\Gma.Framework.Observability.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.Security.AspNetCore\Gma.Framework.Security.AspNetCore.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\eng\country-policies\development\example-hostel-policy.v2.json"
+          Link="CountryPolicies\example-hostel-policy.v2.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

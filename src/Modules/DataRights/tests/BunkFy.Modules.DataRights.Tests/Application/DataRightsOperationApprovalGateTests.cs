@@ -39,6 +39,28 @@ public sealed class DataRightsOperationApprovalGateTests
     }
 
     [Fact]
+    public async Task Normal_case_return_after_cancellation_is_not_authorized()
+    {
+        Guid propertyId = Guid.NewGuid();
+        Guid recordId = Guid.NewGuid();
+        DataRightsCase dataRightsCase = CreateApprovedCase(propertyId, recordId);
+        using CancellationTokenSource source = new();
+        RecordingSecuritySignalRecorder securitySignals = new();
+        DataRightsOperationApprovalGate gate = new(
+            new StubCaseRepository(
+                dataRightsCase,
+                _ => source.Cancel()),
+            securitySignals);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            gate.EvaluateAsync(
+                CreateRequest(dataRightsCase, propertyId, recordId),
+                source.Token));
+
+        Assert.Empty(securitySignals.Definitions);
+    }
+
+    [Fact]
     public async Task Restriction_approval_authorizes_only_its_exact_directive()
     {
         Guid propertyId = Guid.NewGuid();
@@ -82,6 +104,55 @@ public sealed class DataRightsOperationApprovalGateTests
             definition => Assert.Equal(
                 "data-rights.operation-approval-denied",
                 definition.Code));
+    }
+
+    [Fact]
+    public async Task Restriction_release_approval_binds_the_exact_owner_target()
+    {
+        Guid propertyId = Guid.NewGuid();
+        Guid recordId = Guid.NewGuid();
+        DataRightsCase dataRightsCase = CreateApprovedCase(
+            propertyId,
+            recordId,
+            DataRightsCaseOperation.Restriction,
+            DataRightsRestrictionAction.Release);
+        DataRightsOperationApprovalGate gate = new(
+            new StubCaseRepository(dataRightsCase),
+            new RecordingSecuritySignalRecorder());
+        DataRightsOperationApprovalRequest request = CreateRequest(
+            dataRightsCase,
+            propertyId,
+            recordId) with
+        {
+            Operation = DataRightsOperation.Restriction,
+            RestrictionDirective = DataRightsRestrictionDirective.Release,
+            RestrictionTargetOwnerOperationId =
+                dataRightsCase.RestrictionReleaseTarget!.OwnerOperationId,
+            RestrictionTargetOwnerOperationVersion =
+                dataRightsCase.RestrictionReleaseTarget.OwnerOperationVersion
+        };
+
+        DataRightsOperationApprovalResult approved = await gate.EvaluateAsync(
+            request,
+            CancellationToken.None);
+        DataRightsOperationApprovalResult substituted = await gate.EvaluateAsync(
+            request with { RestrictionTargetOwnerOperationId = Guid.NewGuid() },
+            CancellationToken.None);
+        DataRightsOperationApprovalResult unbound = await gate.EvaluateAsync(
+            request with
+            {
+                RestrictionTargetOwnerOperationId = null,
+                RestrictionTargetOwnerOperationVersion = null
+            },
+            CancellationToken.None);
+
+        Assert.True(approved.IsApproved);
+        Assert.Equal(
+            DataRightsOperationApprovalDenial.RestrictionTargetMismatch,
+            substituted.Denial);
+        Assert.Equal(
+            DataRightsOperationApprovalDenial.RestrictionTargetMismatch,
+            unbound.Denial);
     }
 
     [Theory]
@@ -257,7 +328,7 @@ public sealed class DataRightsOperationApprovalGateTests
         Assert.True(dataRightsCase.RecordDecision(
             DataRightsCaseDecision.Approved,
             DataRightsCaseDecisionReason.RequestValidated,
-            5,
+            dataRightsCase.Version,
             "user:operator-b",
             Now.AddMinutes(5),
             evidence).IsSuccess);
@@ -283,17 +354,36 @@ public sealed class DataRightsOperationApprovalGateTests
             request,
             "user:operator-a",
             Now).Value;
-        Assert.True(dataRightsCase.BeginDiscovery(1, "user:operator-a", Now.AddMinutes(1)).IsSuccess);
+        Assert.True(dataRightsCase.BeginDiscovery(
+            dataRightsCase.Version,
+            "user:operator-a",
+            Now.AddMinutes(1)).IsSuccess);
         Assert.True(dataRightsCase.SelectSubject(
             "guests",
             "guest-profile",
             recordId,
             3,
-            2,
+            dataRightsCase.Version,
             "user:operator-a",
             Now.AddMinutes(2)).IsSuccess);
-        Assert.True(dataRightsCase.RequireReview(3, "user:operator-a", Now.AddMinutes(3)).IsSuccess);
-        Assert.True(dataRightsCase.BeginDecision(4, "user:operator-b", Now.AddMinutes(4)).IsSuccess);
+        if (restrictionAction == DataRightsRestrictionAction.Release)
+        {
+            Assert.True(dataRightsCase.SelectRestrictionReleaseTarget(
+                "guests",
+                Guid.NewGuid(),
+                ownerOperationVersion: 4,
+                dataRightsCase.Version,
+                "user:operator-a",
+                Now.AddMinutes(2).AddSeconds(30)).IsSuccess);
+        }
+        Assert.True(dataRightsCase.RequireReview(
+            dataRightsCase.Version,
+            "user:operator-a",
+            Now.AddMinutes(3)).IsSuccess);
+        Assert.True(dataRightsCase.BeginDecision(
+            dataRightsCase.Version,
+            "user:operator-b",
+            Now.AddMinutes(4)).IsSuccess);
         return dataRightsCase;
     }
 
@@ -311,7 +401,9 @@ public sealed class DataRightsOperationApprovalGateTests
             recordId,
             3);
 
-    private sealed class StubCaseRepository(DataRightsCase dataRightsCase)
+    private sealed class StubCaseRepository(
+        DataRightsCase dataRightsCase,
+        Action<CancellationToken>? afterGet = null)
         : IDataRightsCaseRepository
     {
         public Task AddAsync(
@@ -321,12 +413,17 @@ public sealed class DataRightsOperationApprovalGateTests
         public Task<DataRightsCase?> GetAsync(
             DataRightsCaseScope scope,
             Guid caseId,
-            CancellationToken cancellationToken) => Task.FromResult(
-            dataRightsCase.PropertyId == scope.PropertyId &&
-            dataRightsCase.Kind == (DataRightsCaseKind)scope.CaseType &&
-            dataRightsCase.Id == caseId
-                ? dataRightsCase
-                : null);
+            CancellationToken cancellationToken)
+        {
+            DataRightsCase? result =
+                dataRightsCase.PropertyId == scope.PropertyId &&
+                dataRightsCase.Kind == (DataRightsCaseKind)scope.CaseType &&
+                dataRightsCase.Id == caseId
+                    ? dataRightsCase
+                    : null;
+            afterGet?.Invoke(cancellationToken);
+            return Task.FromResult(result);
+        }
 
         public Task<DataRightsCaseListResponse> ListAsync(
             DataRightsCaseScope scope,

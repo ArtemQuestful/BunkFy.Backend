@@ -12,6 +12,7 @@ using BunkFy.Host.Api;
 using BunkFy.Host.ServiceDefaults;
 using BunkFy.Host.ServiceDefaults.Production;
 using BunkFy.Host.ServiceDefaults.Security;
+using BunkFy.Host.ServiceDefaults.Security.Stations;
 using BunkFy.Modules.DataRights.Api;
 using BunkFy.Modules.DataRights.Persistence;
 using BunkFy.Modules.Guests.Api;
@@ -26,8 +27,12 @@ using BunkFy.Modules.Properties.Persistence;
 using BunkFy.Modules.Reservations.Api;
 using BunkFy.Modules.Reservations.Persistence;
 using BunkFy.Modules.Retention.Api;
+using BunkFy.Modules.Retention.Persistence;
 using BunkFy.Modules.Staff.Api;
+using BunkFy.Modules.Staff.Application.Ports;
 using BunkFy.Modules.Staff.Persistence;
+using BunkFy.Modules.Stations.Api;
+using BunkFy.Modules.Stations.Application;
 using BunkFy.Modules.Workspaces.Api;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Persistence;
@@ -64,6 +69,7 @@ using Gma.Modules.AccessControl.Application;
 using Gma.Modules.AccessControl.Persistence;
 using Gma.Modules.Auth.Api;
 using Gma.Modules.Auth.Authenticators.Totp;
+using Gma.Modules.Auth.Application.Ports;
 using Gma.Modules.Auth.Contracts;
 using Gma.Modules.Auth.Persistence;
 using Gma.Modules.Auth.Providers.OpenIdConnect;
@@ -83,6 +89,19 @@ AuthenticationAssuranceRequirement privilegedOperationAssurance =
     BunkFyAuthenticationAssurance.CreatePrivilegedOperationRequirement(builder.Configuration);
 AuthenticationAssuranceRequirement destructiveOperationAssurance =
     BunkFyAuthenticationAssurance.CreateDestructiveOperationRequirement(builder.Configuration);
+bool stationHttpEnabled = builder.Configuration.GetValue<bool>("Stations:Http:Enabled");
+if (stationHttpEnabled && builder.Configuration.GetValue<bool>("Station:Enabled"))
+{
+    throw new InvalidOperationException("The legacy station experiment cannot be enabled with Stations HTTP.");
+}
+bool workspaceStaffOnboardingRecoveryPostEnabled = builder.Configuration
+    .GetValue<bool>("BunkFy:WorkspaceStaffOnboardingRecovery:PostEnabled");
+if (builder.Environment.IsProduction() &&
+    workspaceStaffOnboardingRecoveryPostEnabled)
+{
+    throw new InvalidOperationException(
+        "Workspace staff onboarding recovery POST cannot be enabled in Production while CP3 privacy blockers remain open.");
+}
 
 builder.Host.UseConfiguredSerilog();
 builder.AddBunkFyProductionDeployment(BunkFyDeploymentSurface.PublicApi);
@@ -110,6 +129,7 @@ if (builder.Configuration.GetValue<bool>("Ingestion:AdapterIngress:Enabled") ||
 builder.AddCachingCqrs();
 builder.AddGmaInfrastructure();
 builder.AddGmaProductionDataProtection();
+builder.Services.AddSingleton<WorkspaceJoinBrowserContinuation>();
 builder.AddBunkFyCountryPolicies();
 builder.AddTenantSerilogRequestLogging();
 builder.AddTenantCaching();
@@ -131,11 +151,16 @@ builder.Services.Configure<AccessControlApiSecurityOptions>(
     options => options.ProfileManagementAssurance = privilegedOperationAssurance);
 builder.Services.Configure<OrganizationsApiSecurityOptions>(
     options => options.GovernanceOperationsAssurance = privilegedOperationAssurance);
-builder.Services.Configure<WorkspacesApiSecurityOptions>(
-    options => options.StaffOnboardingManagementAssurance =
-        privilegedOperationAssurance);
+builder.Services.Configure<WorkspacesApiSecurityOptions>(options =>
+{
+    options.StaffOnboardingManagementAssurance =
+        privilegedOperationAssurance;
+    options.StaffOnboardingRecoveryPostEnabled =
+        workspaceStaffOnboardingRecoveryPostEnabled;
+});
 builder.Services.Configure<PropertiesApiSecurityOptions>(options =>
 {
+    options.TimeZoneManagementAssurance = privilegedOperationAssurance;
     options.ProcessingActivationAssurance = privilegedOperationAssurance;
     options.PropertyRetirementAssurance = privilegedOperationAssurance;
 });
@@ -159,6 +184,8 @@ builder.Services.Configure<StaffApiSecurityOptions>(
     });
 builder.Services.Configure<ReservationsApiSecurityOptions>(options =>
     options.CorrectionExecutionAssurance = privilegedOperationAssurance);
+builder.Services.Configure<RetentionApiSecurityOptions>(options =>
+    options.RetryAssurance = privilegedOperationAssurance);
 builder.Services.Configure<GuestsApiSecurityOptions>(
     options =>
     {
@@ -205,13 +232,26 @@ builder.AddModule<InventoryModule>();
 builder.AddModule<ReservationsModule>();
 builder.AddModule<GuestsModule>();
 builder.AddModule<StaffModule>();
+builder.Services.Replace(ServiceDescriptor.Scoped<IRememberedBrowserAccountProfileReader, StaffRememberedBrowserAccountProfileReader>());
 builder.AddModule<WorkspacesModule>();
 builder.AddModule<IngestionModule>();
 builder.Services.AddBunkFyOperationsIngestionNotifications();
 builder.AddModule<DataRightsModule>();
 builder.AddModule<RetentionModule>();
+builder.AddModule<StationsModule>();
+if (stationHttpEnabled)
+{
+    StationHttpHostAdmission.Validate(builder.Configuration);
+    builder.Services.AddStationsManagement(destructiveOperationAssurance, authScopeId);
+    builder.Services.AddSingleton<IStationPepperProvider, ConfiguredStationPepperProvider>();
+}
 // module-scaffold:public-api-modules
 
+// Preserve the earlier disabled experiment without composing it with the opaque-cookie runtime.
+if (!stationHttpEnabled)
+{
+    builder.AddBunkFyStationK0();
+}
 builder.AddServiceDefaults();
 builder.AddGmaProductionHttp();
 builder.Services.AddGmaEntityFrameworkReadinessCheck<AccessControlDbContext>("access-control-database");
@@ -226,7 +266,16 @@ builder.Services.AddGmaEntityFrameworkReadinessCheck<StaffDbContext>("staff-data
 builder.Services.AddGmaEntityFrameworkReadinessCheck<WorkspacesDbContext>("workspaces-database");
 builder.Services.AddGmaEntityFrameworkReadinessCheck<IngestionDbContext>("ingestion-database");
 builder.Services.AddGmaEntityFrameworkReadinessCheck<DataRightsDbContext>("data-rights-database");
+builder.Services.AddGmaEntityFrameworkReadinessCheck<RetentionDbContext>("retention-database");
 builder.AddGmaOpenApi();
+builder.Services.AddSwaggerGen(options => options.SchemaFilter<RetirementContextSchemaFilter>());
+builder.Services.AddSwaggerGen(options => options.SchemaFilter<StationPinSchemaFilter>());
+builder.Services.AddSwaggerGen(options => options.SchemaFilter<RememberedBrowserSchemaFilter>());
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SchemaFilter<WorkspaceJoinBrowserOpenApiFilter>();
+    options.OperationFilter<WorkspaceJoinBrowserOpenApiFilter>();
+});
 builder.ValidateModuleComposition();
 
 WebApplication app = builder.Build();
@@ -234,6 +283,8 @@ WebApplication app = builder.Build();
 app.UseGmaOpenApi();
 app.UseGmaProductionHttp();
 app.UseGmaSerilogRequestLogging();
+app.UseStationHttpSecurity();
+app.UseAuthRememberedBrowserSecurity();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -246,13 +297,19 @@ app.MapGet("/api/smoke", (IOptions<BunkFyDeploymentOptions> deployment) => Resul
     ReleaseId = string.IsNullOrWhiteSpace(deployment.Value.ReleaseId)
         ? "local-unversioned"
         : deployment.Value.ReleaseId,
+    deployment.Value.AdmissionEvidenceReference,
     TimestampUtc = DateTimeOffset.UtcNow
 }));
 app.MapBunkFyProductCapabilities();
 app.MapModules();
 app.MapBunkFyAccessPermissionEndpoints();
+app.MapWorkspaceJoinBrowserEndpoints();
 app.MapBunkFyReservationGuestRecordEndpoints();
 app.MapUserNotificationServerSentEvents();
 app.MapUserNotificationSignalR();
+if (!stationHttpEnabled)
+{
+    app.ValidateBunkFyStationK0("public");
+}
 
 app.Run();

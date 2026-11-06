@@ -51,7 +51,8 @@ public sealed class GuestAnonymisationRestoreReceipt : ScopedEntity<Guid>
             ownerReceiptId == Guid.Empty ||
             !IsSha256(receiptSha256) ||
             resultingGuestVersion <= 0 ||
-            tombstoneRevision <= 0 ||
+            tombstoneRevision is <= 0 or >
+                GuestAnonymisationTombstone.MaximumRevision ||
             timestamp == default)
         {
             return Result.Failure<GuestAnonymisationRestoreReceipt>(

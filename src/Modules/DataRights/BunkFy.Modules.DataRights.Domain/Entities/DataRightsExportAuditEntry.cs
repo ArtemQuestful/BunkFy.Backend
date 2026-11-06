@@ -77,6 +77,7 @@ public sealed class DataRightsExportAuditEntry : ScopedEntity<Guid>
             DataRightsCaseKind.GuestRights => propertyId is not null &&
                 propertyId != Guid.Empty,
             DataRightsCaseKind.StaffRights => propertyId is null,
+            DataRightsCaseKind.TenantTermination => propertyId is null,
             _ => false
         };
 }

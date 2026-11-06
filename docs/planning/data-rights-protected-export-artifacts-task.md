@@ -1,6 +1,6 @@
 # Data Rights Protected Export Artifacts Task
 
-Status: complete; local and exact-candidate verification passed
+Status: complete; repository and exact-release Preview verification passed
 
 ## Goal
 
@@ -372,6 +372,20 @@ expensive gates.
 - Replacement backend commit `0165302f34258feb04a00fab36255211493276ca`
   passed exact-candidate validation in GitHub Actions run `30254840283` and
   the corrected Docker gate in run `30254840230`.
+- Root exact-release verification later completed the missing deployed
+  assurance path against Preview release
+  `preview-workspace-access-estate-651107f`: one controller-initiated Guest
+  Access Export passed all 18 checks through API, Worker, PostgreSQL, NATS, and
+  MinIO. It proved stable request replay, rejection of a second live artifact,
+  MFA-gated download, nonmember denial, strict no-store/attachment response,
+  stable downloaded bytes, Guest archival, bounded 24-hour expiry, and release
+  continuity. The minimized child SHA-256 is
+  `5e03d355f26436960daa2fa4ab4f1a7bb4e3b815fd6f87f99cf3145c7e417f72`.
+- The enclosing rehearsal disabled its temporary TOTP factor, revoked all
+  sessions, removed joined members, retired properties, archived the workspace,
+  and purged captured mail. This is loopback Preview evidence only; hosted
+  trusted-HTTPS execution and independent object-store/key custody remain
+  production-admission requirements.
 
 ## Deferred
 

@@ -13,13 +13,16 @@ using BunkFy.Modules.DataRights.Domain.ValueObjects;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Time;
+using Microsoft.Extensions.Logging;
+using RestrictionReleaseTarget = BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget;
 using SelectedSubject = BunkFy.Modules.DataRights.Domain.Entities.DataRightsSubjectCoordinate;
 
 internal sealed class ExecuteDataRightsRestrictionCommandHandler(
     DataRightsCaseMutationCoordinator mutations,
     IDataRightsOperationApprovalGate approvalGate,
     IEnumerable<IDataRightsRestrictionContributor> contributors,
-    ISystemClock clock)
+    ISystemClock clock,
+    ILogger<ExecuteDataRightsRestrictionCommandHandler> logger)
     : ICommandHandler<
         ExecuteDataRightsRestrictionCommand,
         DataRightsRestrictionExecutionDto>
@@ -73,7 +76,8 @@ internal sealed class ExecuteDataRightsRestrictionCommandHandler(
                 approvalRevision,
                 dataRightsCase.RestrictionAction,
                 subject,
-                actor)
+                actor,
+                dataRightsCase.RestrictionReleaseTarget)
                 ? Result.Success(new DataRightsRestrictionExecutionDto(
                     dataRightsCase.ToDto(),
                     existing.ToDto()))
@@ -96,67 +100,93 @@ internal sealed class ExecuteDataRightsRestrictionCommandHandler(
                     subject.RecordId,
                     subject.RecordVersion,
                     directive,
-                    CaseType: command.Scope.CaseType),
+                    CaseType: command.Scope.CaseType,
+                    RestrictionTargetOwnerOperationId:
+                        dataRightsCase.RestrictionReleaseTarget?.OwnerOperationId,
+                    RestrictionTargetOwnerOperationVersion:
+                        dataRightsCase.RestrictionReleaseTarget?.OwnerOperationVersion),
                 cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!approval.IsApproved)
         {
             return Result.Failure<DataRightsRestrictionExecutionDto>(
                 DataRightsApplicationErrors.RestrictionExecutionDenied);
         }
 
-        IDataRightsRestrictionContributor[] matchingContributors =
-            [.. contributors
-                .Where(candidate =>
-                    string.Equals(
-                        candidate.OwnerKey,
-                        subject.OwnerKey,
-                        StringComparison.Ordinal) &&
-                    candidate.ContractVersion ==
-                        DataRightsRestrictionContract.CurrentVersion)
-                .Take(2)];
-        if (matchingContributors.Length != 1)
+        Result<IDataRightsRestrictionContributor> resolved =
+            DataRightsRestrictionContributorSet.Resolve(
+                contributors,
+                subject.OwnerKey);
+        if (resolved.IsFailure)
         {
             return Result.Failure<DataRightsRestrictionExecutionDto>(
-                DataRightsApplicationErrors.RestrictionOwnerUnavailable);
+                resolved.Error);
         }
-        IDataRightsRestrictionContributor contributor = matchingContributors[0];
+        IDataRightsRestrictionContributor contributor = resolved.Value;
 
         DateTimeOffset nowUtc = clock.UtcNow;
-        DataRightsRestrictionContributionResult ownerResult;
+        DateTimeOffset deadlineUtc = nowUtc.Add(OwnerDeadline);
+        DataRightsRestrictionContributionRequest ownerRequest = new(
+            DataRightsRestrictionContract.CurrentVersion,
+            dataRightsCase.ScopeId,
+            command.IdempotencyKey,
+            command.Scope.PropertyId,
+            command.CaseId,
+            approvalRevision,
+            new BunkFy.Modules.DataRights.Contracts.DataRightsSubjectCoordinate(
+                subject.OwnerKey,
+                subject.RecordType,
+                subject.RecordId,
+                subject.RecordVersion),
+            directive,
+            actor,
+            deadlineUtc,
+            command.Scope.CaseType,
+            dataRightsCase.RestrictionReleaseTarget?.OwnerOperationId,
+            dataRightsCase.RestrictionReleaseTarget?.OwnerOperationVersion);
+        DataRightsDeadlineExecution<DataRightsRestrictionContributionResult>
+            execution;
         try
         {
-            ownerResult = await contributor.ExecuteAsync(
-                new DataRightsRestrictionContributionRequest(
-                    DataRightsRestrictionContract.CurrentVersion,
-                    dataRightsCase.ScopeId,
-                    command.IdempotencyKey,
-                    command.Scope.PropertyId,
-                    command.CaseId,
-                    approvalRevision,
-                    new BunkFy.Modules.DataRights.Contracts.DataRightsSubjectCoordinate(
-                        subject.OwnerKey,
-                        subject.RecordType,
-                        subject.RecordId,
-                        subject.RecordVersion),
-                    directive,
-                    actor,
-                    nowUtc.Add(OwnerDeadline),
-                    command.Scope.CaseType),
+            execution = await DataRightsDeadlineExecutor.ExecuteAsync(
+                clock,
+                deadlineUtc,
+                "DataRights.RestrictionOwnerDeadlineExceeded",
+                token => contributor.ExecuteAsync(ownerRequest, token),
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (InvalidOperationException)
+        catch (TimeoutException)
         {
+            logger.LogWarning(
+                "Data Rights restriction owner {OwnerKey} exceeded its deadline.",
+                subject.OwnerKey);
             return Result.Failure<DataRightsRestrictionExecutionDto>(
-                DataRightsApplicationErrors.RestrictionOwnerUnavailable);
+                DataRightsApplicationErrors.RestrictionOwnerRetryRequired);
         }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                "Data Rights restriction owner {OwnerKey} requires retry because {ExceptionType} was raised.",
+                subject.OwnerKey,
+                exception.GetType().Name);
+            return Result.Failure<DataRightsRestrictionExecutionDto>(
+                DataRightsApplicationErrors.RestrictionOwnerRetryRequired);
+        }
+        DataRightsRestrictionContributionResult ownerResult = execution.Value;
 
-        if (!TryValidate(ownerResult, directive, out DataRightsRestrictionOwnerProof ownerProof))
+        Result<DataRightsRestrictionOwnerProof> validated = Validate(
+            ownerResult,
+            directive,
+            deadlineUtc,
+            execution.ObservedAtUtc,
+            dataRightsCase.RestrictionReleaseTarget);
+        if (validated.IsFailure)
         {
             return Result.Failure<DataRightsRestrictionExecutionDto>(
-                ownerResult.Status == DataRightsRestrictionContributionStatus.Blocked
-                    ? DataRightsApplicationErrors.RestrictionExecutionBlocked
-                    : DataRightsApplicationErrors.RestrictionOwnerProofInvalid);
+                validated.Error);
         }
+        DataRightsRestrictionOwnerProof ownerProof = validated.Value;
 
         Result<DataRightsRestrictionExecutionProof> proof =
             DataRightsRestrictionExecutionProof.Create(
@@ -172,7 +202,8 @@ internal sealed class ExecuteDataRightsRestrictionCommandHandler(
                 ownerProof.EffectiveRestricted,
                 ownerProof.ReceiptSha256,
                 actor,
-                ownerProof.CompletedAtUtc);
+                ownerProof.CompletedAtUtc,
+                dataRightsCase.RestrictionReleaseTarget);
         if (proof.IsFailure)
         {
             return Result.Failure<DataRightsRestrictionExecutionDto>(proof.Error);
@@ -189,16 +220,50 @@ internal sealed class ExecuteDataRightsRestrictionCommandHandler(
             : Result.Failure<DataRightsRestrictionExecutionDto>(completed.Error);
     }
 
-    private static bool TryValidate(
+    private static Result<DataRightsRestrictionOwnerProof> Validate(
         DataRightsRestrictionContributionResult? result,
         DataRightsRestrictionDirective directive,
-        out DataRightsRestrictionOwnerProof proof)
+        DateTimeOffset deadlineUtc,
+        DateTimeOffset observedAtUtc,
+        RestrictionReleaseTarget? releaseTarget)
     {
-        proof = result?.OwnerProof!;
-        bool expectedState = directive == DataRightsRestrictionDirective.Apply;
-        return result is not null &&
-            result.ContractVersion == DataRightsRestrictionContract.CurrentVersion &&
-            result.Status == DataRightsRestrictionContributionStatus.Completed &&
+        if (result is null ||
+            result.ContractVersion != DataRightsRestrictionContract.CurrentVersion)
+        {
+            return InvalidOwnerResult();
+        }
+
+        if (result.Status == DataRightsRestrictionContributionStatus.Blocked)
+        {
+            return result.OwnerProof is null && IsStableOutcomeCode(result.OutcomeCode)
+                ? Result.Failure<DataRightsRestrictionOwnerProof>(
+                    DataRightsApplicationErrors.RestrictionExecutionBlocked)
+                : InvalidOwnerResult();
+        }
+
+        if (result.Status == DataRightsRestrictionContributionStatus.Failed)
+        {
+            return result.OwnerProof is null && IsStableOutcomeCode(result.OutcomeCode)
+                ? Result.Failure<DataRightsRestrictionOwnerProof>(
+                    DataRightsApplicationErrors.RestrictionOwnerRetryRequired)
+                : InvalidOwnerResult();
+        }
+
+        DataRightsRestrictionOwnerProof? proof = result.OwnerProof;
+        bool effectiveStateValid = directive switch
+        {
+            DataRightsRestrictionDirective.Apply =>
+                releaseTarget is null && proof?.EffectiveRestricted == true,
+            DataRightsRestrictionDirective.Release when releaseTarget is null =>
+                proof?.EffectiveRestricted == false,
+            DataRightsRestrictionDirective.Release =>
+                proof is not null &&
+                proof.OwnerOperationId == releaseTarget.OwnerOperationId &&
+                proof.ResultingOwnerRevision ==
+                    releaseTarget.OwnerOperationVersion + 1,
+            _ => false
+        };
+        return result.Status == DataRightsRestrictionContributionStatus.Completed &&
             result.OutcomeCode is null &&
             proof is not null &&
             proof.ReceiptContractVersion > 0 &&
@@ -206,9 +271,24 @@ internal sealed class ExecuteDataRightsRestrictionCommandHandler(
             proof.OwnerOperationId != Guid.Empty &&
             proof.ResultingOwnerRevision > 0 &&
             proof.ResultingProjectionRevision > 0 &&
-            proof.EffectiveRestricted == expectedState &&
+            effectiveStateValid &&
+            proof.ReceiptSha256 is not null &&
             proof.ReceiptSha256.Length == DataRightsRestrictionContract.Sha256Length &&
             proof.ReceiptSha256.All(Uri.IsHexDigit) &&
-            proof.CompletedAtUtc != default;
+            proof.CompletedAtUtc != default &&
+            proof.CompletedAtUtc <= observedAtUtc &&
+            proof.CompletedAtUtc < deadlineUtc
+            ? Result.Success(proof)
+            : InvalidOwnerResult();
     }
+
+    private static bool IsStableOutcomeCode(string? value) =>
+        value is { Length: > 0 and <= DataRightsRestrictionContract.CodeMaxLength } &&
+        value.All(character =>
+            char.IsAsciiLetterOrDigit(character) ||
+            character is '.' or '-' or '_');
+
+    private static Result<DataRightsRestrictionOwnerProof> InvalidOwnerResult() =>
+        Result.Failure<DataRightsRestrictionOwnerProof>(
+            DataRightsApplicationErrors.RestrictionOwnerProofInvalid);
 }

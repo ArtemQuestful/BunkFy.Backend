@@ -211,6 +211,32 @@ public sealed class TenantTerminationExportFragmentAssemblerTests
     }
 
     [Fact]
+    public async Task Fragment_rejects_owner_result_at_exact_deadline()
+    {
+        StubContributor workspaces = new(
+            "workspaces",
+            WorkspacesCatalogSha,
+            [],
+            proofRevision: 11,
+            GeneratedAt.AddHours(1));
+        TenantTerminationExportFragmentAssembler assembler = new(
+            [workspaces],
+            [workspaces]);
+        await using MemoryStream destination = new();
+
+        DataRightsExportGenerationException exception =
+            await Assert.ThrowsAsync<DataRightsExportGenerationException>(
+                () => assembler.AssembleAsync(
+                    Request(
+                        OwnerWork(workspaces),
+                        [CatalogEntry(workspaces)]),
+                    destination,
+                    CancellationToken.None));
+
+        Assert.Equal("tenant-export-owner-result-invalid", exception.Code);
+    }
+
+    [Fact]
     public async Task Fragment_requires_exporter_for_every_frozen_owner()
     {
         StubContributor workspaces = new(

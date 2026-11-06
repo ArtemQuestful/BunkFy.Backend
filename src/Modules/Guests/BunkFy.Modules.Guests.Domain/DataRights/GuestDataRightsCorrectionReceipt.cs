@@ -9,8 +9,9 @@ using Gma.Framework.Results;
 
 public sealed class GuestDataRightsCorrectionReceipt : ScopedAggregateRoot<Guid>
 {
-    public const int CurrentContractVersion = 1;
-    public const int AllChangedFieldsMask = (1 << 8) - 1;
+    public const int CurrentContractVersion = 2;
+    public const int LegacyChangedFieldsMask = (1 << 8) - 1;
+    public const int AllChangedFieldsMask = (1 << 9) - 1;
 
     private GuestDataRightsCorrectionReceipt() { }
 
@@ -110,7 +111,8 @@ public sealed class GuestDataRightsCorrectionReceipt : ScopedAggregateRoot<Guid>
             guestId,
             selectedRecordVersion,
             currentRecordVersion,
-            changedFields));
+            changedFields,
+            receipt.ContractVersion));
         return Result.Success(receipt);
     }
 

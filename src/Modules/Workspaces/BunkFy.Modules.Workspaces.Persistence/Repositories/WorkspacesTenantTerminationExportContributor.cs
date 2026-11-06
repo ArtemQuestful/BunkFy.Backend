@@ -318,6 +318,30 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
             count = checked(count + 1);
         }
 
+
+        await foreach (
+            WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport receipt in
+            dbContext.StaffOnboardingRecoveryReceipts
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.Id)
+                .Select(WorkspacesDataRightsExportContributor
+                    .RecoveryReceiptProjection)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            await WriteAsync(
+                WorkspacesDataRightsExportContributor
+                    .StaffOnboardingRecoveryReceiptRecordType,
+                receipt.ReceiptId,
+                receipt.ContractVersion,
+                receipt,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
         await foreach (
             WorkspaceStaffIdentityAnchorSweepCheckpoint checkpoint in
             dbContext.StaffIdentityAnchorSweepCheckpoints
@@ -693,6 +717,44 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                     .StaffRetentionCorrelationReceiptRecordType,
                 receipt.Id,
                 receipt.ContractVersion,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        await foreach (
+            WorkspaceStaffOnboardingRetentionExecution execution in
+            dbContext.StaffOnboardingRetentionExecutions
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.Id)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            WorkspaceStaffOnboardingRetentionExecutionDataRightsExport record =
+                new(
+                    execution.ScopeId,
+                    execution.Id,
+                    new(
+                        execution.DataClassKey,
+                        execution.ExecutionPolicyVersion,
+                        execution.Attempt,
+                        execution.State,
+                        execution.StartedAtUtc,
+                        execution.DeadlineUtc,
+                        execution.CompletedAtUtc,
+                        execution.AffectedCount,
+                        execution.ScannedCount,
+                        execution.RemainingCount,
+                        execution.OutcomeCode,
+                        execution.Version));
+            await WriteAsync(
+                WorkspacesTenantTerminationMetadata
+                    .StaffOnboardingRetentionExecutionRecordType,
+                execution.Id,
+                execution.Version,
                 record,
                 sink,
                 cancellationToken).ConfigureAwait(false);

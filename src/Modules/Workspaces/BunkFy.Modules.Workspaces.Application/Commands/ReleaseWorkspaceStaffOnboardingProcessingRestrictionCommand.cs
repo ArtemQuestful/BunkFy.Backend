@@ -13,6 +13,7 @@ public sealed record
         long ExpectedOnboardingVersion,
         long ExpectedRestrictionVersion,
         long ExpectedProjectionRevision,
-        string ActorId)
+        string ActorId,
+        bool LegacyUnboundTarget = false)
     : ITransactionalCommand<
         WorkspaceStaffOnboardingProcessingRestrictionReceiptDto>;

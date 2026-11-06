@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <ItemGroup>
+    <ProjectReference Include="../Modules/Stations/BunkFy.Modules.Stations.Api/BunkFy.Modules.Stations.Api.csproj" />
+    <ProjectReference Include="../Modules/Stations/BunkFy.Modules.Stations.Persistence.PostgreSqlMigrations/BunkFy.Modules.Stations.Persistence.PostgreSqlMigrations.csproj" />
     <ProjectReference Include="..\Extensions\BunkFy.Extensions.ReservationGuestRecords\BunkFy.Extensions.ReservationGuestRecords.csproj" />
     <ProjectReference Include="..\Modules\Workspaces\BunkFy.Modules.Workspaces.Contracts\BunkFy.Modules.Workspaces.Contracts.csproj" />
     <ProjectReference Include="$(GmaModuleAccessControlRoot)Gma.Modules.AccessControl.Api\Gma.Modules.AccessControl.Api.csproj" />

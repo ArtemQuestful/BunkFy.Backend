@@ -3,6 +3,15 @@
 Status: complete
 Date: 2026-08-11
 
+## 2026-09-05 additive context-read amendment
+
+The historical completion below covers cancellation commands, not fresh-device
+process discovery. The [context-read task](inventory-retirement-context-read-task.md)
+adds exact-target active-first/latest retained attempt GETs and the shared
+in-place room/bed operator flow. Existing request/retry/cancel operation
+identities, expected versions, active partial uniqueness and by-ID history
+remain unchanged. Local/CI/preview/hosted evidence for this addition is pending.
+
 ## Goal
 
 Let authorized staff withdraw a room or bed retirement while it is still

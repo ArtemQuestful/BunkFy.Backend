@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
@@ -10,6 +11,7 @@ using BunkFy.Modules.Guests.Domain.Retention;
 using BunkFy.Modules.Guests.Persistence;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using BunkFy.Modules.Workspaces.Persistence;
+using BunkFy.TimeZones;
 using Gma.Framework.Messaging.Infrastructure;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
@@ -517,6 +519,18 @@ public sealed class GuestsTenantTerminationIntegrationTests
                 "user:owner",
                 Guid.NewGuid(),
                 ExportNowUtc.AddMinutes(-7)).Value;
+        GuestProcessingRestrictionProjection restrictionProjection =
+            GuestProcessingRestrictionProjection.Create(
+                tenantId,
+                PropertyId,
+                profile.Id,
+                GuestProcessingRestrictionContract.CurrentVersion,
+                ExportNowUtc.AddMinutes(-7)).Value;
+        Assert.True(restrictionProjection.Apply(
+            expectedRevision: 0,
+            GuestProcessingRestrictionContract.CurrentVersion,
+            ExportNowUtc.AddMinutes(-7)).IsSuccess);
+        context.ProcessingRestrictionProjections.Add(restrictionProjection);
         context.ProcessingRestrictions.Add(restriction);
         context.ProcessingRestrictionReceipts.Add(restrictionReceipt);
 
@@ -640,7 +654,7 @@ public sealed class GuestsTenantTerminationIntegrationTests
                 Guid.NewGuid(),
                 tenantId,
                 "guest-operational",
-                executionPolicyVersion: 1,
+                GuestRetentionExecution.MinimumRunningPolicyVersion,
                 attempt: 1,
                 startingProjectionOrdinal: 0,
                 ExportNowUtc.AddMinutes(-5),
@@ -662,6 +676,7 @@ public sealed class GuestsTenantTerminationIntegrationTests
                 affectedPropertyCount: 1,
                 ExportNowUtc.AddDays(-1),
                 Digest,
+                TimeZoneCatalog.Default.CatalogVersion,
                 outcome.EventId,
                 "system:retention",
                 ExportNowUtc.AddMinutes(-3)).Value;
@@ -938,6 +953,9 @@ public sealed class GuestsTenantTerminationIntegrationTests
             clock ?? new TestClock(ExportNowUtc));
         builder.Services.AddSingleton<IIdGenerator, TestIdGenerator>();
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddGuestsPersistence();
         return builder.Services.BuildServiceProvider();
     }

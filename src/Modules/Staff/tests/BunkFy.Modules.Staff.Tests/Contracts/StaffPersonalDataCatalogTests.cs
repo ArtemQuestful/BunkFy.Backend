@@ -29,6 +29,7 @@ public sealed class StaffPersonalDataCatalogTests
 {
     private static readonly PersonalDataCatalogDocument Catalogue = LoadCatalogue();
     private static readonly Dictionary<string, Assembly> Assemblies = CreateAssemblyIndex();
+    private static readonly string[] ExpectedStationLabelProperties = ["DisplayName", "StaffMemberId", "Version"];
     private static readonly string[] ExpectedDirectoryMemberProperties =
         ["Assignments", "Department", "DisplayName", "JobTitle", "StaffMemberId", "Status", "Version"];
     private static readonly string[] ExpectedDirectoryListItemProperties =
@@ -123,26 +124,41 @@ public sealed class StaffPersonalDataCatalogTests
     }
 
     [Fact]
-    public void V20_catalogue_and_owner_manifest_have_immutable_digests()
+    public void Station_labels_have_exact_positive_owner_bindings_and_no_private_profile_fields()
+    {
+        Assert.Equal(ExpectedStationLabelProperties,
+            typeof(StaffStationLabel).GetProperties().Select(x => x.Name).Order());
+        AssertType(typeof(StaffStationLabel), PersonalDataSurface.ProjectionExport);
+        foreach (string id in new[] { "staff.display-name", "staff.staff-member-id", "staff.record-version" })
+        {
+            var field = Assert.Single(Catalogue.Fields, x => x.Id == id);
+            Assert.Equal("staff", field.AuthoritativeOwner);
+            Assert.Contains(field.Bindings, b => b.Type == typeof(StaffStationLabel).FullName &&
+                b.Surface == PersonalDataSurface.ProjectionExport && b.RetentionPolicy == "transient-response");
+        }
+    }
+
+    [Fact]
+    public void V21_catalogue_and_owner_manifest_have_immutable_digests()
     {
         string dataGovernanceDirectory = Path.Combine(
             AppContext.BaseDirectory,
             "DataGovernance");
 
-        Assert.Equal(5, StaffTenantTerminationMetadata.CatalogVersion);
-        Assert.Equal(20, StaffTenantTerminationMetadata.PersonalDataCatalogVersion);
-        Assert.Equal(5, StaffTenantTerminationMetadata.ExportSchemaVersion);
-        Assert.Equal(20, Catalogue.CatalogVersion);
+        Assert.Equal(6, StaffTenantTerminationMetadata.CatalogVersion);
+        Assert.Equal(21, StaffTenantTerminationMetadata.PersonalDataCatalogVersion);
+        Assert.Equal(6, StaffTenantTerminationMetadata.ExportSchemaVersion);
+        Assert.Equal(21, Catalogue.CatalogVersion);
         Assert.Equal(
-            "998c761b8ec7eaa50c3b65bb8c28a2bb66b02f8be6757da2d927382d68d38386",
+            "430dded912a8c284bd401333e18ed3b24b3d6dea0064f2638cced5b8ab8af39b",
             ComputeSha256(Path.Combine(
                 dataGovernanceDirectory,
                 "personal-data-catalog.v1.json")));
         Assert.Equal(
-            "51b3804d21f7ee7afff828284aeb00176127358ec95dd62ff026cf4cce2f058c",
+            "85e1cd9f343f57af1f6331a8a0699ffafae72e8b12e0c8645604ab7a175ef789",
             StaffTenantTerminationMetadata.CatalogSha256);
         Assert.Equal(
-            "2189f2b9eb648442616a152b93c8fd2f03b976dddda11717324b353946a42a16",
+            "1d9abc1d668a374a9d4df141826a1787a260819ed8eb72ec9178ada5b2caaccd",
             ComputeSha256(Path.Combine(
                 dataGovernanceDirectory,
                 "personal-data-inventory.v1.md")));
@@ -463,7 +479,9 @@ public sealed class StaffPersonalDataCatalogTests
                      .Where(type => typeof(IIntegrationEvent).IsAssignableFrom(type) ||
                                     type.Name.EndsWith("Dto", StringComparison.Ordinal) ||
                                     type == typeof(StaffDirectoryListResponse) ||
+                                    type == typeof(StaffStationLabel) ||
                                     type == typeof(StaffPropertyDirectoryListResponse) ||
+                                    type == typeof(StaffAccountDirectoryResponse) ||
                                     type == typeof(StaffIdentityBootstrapRequest) ||
                                     type == typeof(StaffIdentityBootstrapResult) ||
                                     type == typeof(StaffAnonymisationRestoreState) ||
@@ -505,7 +523,7 @@ public sealed class StaffPersonalDataCatalogTests
             {
                 yield return (PersonalDataSurface.ProjectionExport, type);
             }
-            else if (type == typeof(StaffDataRightsAuthorityState) ||
+            else if (type == typeof(StaffDataRightsAuthorityState) || type == typeof(StaffStationLabel) ||
                      type == typeof(StaffNotificationRecipient))
             {
                 yield return (PersonalDataSurface.ProjectionExport, type);

@@ -39,6 +39,12 @@ public sealed partial class Property
         DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(details);
+        if (!details.TimeZoneId.IsPrimaryCanonical)
+        {
+            return Result.Failure<Property>(
+                PropertiesDomainErrors.TimeZoneInvalid);
+        }
+
         if (id == Guid.Empty)
         {
             return Result.Failure<Property>(

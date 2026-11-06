@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Guests.Tests.Api;
 
 using System.CommandLine;
 using System.Reflection;
+using System.Text.Json;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Guests.AdminApi;
 using BunkFy.Modules.Guests.AdminCli;
@@ -22,6 +23,57 @@ using Xunit;
 [Trait("Category", "Unit")]
 public sealed class GuestsApiSecurityTests
 {
+    [Theory]
+    [InlineData(typeof(GuestsModule.GuestProfileWriteRequest))]
+    [InlineData(typeof(GuestsModule.GuestProfileUpdateRequest))]
+    [InlineData(typeof(GuestsModule.GuestDataRightsCorrectionRequest))]
+    [InlineData(typeof(GuestsAdminApiModule.GuestProfileWriteRequest))]
+    [InlineData(typeof(GuestsAdminApiModule.GuestProfileUpdateRequest))]
+    public void Http_language_contract_preserves_omitted_null_empty_and_values(Type requestType)
+    {
+        PropertyInfo collection = requestType.GetProperty("LanguageTags")!;
+        JsonSerializerOptions json = new(JsonSerializerDefaults.Web);
+        Assert.Null(collection.GetValue(JsonSerializer.Deserialize("{}", requestType, json)));
+        Assert.Null(collection.GetValue(JsonSerializer.Deserialize("{\"languageTags\":null}", requestType, json)));
+        Assert.Empty(Assert.IsType<string[]>(collection.GetValue(
+            JsonSerializer.Deserialize("{\"languageTags\":[]}", requestType, json))));
+        Assert.Equal(["FR", "unknown-١"], Assert.IsType<string[]>(collection.GetValue(
+            JsonSerializer.Deserialize("{\"languageTags\":[\"FR\",\"unknown-١\"]}", requestType, json))));
+    }
+
+    [Fact]
+    public void Admin_cli_language_option_distinguishes_missing_clear_and_multiple_values()
+    {
+        ServiceCollection services = new();
+        services.AddSingleton<AdminCliGlobalOptions>();
+        using ServiceProvider provider = services.BuildServiceProvider();
+        RootCommand root = new("admin");
+        new GuestsAdminCliModule().MapCommands(new AdminCliCommandRegistry(root, provider));
+        Command guest = Assert.Single(root.Subcommands);
+        foreach (string verb in new[] { "create", "update" })
+        {
+            Command command = Assert.Single(guest.Subcommands, candidate => candidate.Name == verb);
+            Option<string[]> languages = Assert.IsType<Option<string[]>>(
+                Assert.Single(command.Options, option => option.Name == "--languages"));
+            string[] required = ["guests", verb, "--property-id", Guid.NewGuid().ToString(),
+                "--operation-id", Guid.NewGuid().ToString(), "--display-name", "Guest"];
+            if (verb == "update")
+            {
+                required = [.. required, "--guest-id", Guid.NewGuid().ToString(), "--expected-version", "1"];
+            }
+            var omitted = root.Parse(required);
+            Assert.Empty(omitted.Errors);
+            Assert.Null(omitted.GetResult(languages));
+            var clear = root.Parse([.. required, "--languages"]);
+            Assert.Empty(clear.Errors);
+            Assert.NotNull(clear.GetResult(languages));
+            Assert.Empty(clear.GetValue(languages)!);
+            var multiple = root.Parse([.. required, "--languages", "fr", "unknown-١"]);
+            Assert.Empty(multiple.Errors);
+            Assert.Equal(["fr", "unknown-١"], Assert.IsType<string[]>(multiple.GetValue(languages)));
+        }
+    }
+
     [Theory]
     [InlineData(typeof(GuestsModule.GuestProfileUpdateRequest))]
     [InlineData(typeof(GuestsModule.ArchiveGuestProfileRequest))]

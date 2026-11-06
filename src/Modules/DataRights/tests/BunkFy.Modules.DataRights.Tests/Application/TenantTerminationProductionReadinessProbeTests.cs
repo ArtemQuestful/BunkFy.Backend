@@ -51,6 +51,23 @@ public sealed class TenantTerminationProductionReadinessProbeTests
         Assert.Equal(0, replayStore.ReadinessChecks);
     }
 
+    [Fact]
+    public async Task Normal_replay_readiness_return_after_cancellation_is_not_projected()
+    {
+        using CancellationTokenSource source = new();
+        StubReplayStore replayStore = new(
+            new("postgresql", true, true, null),
+            _ => source.Cancel());
+        TenantTerminationProductionReadinessProbe probe = new(
+            new StubCatalog(isValid: true),
+            replayStore);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            probe.CheckAsync(["workspaces"], source.Token));
+
+        Assert.Equal(1, replayStore.ReadinessChecks);
+    }
+
     private sealed class StubCatalog(bool isValid)
         : ITenantTerminationProductionCatalog
     {
@@ -69,7 +86,8 @@ public sealed class TenantTerminationProductionReadinessProbeTests
     }
 
     private sealed class StubReplayStore(
-        TenantTerminationReplayStoreReadiness readiness)
+        TenantTerminationReplayStoreReadiness readiness,
+        Action<CancellationToken>? afterCheck = null)
         : ITenantTerminationReplayStore
     {
         public int ReadinessChecks { get; private set; }
@@ -78,6 +96,7 @@ public sealed class TenantTerminationProductionReadinessProbeTests
             CancellationToken cancellationToken)
         {
             this.ReadinessChecks++;
+            afterCheck?.Invoke(cancellationToken);
             return Task.FromResult(readiness);
         }
 

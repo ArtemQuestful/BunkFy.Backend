@@ -5,6 +5,7 @@ using Gma.Framework.Results;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using BunkFy.Modules.Ingestion.Application.Commands;
+using BunkFy.Modules.Ingestion.Application.Contributors;
 using BunkFy.Modules.Ingestion.Application.Ports;
 using BunkFy.Modules.Ingestion.Contracts;
 using BunkFy.Modules.Ingestion.Domain.Receipts;
@@ -12,6 +13,7 @@ using BunkFy.Modules.Ingestion.Domain.Retention;
 
 internal sealed class ClaimExpiredRawPayloadsCommandHandler(
     IRawPayloadRetentionRepository retention,
+    IngestionRetentionMutationCoordinator retentionMutations,
     IngestionSourceMutationCoordinator sourceMutations,
     IScopeContext scopeContext,
     ISystemClock clock)
@@ -33,6 +35,25 @@ internal sealed class ClaimExpiredRawPayloadsCommandHandler(
         {
             return Result.Failure<IReadOnlyList<RawPayloadPurgeCandidate>>(
                 IngestionApplicationErrors.RetentionTaskOptionsInvalid);
+        }
+
+        if (command.RetentionExecutionId is { } executionId &&
+            command.ClaimId != executionId)
+        {
+            return Result.Failure<IReadOnlyList<RawPayloadPurgeCandidate>>(
+                IngestionRetentionExecutionErrors.CoordinateInvalid);
+        }
+
+        Result<IngestionRetentionExecutionLease> execution =
+            await retentionMutations.AcquireRunningAsync(
+                command.RetentionExecutionId,
+                command.RetentionAttempt,
+                IngestionRetentionCoordinates.RawPayloadDataClass,
+                cancellationToken).ConfigureAwait(false);
+        if (execution.IsFailure)
+        {
+            return Result.Failure<IReadOnlyList<RawPayloadPurgeCandidate>>(
+                execution.Error);
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
@@ -64,7 +85,7 @@ internal sealed class ClaimExpiredRawPayloadsCommandHandler(
 
 internal sealed class CompleteRawPayloadPurgeCommandHandler(
     IObservationReceiptRepository receipts,
-    IIngestionRetentionExecutionRepository executions,
+    IngestionRetentionMutationCoordinator retentionMutations,
     IngestionSourceMutationCoordinator sourceMutations,
     ISystemClock clock)
     : ICommandHandler<CompleteRawPayloadPurgeCommand, Unit>
@@ -73,6 +94,24 @@ internal sealed class CompleteRawPayloadPurgeCommandHandler(
         CompleteRawPayloadPurgeCommand command,
         CancellationToken cancellationToken)
     {
+        if (command.RetentionExecutionId is { } executionId &&
+            command.ClaimId != executionId)
+        {
+            return Result.Failure<Unit>(
+                IngestionRetentionExecutionErrors.CoordinateInvalid);
+        }
+
+        Result<IngestionRetentionExecutionLease> execution =
+            await retentionMutations.AcquireRunningAsync(
+                command.RetentionExecutionId,
+                command.RetentionAttempt,
+                IngestionRetentionCoordinates.RawPayloadDataClass,
+                cancellationToken).ConfigureAwait(false);
+        if (execution.IsFailure)
+        {
+            return Result.Failure<Unit>(execution.Error);
+        }
+
         IngestionSourceMutationLease? source =
             await sourceMutations.AcquireReceiptAsync(
                     command.ReceiptId,
@@ -96,18 +135,11 @@ internal sealed class CompleteRawPayloadPurgeCommandHandler(
             return Result.Failure<Unit>(completed.Error);
         }
 
-        if (command.RetentionExecutionId is { } executionId)
+        if (execution.Value.Execution is { } currentExecution)
         {
-            IngestionRetentionExecution? execution = await executions.GetAsync(
-                executionId,
-                cancellationToken).ConfigureAwait(false);
-            if (execution is null)
-            {
-                return Result.Failure<Unit>(
-                    IngestionApplicationErrors.RetentionExecutionNotFound);
-            }
-
-            Result recorded = execution.RecordAffected(1);
+            Result recorded = currentExecution.RecordAffected(
+                command.RetentionAttempt!.Value,
+                1);
             if (recorded.IsFailure)
             {
                 return Result.Failure<Unit>(recorded.Error);

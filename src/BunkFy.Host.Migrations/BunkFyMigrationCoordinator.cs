@@ -21,6 +21,11 @@ public sealed class BunkFyMigrationCoordinator(
                 "The BunkFy migration module catalogue cannot be empty.");
         }
 
+        MigrationsProductionAdmission.ValidateConfigurationOrThrow(
+            admission,
+            options,
+            isProduction);
+
         foreach (BunkFyMigrationModule module in modules)
         {
             module.Context.Database.SetCommandTimeout(options.CommandTimeoutSeconds);
@@ -34,7 +39,7 @@ public sealed class BunkFyMigrationCoordinator(
                     cancellationToken)
                 .ConfigureAwait(false);
 
-        BunkFyMigrationPlan plan = await ReadPlanAsync(modules, cancellationToken)
+        BunkFyMigrationPlan plan = await this.ReadPlanAsync(modules, cancellationToken)
             .ConfigureAwait(false);
         MigrationsProductionAdmission.ValidateResolvedTargetOrThrow(
             admission,
@@ -109,7 +114,7 @@ public sealed class BunkFyMigrationCoordinator(
                 moduleElapsed.ElapsedMilliseconds);
         }
 
-        BunkFyMigrationPlan completed = await ReadPlanAsync(modules, cancellationToken)
+        BunkFyMigrationPlan completed = await this.ReadPlanAsync(modules, cancellationToken)
             .ConfigureAwait(false);
         if (completed.PendingMigrationCount != 0 ||
             !string.Equals(
@@ -131,7 +136,7 @@ public sealed class BunkFyMigrationCoordinator(
         return completed;
     }
 
-    private static async Task<BunkFyMigrationPlan> ReadPlanAsync(
+    private async Task<BunkFyMigrationPlan> ReadPlanAsync(
         IReadOnlyList<BunkFyMigrationModule> modules,
         CancellationToken cancellationToken)
     {
@@ -148,7 +153,9 @@ public sealed class BunkFyMigrationCoordinator(
             histories.Add(new BunkFyMigrationHistory(module.Name, target, applied));
         }
 
-        return BunkFyMigrationPlan.Create(histories);
+        return BunkFyMigrationPlan.Create(
+            histories,
+            admission.ExistingHistoryDisposition);
     }
 
     private void ReportPlan(BunkFyMigrationPlan plan)
@@ -156,11 +163,12 @@ public sealed class BunkFyMigrationCoordinator(
         foreach (BunkFyMigrationModulePlan module in plan.Modules)
         {
             logger.LogInformation(
-                "Migration plan for {ModuleName}: target {TargetCount}; applied {AppliedCount}; pending {PendingCount}.",
+                "Migration plan for {ModuleName}: target {TargetCount}; applied {AppliedCount}; pending {PendingCount}; history transition {HistoryTransition}.",
                 module.ModuleName,
                 module.TargetMigrations.Count,
                 module.AppliedMigrations.Count,
-                module.PendingMigrations.Count);
+                module.PendingMigrations.Count,
+                module.HistoryTransition ?? "exact-prefix");
         }
     }
 }

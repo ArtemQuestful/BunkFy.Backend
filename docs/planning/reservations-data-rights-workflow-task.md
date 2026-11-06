@@ -247,7 +247,9 @@ ungated.
 2. [Complete] Add approved transactional correction and immutable owner
    receipts through existing aggregate/history semantics.
 3. [Complete] Add Reservations-owned processing restriction, enforcement
-   and rebuildable PII-free state.
+   and rebuildable PII-free state; register the Reservations restriction owner
+   with bounded exact release-target discovery, actor-bound proof replay, and
+   exactly-one legacy unbound recovery.
 4. [Complete] Add holds and fail-closed destructive eligibility.
 5. [Complete] Add irreversible aggregate/history/link/receipt redaction, owner
    proof and terminal ordinary-surface enforcement.

@@ -36,7 +36,13 @@ internal sealed class GenerateDataRightsExportTaskHandler(
                 cancellationToken).ConfigureAwait(false);
         if (started.IsFailure)
         {
-            throw Failure(started.Error);
+            await this.HandleFailureAsync(
+                payload,
+                scope,
+                context,
+                StartFailureCode(started.Error),
+                retryable: false).ConfigureAwait(false);
+            return;
         }
 
         if (!started.Value.DispatchRequired)
@@ -54,10 +60,10 @@ internal sealed class GenerateDataRightsExportTaskHandler(
                     started.Value.CaseId,
                     started.Value.CaseType,
                     started.Value.PropertyId,
-                        started.Value.DecisionRevision,
-                        started.Value.SelectedSubjects,
-                        started.Value.GeneratedAtUtc,
-                        started.Value.ExpiresAtUtc),
+                    started.Value.DecisionRevision,
+                    started.Value.SelectedSubjects,
+                    started.Value.GeneratedAtUtc,
+                    started.Value.ExpiresAtUtc),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -69,54 +75,64 @@ internal sealed class GenerateDataRightsExportTaskHandler(
         }
         catch (Exception exception)
         {
-            _ = await objectStore.DeleteAsync(
-                payload.ArtifactId,
-                CancellationToken.None).ConfigureAwait(false);
             string code = exception is DataRightsExportGenerationException generation
                 ? generation.Code
                 : "generation-failed";
-            Result<Unit> failed = await commandDispatcher.DispatchAsync<
-                FailDataRightsExportGenerationCommand,
-                Unit>(
+            bool retryable = exception is not
+                DataRightsExportGenerationException known ||
+                known.IsRetryable;
+            await this.HandleFailureAsync(
+                payload,
+                scope,
                 context,
-                new FailDataRightsExportGenerationCommand(
-                    scope,
-                    payload.ArtifactId,
-                    payload.CaseId,
-                    payload.DecisionRevision,
-                    context.RunId,
-                    context.Attempt,
-                    code),
-                CancellationToken.None).ConfigureAwait(false);
-            if (failed.IsFailure)
-            {
-                throw Failure(failed.Error);
-            }
-
-            throw new InvalidOperationException(
-                $"DataRights.ExportGenerationFailed:{code}");
+                code,
+                retryable).ConfigureAwait(false);
+            return;
         }
 
-        Result<Unit> completed =
-            await commandDispatcher.DispatchAsync<
-                CompleteDataRightsExportGenerationCommand,
-                Unit>(
-                context,
-                new CompleteDataRightsExportGenerationCommand(
-                    scope,
-                    payload.ArtifactId,
-                    payload.CaseId,
-                    payload.DecisionRevision,
-                    context.RunId,
-                    context.Attempt,
-                    protectedArtifact),
-                cancellationToken).ConfigureAwait(false);
-        if (completed.IsFailure)
+        Result<Unit> completed;
+        try
+        {
+            completed = await commandDispatcher.DispatchAsync<
+                    CompleteDataRightsExportGenerationCommand,
+                    Unit>(
+                    context,
+                    new CompleteDataRightsExportGenerationCommand(
+                        scope,
+                        payload.ArtifactId,
+                        payload.CaseId,
+                        payload.DecisionRevision,
+                        context.RunId,
+                        context.Attempt,
+                        protectedArtifact),
+                    cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
         {
             _ = await objectStore.DeleteAsync(
                 payload.ArtifactId,
                 CancellationToken.None).ConfigureAwait(false);
-            throw Failure(completed.Error);
+            throw;
+        }
+        catch (Exception)
+        {
+            await this.HandleFailureAsync(
+                payload,
+                scope,
+                context,
+                "completion-failed",
+                retryable: true).ConfigureAwait(false);
+            return;
+        }
+
+        if (completed.IsFailure)
+        {
+            await this.HandleFailureAsync(
+                payload,
+                scope,
+                context,
+                "completion-rejected",
+                retryable: false).ConfigureAwait(false);
         }
     }
 
@@ -132,6 +148,60 @@ internal sealed class GenerateDataRightsExportTaskHandler(
                 "DataRights.ExportTaskScopeInvalid")
         };
 
-    private static InvalidOperationException Failure(Error error) =>
-        new($"{error.Code}: {error.Message}");
+    private async Task HandleFailureAsync(
+        GenerateDataRightsExportPayload payload,
+        DataRightsCaseScope scope,
+        TaskExecutionContext context,
+        string code,
+        bool retryable)
+    {
+        try
+        {
+            _ = await objectStore.DeleteAsync(
+                payload.ArtifactId,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException)
+        {
+            code = "artifact-cleanup-failed";
+            retryable = true;
+        }
+
+        if (retryable && !context.IsFinalAttempt)
+        {
+            throw new InvalidOperationException(
+                "DataRights.ExportGenerationRetryRequired");
+        }
+
+        Result<Unit> failed = await commandDispatcher.DispatchAsync<
+            FailDataRightsExportGenerationCommand,
+            Unit>(
+            context,
+            new FailDataRightsExportGenerationCommand(
+                scope,
+                payload.ArtifactId,
+                payload.CaseId,
+                payload.DecisionRevision,
+                context.RunId,
+                context.Attempt,
+                code),
+            CancellationToken.None).ConfigureAwait(false);
+        if (failed.IsFailure)
+        {
+            throw new TaskRunTerminalFailureException(
+                "data-rights.export:failure-state-rejected");
+        }
+
+        throw new TaskRunTerminalFailureException(
+            $"data-rights.export:{code}");
+    }
+
+    private static string StartFailureCode(Error error) =>
+        error.Code switch
+        {
+            "DataRights.ExportOwnerUnavailable" => "owner-unavailable",
+            "DataRights.ExportOwnerCatalogInvalid" => "owner-catalog-invalid",
+            _ => "generation-start-rejected"
+        };
 }

@@ -8,25 +8,29 @@ using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Stations.Contracts;
 using Gma.Modules.AccessControl.Contracts;
 
 public static class WorkspaceAccessPermissionCatalogue
 {
     public static IReadOnlyList<WorkspaceAccessPermissionDto> All { get; } =
     [
+        Permission(StationsPermissionCodes.Manage, "Shared stations", "Manage shared stations", "Pair and revoke devices, register staff, and manage station PIN recovery. Does not grant station check-in access.", sensitive: true),
         Permission(AccessControlProfilePermissionCodes.Read, "Workspace access", "View roles", "View workspace roles, permission definitions, and member access assignments."),
         Permission(AccessControlProfilePermissionCodes.Manage, "Workspace access", "Manage roles", "Create, update, and archive custom workspace roles.", sensitive: true, requires: [AccessControlProfilePermissionCodes.Read]),
         Permission(AccessControlProfilePermissionCodes.Assign, "Workspace access", "Assign roles", "Assign operational roles to workspace members within the actor's own authority.", sensitive: true, requires: [AccessControlProfilePermissionCodes.Read]),
         Permission(WorkspacesPermissionCodes.StaffOnboardingManage, "Workspace access", "Manage staff onboarding", "Issue and manage staff join sources, review applicants, and retry provisioning.", sensitive: true, requires: [AccessControlProfilePermissionCodes.Read]),
 
-        Permission(PropertiesAdminPermissionCodes.Read, "Properties", "View properties", "View properties, rooms, and beds."),
+        Permission(PropertiesAdminPermissionCodes.Read, "Properties", "View properties", "View properties, rooms, beds, and the canonical time-zone catalog at the granted scope."),
         Permission(PropertiesAdminPermissionCodes.PropertiesManage, "Properties", "Manage properties", "Create and update properties.", requires: [PropertiesAdminPermissionCodes.Read]),
+        Permission(PropertiesAdminPermissionCodes.TimeZonesManage, "Properties", "Manage property time zones", "Inspect property time-zone compliance, recover operations, and perform bounded corrections.", sensitive: true, requires: [PropertiesAdminPermissionCodes.Read]),
         Permission(PropertiesAdminPermissionCodes.RoomsManage, "Properties", "Manage rooms", "Create, update, and retire rooms.", requires: [PropertiesAdminPermissionCodes.Read]),
         Permission(PropertiesAdminPermissionCodes.BedsManage, "Properties", "Manage beds", "Create, update, and retire beds.", requires: [PropertiesAdminPermissionCodes.Read]),
 
         Permission(InventoryAdminPermissionCodes.Read, "Inventory", "View inventory", "View room sales modes, availability, and blocks.", requires: [PropertiesAdminPermissionCodes.Read]),
         Permission(InventoryAdminPermissionCodes.Configure, "Inventory", "Configure room sales", "Choose whether rooms are sold whole or by individual bed.", requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read]),
-        Permission(InventoryAdminPermissionCodes.BlocksManage, "Inventory", "Manage inventory blocks", "Take rooms, beds, floors, or properties out of service.", requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read]),
+        Permission(InventoryAdminPermissionCodes.BlocksManage, "Inventory", "Manage inventory blocks", "Take an individual room or bed inventory unit out of service.", requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read]),
+        Permission(InventoryAdminPermissionCodes.BlockGroupsManage, "Inventory", "Manage inventory block groups", "Preview, create, replace, and release confirmed groups of inventory blocks.", sensitive: true, requires: [PropertiesAdminPermissionCodes.Read, InventoryAdminPermissionCodes.Read, InventoryAdminPermissionCodes.BlocksManage]),
         Permission(InventoryAdminPermissionCodes.Retire, "Inventory", "Retire rooms and beds", "Start, inspect, and retry terminal room or bed retirement workflows.", sensitive: true, requires: [PropertiesAdminPermissionCodes.RoomsManage, PropertiesAdminPermissionCodes.BedsManage, InventoryAdminPermissionCodes.Read]),
 
         Permission(ReservationsAdminPermissionCodes.Read, "Reservations", "View reservations", "View reservation details and stay status."),
@@ -81,6 +85,8 @@ public static class WorkspaceAccessPermissionCatalogue
         Permission(DataRightsAdminPermissionCodes.TenantTerminationRequest, "Data rights", "Request tenant termination", "Open a reviewed tenant-termination operator case.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead]),
         Permission(DataRightsAdminPermissionCodes.TenantTerminationApprove, "Data rights", "Approve tenant termination", "Bind approval, backup, restore-drill, operator, and owner-catalog evidence.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationRequest]),
         Permission(DataRightsAdminPermissionCodes.TenantTerminationExecute, "Data rights", "Execute tenant termination", "Start an approved tenant termination as a distinct executor.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationApprove]),
+        Permission(DataRightsAdminPermissionCodes.TenantTerminationExportDownload, "Data rights", "Download tenant termination export", "Download the exact protected tenant export for operator review.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationExecute]),
+        Permission(DataRightsAdminPermissionCodes.TenantTerminationExportConfirm, "Data rights", "Confirm tenant termination export", "Confirm the reviewed frozen export proof before irreversible destruction.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationExecute, DataRightsAdminPermissionCodes.TenantTerminationExportDownload]),
         Permission(DataRightsAdminPermissionCodes.TenantTerminationRetry, "Data rights", "Retry tenant termination", "Resume the exact blocked or failed owner work set.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationExecute]),
         Permission(DataRightsAdminPermissionCodes.TenantTerminationCancel, "Data rights", "Cancel tenant termination", "Request verified restoration while destruction remains reversible.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationExecute]),
         Permission(DataRightsAdminPermissionCodes.TenantTerminationRecover, "Data rights", "Recover tenant termination", "Reconstruct a protected start or re-signal durable coordination.", sensitive: true, requires: [DataRightsAdminPermissionCodes.TenantTerminationRead, DataRightsAdminPermissionCodes.TenantTerminationExecute]),

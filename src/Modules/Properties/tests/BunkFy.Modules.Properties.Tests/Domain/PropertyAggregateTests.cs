@@ -54,6 +54,55 @@ public sealed class PropertyAggregateTests
         Assert.Equal(PropertiesDomainErrors.TimeZoneInvalid, CreateProperty("tenant-a", timeZoneId: "Invalid/Zone").Error);
     }
 
+    [Theory]
+    [InlineData("UTC")]
+    [InlineData("Pacific Standard Time")]
+    [InlineData("Historical/UnknownZone")]
+    public void Create_with_restored_details_rejects_non_primary_time_zones(
+        string timeZoneId)
+    {
+        PropertyDetails restored = PropertyDetails.RestorePersistedTimeZone(
+            "Hostel One",
+            "hostel-one",
+            timeZoneId).Value;
+
+        Result<Property> result = Property.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            restored,
+            Guid.NewGuid(),
+            GovernanceNow);
+
+        Assert.Equal(PropertiesDomainErrors.TimeZoneInvalid, result.Error);
+    }
+
+    [Theory]
+    [InlineData("UTC")]
+    [InlineData("Pacific Standard Time")]
+    [InlineData("Historical/UnknownZone")]
+    public void Time_zone_mutation_rejects_restored_non_primary_targets(
+        string timeZoneId)
+    {
+        Property property = CreateProperty("tenant-a").Value;
+        property.ClearDomainEvents();
+        PropertyTimeZoneId restored =
+            PropertyTimeZoneId.RestorePersisted(timeZoneId);
+
+        Result<PropertyDetailsUpdateOutcome> evaluation =
+            property.EvaluateTimeZoneChange(restored, property.Version);
+        Result<PropertyDetailsUpdateOutcome> mutation = property.SetTimeZone(
+            restored,
+            property.Version,
+            Guid.NewGuid(),
+            GovernanceNow);
+
+        Assert.Equal(PropertiesDomainErrors.TimeZoneInvalid, evaluation.Error);
+        Assert.Equal(PropertiesDomainErrors.TimeZoneInvalid, mutation.Error);
+        Assert.Equal("Etc/UTC", property.TimeZoneId.Value);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(property.DomainEvents);
+    }
+
     [Fact]
     public void Update_changes_setup_values_and_raises_event()
     {
@@ -91,6 +140,56 @@ public sealed class PropertyAggregateTests
         Assert.Equal(PropertyDetailsUpdateOutcome.Unchanged, result.Value);
         Assert.Equal(1, property.Version);
         Assert.Null(property.UpdatedAtUtc);
+        Assert.Empty(property.DomainEvents);
+    }
+
+    [Fact]
+    public void Generic_details_update_cannot_bypass_the_time_zone_protocol()
+    {
+        Property property = CreateProperty("tenant-a").Value;
+        property.ClearDomainEvents();
+        PropertyDetails changedZone = PropertyDetails.Create(
+            "Updated",
+            "updated",
+            "Europe/London").Value;
+
+        Result<PropertyDetailsUpdateOutcome> result =
+            property.UpdateDetails(
+                changedZone,
+                property.Version,
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow);
+
+        Assert.Equal(
+            PropertiesDomainErrors.TimeZoneDedicatedOperationRequired,
+            result.Error);
+        Assert.Equal("Hostel One", property.Name.Value);
+        Assert.Equal("hostel-one", property.Code.Value);
+        Assert.Equal("Etc/UTC", property.TimeZoneId.Value);
+        Assert.Equal(1, property.Version);
+        Assert.Null(property.UpdatedAtUtc);
+        Assert.Empty(property.DomainEvents);
+    }
+
+    [Fact]
+    public void Public_generic_update_cannot_change_the_time_zone()
+    {
+        Property property = CreateProperty("tenant-a").Value;
+        property.ClearDomainEvents();
+
+        Result result = property.Update(
+            "Updated",
+            "updated",
+            "Europe/London",
+            property.Version,
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow);
+
+        Assert.Equal(
+            PropertiesDomainErrors.TimeZoneDedicatedOperationRequired,
+            result.Error);
+        Assert.Equal("Etc/UTC", property.TimeZoneId.Value);
+        Assert.Equal(1, property.Version);
         Assert.Empty(property.DomainEvents);
     }
 

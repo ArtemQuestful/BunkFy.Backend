@@ -21,6 +21,10 @@ public static class DataRightsAdminPermissionCodes
         TerminateTenant + ".approve";
     public const string TenantTerminationExecute =
         TerminateTenant + ".execute";
+    public const string TenantTerminationExportDownload =
+        TerminateTenant + ".export.download";
+    public const string TenantTerminationExportConfirm =
+        TerminateTenant + ".export.confirm";
     public const string TenantTerminationRetry =
         TerminateTenant + ".retry";
     public const string TenantTerminationCancel =

@@ -68,22 +68,15 @@ internal sealed class StartDataRightsCorrectionExecutionCommandHandler(
             return this.Replay(existing, dataRightsCase, subject, command, actor);
         }
 
-        IDataRightsCorrectionPolicyContributor[] matches =
-            [.. contributors.Where(candidate =>
-                    candidate.ContractVersion == DataRightsCorrectionContract.CurrentVersion &&
-                    string.Equals(
-                        candidate.OwnerKey,
-                        subject.OwnerKey,
-                        StringComparison.Ordinal) &&
-                    string.Equals(
-                        candidate.RecordType,
-                        subject.RecordType,
-                        StringComparison.Ordinal))
-                .Take(2)];
-        if (matches.Length != 1)
+        Result<IDataRightsCorrectionPolicyContributor> resolved =
+            DataRightsCorrectionPolicyContributorSet.Resolve(
+                contributors,
+                subject.OwnerKey,
+                subject.RecordType);
+        if (resolved.IsFailure)
         {
             return Result.Failure<DataRightsCorrectionExecutionDto>(
-                DataRightsApplicationErrors.CorrectionOwnerUnavailable);
+                resolved.Error);
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
@@ -107,7 +100,7 @@ internal sealed class StartDataRightsCorrectionExecutionCommandHandler(
                 dataRightsCase.Version,
                 approvalRevision,
                 subject,
-                matches[0].FieldPolicyKey,
+                resolved.Value.FieldPolicyKey,
                 actor,
                 nowUtc,
                 nowUtc.Add(ClaimLifetime));
@@ -117,7 +110,7 @@ internal sealed class StartDataRightsCorrectionExecutionCommandHandler(
         }
 
         await executions.AddAsync(created.Value, cancellationToken).ConfigureAwait(false);
-        return Success(dataRightsCase, created.Value);
+        return Success(dataRightsCase, created.Value, actor);
     }
 
     private Result<DataRightsCorrectionExecutionDto> Replay(
@@ -143,7 +136,7 @@ internal sealed class StartDataRightsCorrectionExecutionCommandHandler(
               dataRightsCase.Status == DataRightsCaseState.Completed &&
               dataRightsCase.Version == existing.ExecutionRevision + 1));
         if (!caseMatchesClaim ||
-            !existing.MatchesClaim(
+            !existing.MatchesClaimCoordinates(
                 command.ExecutionId,
                 dataRightsCase.Kind,
                 command.Scope.PropertyId,
@@ -151,33 +144,46 @@ internal sealed class StartDataRightsCorrectionExecutionCommandHandler(
                 command.ExpectedVersion,
                 currentApprovalRevision,
                 subject,
-                existing.FieldPolicyKey,
-                actor))
+                existing.FieldPolicyKey))
         {
             return Result.Failure<DataRightsCorrectionExecutionDto>(
                 DataRightsApplicationErrors.CorrectionExecutionConflict);
         }
 
-        if (existing.State == DataRightsCorrectionExecutionState.Claimed &&
-            clock.UtcNow > existing.ExpiresAtUtc)
+        DateTimeOffset nowUtc = clock.UtcNow;
+        if (existing.State == DataRightsCorrectionExecutionState.Completed)
         {
-            Result renewed = existing.Renew(
-                actor,
-                clock.UtcNow,
-                clock.UtcNow.Add(ClaimLifetime));
-            if (renewed.IsFailure)
-            {
-                return Result.Failure<DataRightsCorrectionExecutionDto>(renewed.Error);
-            }
+            return existing.IsOwnedBy(actor)
+                ? Success(dataRightsCase, existing, actor)
+                : Result.Failure<DataRightsCorrectionExecutionDto>(
+                    DataRightsApplicationErrors.CorrectionExecutionConflict);
         }
 
-        return Success(dataRightsCase, existing);
+        if (nowUtc < existing.ExpiresAtUtc)
+        {
+            return existing.IsOwnedBy(actor)
+                ? Success(dataRightsCase, existing, actor)
+                : Result.Failure<DataRightsCorrectionExecutionDto>(
+                    DataRightsApplicationErrors.CorrectionExecutionConflict);
+        }
+
+        Result renewed = existing.Renew(
+            actor,
+            nowUtc,
+            nowUtc.Add(ClaimLifetime));
+        if (renewed.IsFailure)
+        {
+            return Result.Failure<DataRightsCorrectionExecutionDto>(renewed.Error);
+        }
+
+        return Success(dataRightsCase, existing, actor);
     }
 
     private static Result<DataRightsCorrectionExecutionDto> Success(
         DataRightsCase dataRightsCase,
-        DataRightsCorrectionExecution execution) =>
+        DataRightsCorrectionExecution execution,
+        string actor) =>
         Result.Success(new DataRightsCorrectionExecutionDto(
             dataRightsCase.ToDto(),
-            execution.ToDto()));
+            execution.ToDto(actor)));
 }

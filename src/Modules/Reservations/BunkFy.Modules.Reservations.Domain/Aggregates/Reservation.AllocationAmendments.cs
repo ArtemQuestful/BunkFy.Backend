@@ -9,6 +9,7 @@ public sealed partial class Reservation
 {
     public Result<ReservationDetailsChangeOutcome> BeginAllocationAmendment(
         Guid amendmentRequestId,
+        Guid inventoryRequestId,
         string requestFingerprint,
         DateOnly arrival,
         DateOnly departure,
@@ -42,7 +43,9 @@ public sealed partial class Reservation
         }
 
         if (this.Status != ReservationState.Confirmed || this.AllocationId is null || this.AllocationVersion is null ||
-            expectedDetailsRevision != this.DetailsRevision || amendmentRequestId == Guid.Empty || eventId == Guid.Empty ||
+            expectedDetailsRevision != this.DetailsRevision || amendmentRequestId == Guid.Empty ||
+            inventoryRequestId == Guid.Empty || eventId == Guid.Empty ||
+            nowUtc == default || nowUtc < this.UpdatedAtUtc ||
             normalizedFingerprint.Length != RequestFingerprintLength || !normalizedFingerprint.All(Uri.IsHexDigit))
         {
             return Result.Failure<ReservationDetailsChangeOutcome>(
@@ -100,6 +103,7 @@ public sealed partial class Reservation
         }
 
         this.PendingAllocationAmendmentId = amendmentRequestId;
+        this.PendingInventoryAmendmentRequestId = inventoryRequestId;
         this.PendingAllocationAmendmentRequestFingerprint = normalizedFingerprint;
         this.PendingArrival = arrival;
         this.PendingDeparture = departure;
@@ -128,7 +132,7 @@ public sealed partial class Reservation
             this.ScopeId,
             this.Id,
             this.PropertyId,
-            amendmentRequestId,
+            inventoryRequestId,
             this.AllocationId.Value,
             this.AllocationVersion.Value,
             arrival,
@@ -138,7 +142,7 @@ public sealed partial class Reservation
     }
 
     public Result CompleteAllocationAmendment(
-        Guid amendmentRequestId,
+        Guid inventoryRequestId,
         Guid allocationId,
         DateOnly arrival,
         DateOnly departure,
@@ -149,7 +153,7 @@ public sealed partial class Reservation
     {
         ArgumentNullException.ThrowIfNull(inventoryUnitIds);
         Guid[] confirmedUnits = inventoryUnitIds.ToArray();
-        if (this.PendingAllocationAmendmentId != amendmentRequestId || this.AllocationId != allocationId ||
+        if (this.PendingInventoryAmendmentRequestId != inventoryRequestId || this.AllocationId != allocationId ||
             allocationVersion <= 0 || detailsEventId == Guid.Empty ||
             !this.PendingArrival.HasValue || !this.PendingDeparture.HasValue ||
             string.IsNullOrWhiteSpace(this.PendingInventoryUnitIds) || !this.PendingGuestCount.HasValue ||
@@ -165,6 +169,20 @@ public sealed partial class Reservation
         {
             return Result.Failure(ReservationsDomainErrors.AllocationCorrelationMismatch);
         }
+
+        bool allocationTargetUnchanged = this.Arrival == arrival &&
+            this.Departure == departure &&
+            this.requestedUnits.Select(unit => unit.InventoryUnitId).Order()
+                .SequenceEqual(confirmedUnits.Order());
+        if (!this.AllocationVersion.HasValue ||
+            (!allocationTargetUnchanged && this.AllocationVersion == long.MaxValue) ||
+            allocationVersion != (allocationTargetUnchanged
+                ? this.AllocationVersion.Value
+                : this.AllocationVersion.Value + 1))
+        {
+            return Result.Failure(ReservationsDomainErrors.AllocationCorrelationMismatch);
+        }
+
         ReservationDetailsSnapshot before = this.CaptureDetails();
         List<string> changedFields = [];
         AddChanged(changedFields, nameof(this.Arrival), this.Arrival, this.PendingArrival.Value);
@@ -228,12 +246,12 @@ public sealed partial class Reservation
     }
 
     public Result RejectAllocationAmendment(
-        Guid amendmentRequestId,
+        Guid inventoryRequestId,
         Guid allocationId,
         int rejectionCode,
         DateTimeOffset nowUtc)
     {
-        if (this.PendingAllocationAmendmentId != amendmentRequestId || this.AllocationId != allocationId)
+        if (this.PendingInventoryAmendmentRequestId != inventoryRequestId || this.AllocationId != allocationId)
         {
             return Result.Failure(ReservationsDomainErrors.AllocationCorrelationMismatch);
         }

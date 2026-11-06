@@ -8,6 +8,9 @@
     <ProjectReference Include="$(GmaFrameworkRoot)Api\Gma.Framework.Api\Gma.Framework.Api.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Pagination\Gma.Framework.Pagination\Gma.Framework.Pagination.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.AccessControl.AspNetCore\Gma.Framework.AccessControl.AspNetCore.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.Security\Gma.Framework.Security.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.Security.AspNetCore\Gma.Framework.Security.AspNetCore.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Tenancy\Gma.Framework.Tenancy\Gma.Framework.Tenancy.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Tenancy\Gma.Framework.Tenancy.AccessControl.AspNetCore\Gma.Framework.Tenancy.AccessControl.AspNetCore.csproj" />
     <ProjectReference Include="..\BunkFy.Modules.Retention.Persistence\BunkFy.Modules.Retention.Persistence.csproj" />
   </ItemGroup>

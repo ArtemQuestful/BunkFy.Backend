@@ -332,6 +332,45 @@ internal static class WorkspaceStaffOnboardingEndpoints
             .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
             .Produces<WorkspaceStaffOnboardingListResponse>(StatusCodes.Status200OK);
 
+        group.MapGet("/applications/summary", async (
+            int? page,
+            int? pageSize,
+            HttpContext context,
+            IRequestDispatcher dispatcher,
+            CancellationToken token) =>
+        {
+            WorkspacesApiEndpointSupport.SetNoStore(context);
+            return (await dispatcher.QueryAsync(
+                new ListActionableWorkspaceStaffOnboardingSummariesQuery(
+                    page ?? PageRequest.DefaultPage,
+                    pageSize ?? PageRequest.DefaultPageSize),
+                token).ConfigureAwait(false)).ToHttpResult(
+                    WorkspacesApiEndpointSupport.ErrorStatusCodes);
+        })
+            .RequireTenant()
+            .RequireTenantPermission(
+                WorkspacesPermissionCodes.StaffOnboardingManage)
+            .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
+            .Produces<WorkspaceStaffOnboardingSummaryListResponse>(StatusCodes.Status200OK);
+
+        group.MapGet("/applications/{applicationId:guid}/review", async (
+            Guid applicationId,
+            HttpContext context,
+            IRequestDispatcher dispatcher,
+            CancellationToken token) =>
+        {
+            WorkspacesApiEndpointSupport.SetNoStore(context);
+            return (await dispatcher.QueryAsync(
+                new GetWorkspaceStaffOnboardingReviewQuery(applicationId),
+                token).ConfigureAwait(false)).ToHttpResult(
+                    WorkspacesApiEndpointSupport.ErrorStatusCodes);
+        })
+            .RequireTenant()
+            .RequireTenantPermission(
+                WorkspacesPermissionCodes.StaffOnboardingManage)
+            .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
+            .Produces<WorkspaceStaffOnboardingDto>(StatusCodes.Status200OK);
+
         group.MapPost("/applications/{applicationId:guid}/retry", async (
             Guid applicationId,
             HttpContext context,
@@ -351,6 +390,115 @@ internal static class WorkspaceStaffOnboardingEndpoints
             .RequireAssuranceWhenConfigured(
                 security.StaffOnboardingManagementAssurance)
             .Produces<WorkspaceStaffOnboardingDto>(StatusCodes.Status200OK);
+
+        group.MapPost(
+            "/applications/{applicationId:guid}/recovery-attempts",
+            async (
+                Guid applicationId,
+                WorkspaceStaffOnboardingRecoveryAttemptRequest request,
+                HttpContext context,
+                IAccessHttpSubjectResolver subjects,
+                IRequestDispatcher dispatcher,
+                CancellationToken token) =>
+            {
+                WorkspacesApiEndpointSupport.SetNoStore(context);
+                if (!security.StaffOnboardingRecoveryPostEnabled)
+                {
+                    return Results.NotFound();
+                }
+
+                AccessSubject? actor = WorkspacesApiEndpointSupport.ResolveUser(
+                    context,
+                    subjects);
+                if (actor is null)
+                {
+                    return Results.Unauthorized();
+                }
+
+                Result<WorkspaceStaffOnboardingRecoveryAttemptDto> result =
+                    await dispatcher.SendAsync(
+                        new AttemptWorkspaceStaffOnboardingRecoveryCommand(
+                            applicationId,
+                            request.OperationId,
+                            request.ExpectedApplicationVersion,
+                            actor.Id),
+                        token).ConfigureAwait(false);
+                if (result.IsFailure)
+                {
+                    return result.ToHttpResult(
+                        WorkspacesApiEndpointSupport.ErrorStatusCodes);
+                }
+
+                return result.Value.Outcome switch
+                {
+                    WorkspaceStaffOnboardingRecoveryAttemptOutcome.Recovered =>
+                        Results.Ok(result.Value),
+                    WorkspaceStaffOnboardingRecoveryAttemptOutcome.ReviewRequired =>
+                        Results.Json(
+                            result.Value,
+                            statusCode: StatusCodes.Status409Conflict),
+                    WorkspaceStaffOnboardingRecoveryAttemptOutcome.RetryLater =>
+                        RetryLater(context, result.Value),
+                    _ => Results.Problem(
+                        statusCode: StatusCodes.Status500InternalServerError)
+                };
+            })
+            .RequireTenant()
+            .RequireTenantPermission(
+                WorkspacesPermissionCodes.StaffOnboardingManage)
+            .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
+            .RequireAssuranceWhenConfigured(
+                security.StaffOnboardingManagementAssurance)
+            .Produces<WorkspaceStaffOnboardingRecoveryAttemptDto>(
+                StatusCodes.Status200OK)
+            .Produces<WorkspaceStaffOnboardingRecoveryAttemptDto>(
+                StatusCodes.Status409Conflict)
+            .Produces<WorkspaceStaffOnboardingRecoveryAttemptDto>(
+                StatusCodes.Status503ServiceUnavailable)
+            .Produces(StatusCodes.Status404NotFound);
+
+        group.MapGet(
+            "/applications/{applicationId:guid}/recovery-attempts/latest",
+            async (
+                Guid applicationId,
+                HttpContext context,
+                IRequestDispatcher dispatcher,
+                CancellationToken token) =>
+            {
+                WorkspacesApiEndpointSupport.SetNoStore(context);
+                return (await dispatcher.QueryAsync(
+                    new GetLatestWorkspaceStaffOnboardingRecoveryAttemptQuery(
+                        applicationId),
+                    token).ConfigureAwait(false)).ToHttpResult(
+                        WorkspacesApiEndpointSupport.ErrorStatusCodes);
+            })
+            .RequireTenant()
+            .RequireTenantPermission(
+                WorkspacesPermissionCodes.StaffOnboardingManage)
+            .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
+            .Produces<WorkspaceStaffOnboardingRecoveryAttemptDto>(
+                StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound);
+    }
+
+    private static IResult RetryLater(
+        HttpContext context,
+        WorkspaceStaffOnboardingRecoveryAttemptDto attempt)
+    {
+        if (attempt.RetryDirective !=
+                WorkspaceStaffOnboardingRecoveryRetryDirective
+                    .NewOperationAfterDelay ||
+            attempt.RetryAfterSeconds is not > 0)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+
+        context.Response.Headers.RetryAfter = attempt.RetryAfterSeconds.Value
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return Results.Json(
+            attempt,
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     internal static Result<WorkspaceStaffOnboardingDto> MapSubmissionOutcome(

@@ -74,7 +74,8 @@ public static class ReservationGuestRecordEndpoints
                     request.DateOfBirth,
                     request.NationalityCountryCode,
                     request.PreferredLanguageTag,
-                    request.Notes),
+                    request.Notes,
+                    request.LanguageTags),
                 actorId,
                 cancellationToken).ConfigureAwait(false);
         if (result.IsFailure)
@@ -214,4 +215,5 @@ public sealed record ReservationGuestRecordWriteRequest(
     DateOnly? DateOfBirth,
     string? NationalityCountryCode,
     string? PreferredLanguageTag,
-    string? Notes);
+    string? Notes,
+    string[]? LanguageTags = null);

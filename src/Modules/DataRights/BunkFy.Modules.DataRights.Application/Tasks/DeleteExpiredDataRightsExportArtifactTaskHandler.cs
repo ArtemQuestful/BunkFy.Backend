@@ -45,6 +45,7 @@ internal sealed class DeleteExpiredDataRightsExportArtifactTaskHandler(
         _ = await objectStore.DeleteAsync(
             started.Value.ArtifactId,
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         Result<Unit> completed =
             await commandDispatcher.DispatchAsync<
                 CompleteDataRightsExportDeletionCommand,

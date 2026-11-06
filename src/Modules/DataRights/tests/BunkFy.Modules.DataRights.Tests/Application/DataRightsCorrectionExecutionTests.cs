@@ -54,8 +54,66 @@ public sealed class DataRightsCorrectionExecutionTests
         Assert.Equal(
             GuestCorrectionPolicy.PolicyKey,
             first.Value.Execution.FieldPolicyKey);
-        Assert.Equal("user:executor", first.Value.Execution.ExecutedBy);
+        Assert.Equal("user:executor", first.Value.Execution.ClaimedBy);
+        Assert.True(first.Value.Execution.IsCurrentActor);
         Assert.Equal(first.Value.Execution, replay.Value.Execution);
+        Assert.Equal(1, executions.AddCount);
+
+        GetDataRightsCorrectionExecutionQueryHandler reader = new(executions);
+        var viewedByOther = await reader.HandleAsync(
+            new(
+                DataRightsCaseScope.ForProperty(dataRightsCase.PropertyId.Value),
+                dataRightsCase.Id,
+                "user:other"),
+            CancellationToken.None);
+        Assert.False(viewedByOther.Value.IsCurrentActor);
+    }
+
+    [Fact]
+    public async Task Expired_claim_can_be_taken_over_but_active_claim_cannot()
+    {
+        DataRightsCase dataRightsCase = CreateApprovedCase();
+        StubCorrectionExecutionRepository executions = new();
+        MutableClock clock = new(Now);
+        StartDataRightsCorrectionExecutionCommandHandler handler = new(
+            DataRightsMutationTestSupport.Case(
+                new StubCaseRepository(dataRightsCase)),
+            executions,
+            [new GuestCorrectionPolicy()],
+            clock);
+        Guid executionId = Guid.NewGuid();
+        long selectedCaseVersion = dataRightsCase.Version;
+        StartDataRightsCorrectionExecutionCommand initial = new(
+            DataRightsCaseScope.ForProperty(dataRightsCase.PropertyId!.Value),
+            dataRightsCase.Id,
+            executionId,
+            selectedCaseVersion,
+            "user:executor");
+        Assert.True((await handler.HandleAsync(
+            initial,
+            CancellationToken.None)).IsSuccess);
+
+        Result<DataRightsCorrectionExecutionDto> activeTakeover =
+            await handler.HandleAsync(
+                initial with { ActorId = "user:other" },
+                CancellationToken.None);
+        clock.UtcNow = Now.AddMinutes(10);
+        Result<DataRightsCorrectionExecutionDto> expiredTakeover =
+            await handler.HandleAsync(
+                initial with { ActorId = "user:other" },
+                CancellationToken.None);
+        Result<DataRightsCorrectionExecutionDto> previousActorRetry =
+            await handler.HandleAsync(initial, CancellationToken.None);
+
+        Assert.Equal(
+            DataRightsApplicationErrors.CorrectionExecutionConflict,
+            activeTakeover.Error);
+        Assert.True(expiredTakeover.IsSuccess, expiredTakeover.Error.Code);
+        Assert.Equal("user:other", expiredTakeover.Value.Execution.ClaimedBy);
+        Assert.True(expiredTakeover.Value.Execution.IsCurrentActor);
+        Assert.Equal(
+            DataRightsApplicationErrors.CorrectionExecutionConflict,
+            previousActorRetry.Error);
         Assert.Equal(1, executions.AddCount);
     }
 
@@ -248,7 +306,7 @@ public sealed class DataRightsCorrectionExecutionTests
             await gate.EvaluateAsync(
                 request with { FieldPolicyKey = "guests.other.correction.v1" },
                 CancellationToken.None);
-        clock.UtcNow = Now.AddMinutes(11);
+        clock.UtcNow = Now.AddMinutes(10);
         DataRightsCorrectionExecutionGateResult expired =
             await gate.EvaluateAsync(request, CancellationToken.None);
 
@@ -269,7 +327,7 @@ public sealed class DataRightsCorrectionExecutionTests
     {
         DataRightsCase dataRightsCase = CreateApprovedCase();
         StubCorrectionExecutionRepository executions = new();
-        MutableClock clock = new(Now.AddMinutes(2));
+        MutableClock clock = new(Now.AddMinutes(11));
         Guid executionId = Guid.NewGuid();
         StartDataRightsCorrectionExecutionCommandHandler starter = new(
             DataRightsMutationTestSupport.Case(
@@ -290,7 +348,7 @@ public sealed class DataRightsCorrectionExecutionTests
         DataRightsCorrectionAppliedIntegrationEvent applied = new(
             Guid.NewGuid(),
             dataRightsCase.ScopeId,
-            Now.AddMinutes(1),
+            Now.AddMinutes(10).AddSeconds(1),
             executionId,
             dataRightsCase.PropertyId.Value,
             dataRightsCase.Id,

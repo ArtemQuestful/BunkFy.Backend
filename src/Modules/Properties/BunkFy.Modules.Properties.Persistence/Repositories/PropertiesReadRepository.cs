@@ -7,25 +7,23 @@ using BunkFy.Modules.Properties.Domain.Aggregates;
 using Microsoft.EntityFrameworkCore;
 using Gma.Framework.Pagination;
 
-internal sealed class PropertiesReadRepository(PropertiesDbContext dbContext) : IPropertiesReadRepository
+internal sealed class PropertiesReadRepository(PropertiesDbContext dbContext)
+    : IPropertiesReadRepository
 {
-    public async Task<PropertyDto?> GetPropertyAsync(Guid propertyId, CancellationToken cancellationToken)
-    {
-        Property? property = await dbContext.Properties
+    public Task<Property?> GetPropertyAsync(
+        Guid propertyId,
+        CancellationToken cancellationToken) =>
+        dbContext.Properties
             .AsNoTracking()
-            .FirstOrDefaultAsync(property => property.Id == propertyId, cancellationToken)
-            .ConfigureAwait(false);
+            .FirstOrDefaultAsync(property => property.Id == propertyId, cancellationToken);
 
-        return property is null ? null : PropertiesMapper.ToDto(property);
-    }
-
-    public async Task<PropertyListResponse> ListPropertiesAsync(PageRequest pageRequest, CancellationToken cancellationToken)
+    public async Task<PropertyReadPage> ListPropertiesAsync(PageRequest pageRequest, CancellationToken cancellationToken)
         => await this.ListVisiblePropertiesAsync(
             pageRequest,
             PropertiesVisibilityScope.All,
             cancellationToken).ConfigureAwait(false);
 
-    public async Task<PropertyListResponse> ListVisiblePropertiesAsync(
+    public async Task<PropertyReadPage> ListVisiblePropertiesAsync(
         PageRequest pageRequest,
         PropertiesVisibilityScope visibility,
         CancellationToken cancellationToken)
@@ -51,22 +49,26 @@ internal sealed class PropertiesReadRepository(PropertiesDbContext dbContext) : 
                 property.ProcessingState,
                 property.Version
             })
-            .ToListAsync(cancellationToken)
+            .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
-        bool hasMore = fetched.Count > pageRequest.PageSize;
-        PropertyListItemDto[] properties = fetched
+        bool hasMore = fetched.Length > pageRequest.PageSize;
+        PropertyListReadModel[] properties = fetched
             .Take(pageRequest.PageSize)
-            .Select(property => new PropertyListItemDto(
+            .Select(property => new PropertyListReadModel(
                 property.Id,
                 property.Name.Value,
                 property.Code.Value,
                 property.TimeZoneId.Value,
-                PropertiesMapper.MapStatus(property.Status),
-                PropertiesMapper.MapProcessingStatus(property.ProcessingState),
+                property.Status,
+                property.ProcessingState,
                 property.Version))
             .ToArray();
 
-        return new PropertyListResponse(properties, pageRequest.Page, pageRequest.PageSize, hasMore);
+        return new PropertyReadPage(
+            Array.AsReadOnly(properties),
+            pageRequest.Page,
+            pageRequest.PageSize,
+            hasMore);
     }
 
     public async Task<RoomDto?> GetRoomAsync(Guid propertyId, Guid roomId, CancellationToken cancellationToken)

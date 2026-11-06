@@ -104,6 +104,7 @@ public sealed class DataRightsModule : IModule
                 ? Results.Unauthorized()
                 : (await dispatcher.SendAsync(
                     new CreateDataRightsCaseCommand(
+                        request.OperationId,
                         DataRightsCaseScope.ForProperty(propertyId),
                         request.RequestedOperations,
                         request.RestrictionDirective,
@@ -307,6 +308,7 @@ public sealed class DataRightsModule : IModule
     }
 
     public sealed record CreateDataRightsCaseRequest(
+        Guid OperationId,
         DataRightsOperation RequestedOperations,
         DataRightsRestrictionDirective RestrictionDirective,
         DataRightsRequesterRelationship RequesterRelationship);

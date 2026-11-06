@@ -3,14 +3,14 @@ namespace BunkFy.Modules.DataRights.Persistence;
 using BunkFy.Modules.DataRights.Application.Ports;
 using BunkFy.Modules.DataRights.Persistence.Repositories;
 using BunkFy.Modules.DataRights.Persistence.Security;
-using Gma.Framework.Cqrs.UnitOfWork;
+using BunkFy.Modules.Properties.Contracts;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Cqrs.Infrastructure;
+using Gma.Framework.Cqrs.UnitOfWork;
 using Gma.Framework.Messaging;
 using Gma.Framework.Observability;
 using Gma.Framework.Persistence.EntityFrameworkCore;
 using Gma.Framework.ProjectionRebuild;
-using BunkFy.Modules.Properties.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -38,6 +38,9 @@ public static class DependencyInjection
                 DataRightsMigrations.Schema,
                 DataRightsMigrations.HistoryTable));
         builder.Services.TryAddScoped<IDataRightsCaseRepository, DataRightsCaseRepository>();
+        builder.Services.TryAddScoped<
+            IDataRightsCaseIdentityRepository,
+            DataRightsCaseRepository>();
         builder.Services.TryAddScoped<
             IDataRightsOperationLock,
             DataRightsOperationLock>();
@@ -214,7 +217,7 @@ public static class DependencyInjection
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IValidateOptions<DataRightsLedgerDeltaOptions>>(
             new DataRightsLedgerDeltaOptionsValidator(isProduction)));
-        builder.Services.TryAddSingleton<TimeProvider>(TimeProvider.System);
+        builder.Services.TryAddSingleton(TimeProvider.System);
         AddTenantTerminationReplayServices(builder, isProduction);
 
         DataRightsLedgerDeltaProvider configuredProvider =
@@ -345,7 +348,13 @@ public static class DependencyInjection
             IDataRightsExportArtifactReader,
             ProtectedDataRightsExportArtifactReader>();
         builder.Services.TryAddScoped<
+            ITenantTerminationExportArtifactReader,
+            ProtectedTenantTerminationExportArtifactReader>();
+        builder.Services.TryAddScoped<
             IDataRightsExportArtifactObjectStore,
+            DataRightsExportArtifactObjectStore>();
+        builder.Services.TryAddScoped<
+            ITenantTerminationExportObjectStore,
             DataRightsExportArtifactObjectStore>();
     }
 

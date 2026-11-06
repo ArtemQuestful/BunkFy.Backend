@@ -24,6 +24,30 @@ internal sealed class DataRightsCaseConfiguration : IEntityTypeConfiguration<Dat
                 "((\"RequestedOperations\" & 4) = 0 AND \"RestrictionDirective\" = 0) OR " +
                 "((\"RequestedOperations\" & 4) = 4 AND \"RestrictionDirective\" BETWEEN 0 AND 2)");
             table.HasCheckConstraint(
+                "CK_data_rights_cases_restriction_target",
+                "(\"RestrictionTargetingContractVersion\" IS NULL AND " +
+                "\"RestrictionTargetOwnerKey\" IS NULL AND " +
+                "\"RestrictionTargetOwnerOperationId\" IS NULL AND " +
+                "\"RestrictionTargetOwnerOperationVersion\" IS NULL AND " +
+                "\"RestrictionTargetSelectedBy\" IS NULL AND " +
+                "\"RestrictionTargetSelectedAtUtc\" IS NULL) OR " +
+                "(\"RequestedOperations\" = 4 AND " +
+                "\"RestrictionDirective\" = 2 AND " +
+                "\"RestrictionTargetingContractVersion\" = 1 AND " +
+                "((\"Status\" IN (1, 2, 11) AND " +
+                "\"RestrictionTargetOwnerKey\" IS NULL AND " +
+                "\"RestrictionTargetOwnerOperationId\" IS NULL AND " +
+                "\"RestrictionTargetOwnerOperationVersion\" IS NULL AND " +
+                "\"RestrictionTargetSelectedBy\" IS NULL AND " +
+                "\"RestrictionTargetSelectedAtUtc\" IS NULL) OR " +
+                "(length(trim(\"RestrictionTargetOwnerKey\")) > 0 AND " +
+                "\"RestrictionTargetOwnerOperationId\" IS NOT NULL AND " +
+                "\"RestrictionTargetOwnerOperationVersion\" BETWEEN 1 AND " +
+                    "9223372036854775806 AND " +
+                "length(trim(\"RestrictionTargetSelectedBy\")) > 0 AND " +
+                "\"RestrictionTargetSelectedAtUtc\" >= \"CreatedAtUtc\" AND " +
+                "\"RestrictionTargetSelectedAtUtc\" <= \"LastChangedAtUtc\")))");
+            table.HasCheckConstraint(
                 "CK_data_rights_cases_requester",
                 "\"RequesterRelationship\" IN (1, 2, 3, 4)");
             table.HasCheckConstraint(
@@ -195,9 +219,16 @@ internal sealed class DataRightsCaseConfiguration : IEntityTypeConfiguration<Dat
                 "\"RestrictionExecutionResultingOwnerRevision\" >= 1 AND " +
                 "\"RestrictionExecutionResultingProjectionRevision\" >= 1 AND " +
                 "((\"RestrictionExecutionDirective\" = 1 AND " +
+                "\"RestrictionTargetingContractVersion\" IS NULL AND " +
                 "\"RestrictionExecutionEffectiveRestricted\" = TRUE) OR " +
                 "(\"RestrictionExecutionDirective\" = 2 AND " +
-                "\"RestrictionExecutionEffectiveRestricted\" = FALSE)) AND " +
+                "((\"RestrictionTargetingContractVersion\" IS NULL AND " +
+                "\"RestrictionExecutionEffectiveRestricted\" = FALSE) OR " +
+                "(\"RestrictionTargetingContractVersion\" = 1 AND " +
+                "\"RestrictionExecutionOwnerOperationId\" = " +
+                    "\"RestrictionTargetOwnerOperationId\" AND " +
+                "\"RestrictionExecutionResultingOwnerRevision\" = " +
+                    "\"RestrictionTargetOwnerOperationVersion\" + 1)))) AND " +
                 "\"RestrictionExecutionReceiptSha256\" IS NOT NULL AND " +
                 "char_length(\"RestrictionExecutionReceiptSha256\") = 64 AND " +
                 "length(trim(\"RestrictionExecutionExecutedBy\")) > 0 AND " +
@@ -305,6 +336,9 @@ internal sealed class DataRightsCaseConfiguration : IEntityTypeConfiguration<Dat
             .HasColumnName("RestrictionDirective")
             .HasConversion<int>()
             .IsRequired();
+        builder.Property(dataRightsCase =>
+                dataRightsCase.RestrictionTargetingContractVersion)
+            .HasColumnName("RestrictionTargetingContractVersion");
         builder.Property(dataRightsCase => dataRightsCase.RequesterRelationship)
             .HasConversion<int>()
             .IsRequired();
@@ -522,6 +556,23 @@ internal sealed class DataRightsCaseConfiguration : IEntityTypeConfiguration<Dat
             proof.Property(value => value.CompletedAtUtc)
                 .HasColumnName("RestrictionExecutionCompletedAtUtc");
         });
+        builder.OwnsOne(
+            dataRightsCase => dataRightsCase.RestrictionReleaseTarget,
+            target =>
+            {
+                target.Property(value => value.OwnerKey)
+                    .HasColumnName("RestrictionTargetOwnerKey")
+                    .HasMaxLength(DataRightsSubjectCoordinate.OwnerKeyMaxLength);
+                target.Property(value => value.OwnerOperationId)
+                    .HasColumnName("RestrictionTargetOwnerOperationId");
+                target.Property(value => value.OwnerOperationVersion)
+                    .HasColumnName("RestrictionTargetOwnerOperationVersion");
+                target.Property(value => value.SelectedBy)
+                    .HasColumnName("RestrictionTargetSelectedBy")
+                    .HasMaxLength(DataRightsCase.ActorIdMaxLength);
+                target.Property(value => value.SelectedAtUtc)
+                    .HasColumnName("RestrictionTargetSelectedAtUtc");
+            });
         builder.OwnsMany(dataRightsCase => dataRightsCase.SelectedSubjects, subjects =>
         {
             subjects.ToTable("selected_subjects", table =>

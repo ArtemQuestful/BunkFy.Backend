@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using BunkFy.Modules.Staff.Contracts;
 using System.Globalization;
 using System.Text.Json;
 using BunkFy.Modules.DataRights.Contracts;
@@ -88,6 +89,10 @@ public sealed partial class PropertiesPersistenceIntegrationTests
             await tenantBProperties.AddAsync(
                 otherTenantProperty,
                 CancellationToken.None);
+            await AppendCreatedTimeZoneOperationAsync(
+                tenantBScope.ServiceProvider,
+                otherTenantProperty,
+                "user:other-owner");
             await tenantBContext.SaveChangesAsync();
         }
 
@@ -124,12 +129,14 @@ public sealed partial class PropertiesPersistenceIntegrationTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("properties.termination.exported", result.ResultCode);
-        Assert.Equal(6, result.AffectedCount);
-        Assert.Equal(1, result.SelectedProofRevision);
-        Assert.Equal(1, result.ResultingProofRevision);
+        Assert.Equal(7, result.AffectedCount);
+        Assert.Equal(2, result.SelectedProofRevision);
+        Assert.Equal(2, result.ResultingProofRevision);
         Assert.Equal(
             [
                 PropertiesTenantTerminationMetadata.PropertyRecordType,
+                PropertiesTenantTerminationMetadata
+                    .PropertyTimeZoneOperationRecordType,
                 PropertiesTenantTerminationMetadata
                     .GovernanceAcknowledgementRecordType,
                 PropertiesTenantTerminationMetadata.RoomRecordType,
@@ -190,6 +197,39 @@ public sealed partial class PropertiesPersistenceIntegrationTests
             await migrator.MigrateAsync();
         }
 
+        Guid secondPropertyId;
+        Guid thirdPropertyId;
+        using (ServiceProvider seedProvider = CreatePersistenceProvider(
+                   postgreSql.GetConnectionString()))
+        using (IServiceScope seedScope = seedProvider.CreateScope())
+        {
+            IServiceProvider seedServices = seedScope.ServiceProvider;
+            await seedServices.GetRequiredService<WorkspacesDbContext>()
+                .Database.MigrateAsync();
+            IPropertyRepository properties = seedServices
+                .GetRequiredService<IPropertyRepository>();
+            Property secondProperty = CreateProperty(
+                "aaa-property",
+                "AAA Property");
+            Property thirdProperty = CreateProperty(
+                "zzz-property",
+                "ZZZ Property");
+            await properties.AddAsync(secondProperty, CancellationToken.None);
+            await properties.AddAsync(thirdProperty, CancellationToken.None);
+            await AppendCreatedTimeZoneOperationAsync(
+                seedServices,
+                secondProperty,
+                "system:migration-test");
+            await AppendCreatedTimeZoneOperationAsync(
+                seedServices,
+                thirdProperty,
+                "system:migration-test");
+            await seedServices.GetRequiredService<PropertiesDbContext>()
+                .SaveChangesAsync();
+            secondPropertyId = secondProperty.Id;
+            thirdPropertyId = thirdProperty.Id;
+        }
+
         await using (PropertiesDbContext verification = CreateDbContext(postgreSql.GetConnectionString()))
         {
             Property property = await verification.Properties.SingleAsync(item => item.Id == PropertyId);
@@ -227,10 +267,10 @@ public sealed partial class PropertiesPersistenceIntegrationTests
                         AND "ScopeId" = {TenantA}
                     """).SingleAsync());
 
-            Property secondProperty = CreateProperty("aaa-property", "AAA Property");
-            Property thirdProperty = CreateProperty("zzz-property", "ZZZ Property");
-            verification.Properties.AddRange(secondProperty, thirdProperty);
-            await verification.SaveChangesAsync();
+            Property secondProperty = await verification.Properties
+                .SingleAsync(item => item.Id == secondPropertyId);
+            Property thirdProperty = await verification.Properties
+                .SingleAsync(item => item.Id == thirdPropertyId);
 
             Property lowerOrdinal = secondProperty.ProjectionOrdinal < thirdProperty.ProjectionOrdinal
                 ? secondProperty
@@ -298,6 +338,13 @@ public sealed partial class PropertiesPersistenceIntegrationTests
         IRoomRepository rooms = services
             .GetRequiredService<IRoomRepository>();
         Property property = CreateProperty("hostel-one", "Hostel One");
+        await properties.AddAsync(property, CancellationToken.None);
+        await AppendCreatedTimeZoneOperationAsync(
+            services,
+            property,
+            "user:owner");
+        await dbContext.SaveChangesAsync();
+
         PropertyGovernanceBinding binding =
             PropertyGovernanceBinding.Create(
                 "GB",
@@ -355,7 +402,6 @@ public sealed partial class PropertiesPersistenceIntegrationTests
             binding.RetentionPolicyVersion,
             binding.ContentSha256,
             Digest);
-        await properties.AddAsync(property, CancellationToken.None);
         await rooms.AddAsync(room, CancellationToken.None);
         await revisionWriter.AppendAsync(
             new PropertyGovernanceRevisionWriteModel(
@@ -580,6 +626,9 @@ public sealed partial class PropertiesPersistenceIntegrationTests
         builder.Services.AddSingleton<ISystemClock>(
             clock ?? new TestClock(ExportNowUtc));
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddPropertiesPersistence();
         return builder.Services.BuildServiceProvider();
     }
@@ -593,9 +642,31 @@ public sealed partial class PropertiesPersistenceIntegrationTests
             tenantId,
             name,
             code,
-            "UTC",
+            "Etc/UTC",
             Guid.NewGuid(),
             DateTimeOffset.UtcNow).Value;
+
+    private static Task AppendCreatedTimeZoneOperationAsync(
+        IServiceProvider services,
+        Property property,
+        string actorId) =>
+        services.GetRequiredService<IPropertyTimeZoneRevisionWriter>()
+            .AppendAsync(
+                new PropertyTimeZoneRevisionWriteModel(
+                    Guid.NewGuid(),
+                    property.ScopeId,
+                    property.Id,
+                    property.Id,
+                    PropertyTimeZoneChangeKind.Created,
+                    property.TimeZoneId.Value,
+                    null,
+                    property.TimeZoneId.Value,
+                    BunkFy.TimeZones.TimeZoneCatalog.Default.CatalogVersion,
+                    0,
+                    property.Version,
+                    actorId,
+                    property.CreatedAtUtc),
+                CancellationToken.None);
 
     private sealed class TestScopeContext(string scopeId = TenantA)
         : IScopeContext

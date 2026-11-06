@@ -348,6 +348,7 @@ internal sealed class ExternalReservationAmendmentRequestedHandler(
 
         Result<ReservationDetailsChangeOutcome> begun = reservation.BeginAllocationAmendment(
             request.OperationId,
+            idGenerator.NewId(),
             fingerprint,
             request.Arrival,
             request.Departure,

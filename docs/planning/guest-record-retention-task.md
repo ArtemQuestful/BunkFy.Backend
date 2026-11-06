@@ -96,6 +96,9 @@ timestamps.
   its transactional command before mutation.
 - Persist a Guests-owned execution record so a Retention retry returns exact
   accumulated affected counts after a mid-batch process failure.
+- Fence every owner mutation and completion to the active Retention attempt.
+  Failed evidence does not advance the fair-scan cursor; a later attempt
+  reopens the execution and resumes from the proven failed cursor.
 - Advance the sweep cursor only when the owner execution reaches a durable
   terminal result. A retry may rescan, but already anonymised Guests replay as
   exact no-ops.

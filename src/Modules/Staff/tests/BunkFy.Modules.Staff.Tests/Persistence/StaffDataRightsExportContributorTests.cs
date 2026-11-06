@@ -113,7 +113,7 @@ public sealed class StaffDataRightsExportContributorTests
         Assert.Equal(
             StaffDataRightsExportSchema.ExportSchemaId,
             contributor.Descriptor.ExportSchemaId);
-        Assert.Equal(4, contributor.Descriptor.ExportSchemaVersion);
+        Assert.Equal(5, contributor.Descriptor.ExportSchemaVersion);
         Assert.DoesNotContain("staff.scope-id", contributor.Descriptor.FieldIds);
         Assert.DoesNotContain("staff.audit-actor-id", contributor.Descriptor.FieldIds);
         Assert.DoesNotContain("staff.change-reason", contributor.Descriptor.FieldIds);

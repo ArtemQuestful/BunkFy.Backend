@@ -5,6 +5,7 @@ using System.CommandLine.Parsing;
 using System.Globalization;
 using BunkFy.Modules.DataRights.Admin.Contracts;
 using BunkFy.Modules.DataRights.Application.Commands;
+using BunkFy.Modules.DataRights.Application.Models;
 using BunkFy.Modules.DataRights.Application.Queries;
 using BunkFy.Modules.DataRights.Contracts;
 using Gma.Framework.Administration;
@@ -27,6 +28,8 @@ internal static class TenantTerminationAdminCliCommandMap
             CreateApproveCommand(services, globalOptions),
             CreateDenyCommand(services, globalOptions),
             CreateStartCommand(services, globalOptions),
+            CreateDownloadExportCommand(services, globalOptions),
+            CreateConfirmExportCommand(services, globalOptions),
             CreateRetryCommand(services, globalOptions),
             CreateCancelCommand(services, globalOptions),
             CreateRecoverCommand(services, globalOptions)
@@ -243,6 +246,139 @@ internal static class TenantTerminationAdminCliCommandMap
         return command;
     }
 
+    private static Command CreateDownloadExportCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<Guid> caseId = RequiredGuid("--case-id");
+        Option<Guid> processId = RequiredGuid("--process-id");
+        Option<Guid> artifactId = RequiredGuid("--artifact-id");
+        Option<string> outputFile = RequiredString("--output-file");
+        Option<bool> overwrite = new("--overwrite");
+        Option<bool> yes = new("--yes");
+        Command command = new(
+            "download-export",
+            "Download the exact protected tenant export for review.")
+        {
+            caseId,
+            processId,
+            artifactId,
+            outputFile,
+            overwrite,
+            yes
+        };
+        command.SetAction((parse, token) => services
+            .GetRequiredService<AdminCliExecutor>()
+            .ExecuteAsync(
+                parse,
+                AdminOperation.Create(
+                    DataRightsAdminOperationNames
+                        .TenantTerminationExportDownload,
+                    DataRightsAdminPermissions
+                        .TenantTerminationExportDownload),
+                parse.GetValue(globalOptions.TenantOption),
+                requireTenant: true,
+                async (provider, cancellationToken) =>
+                {
+                    if (!parse.GetValue(yes))
+                    {
+                        return Result.Failure<
+                            TenantTerminationExportDownloadReport>(
+                                AdminErrors.ConfirmationRequired);
+                    }
+
+                    Result<DataRightsExportDownload>
+                        prepared = await provider
+                            .GetRequiredService<IRequestDispatcher>()
+                            .SendAsync(
+                                new PrepareTenantTerminationExportDownloadCommand(
+                                    parse.GetRequiredValue(caseId),
+                                    parse.GetRequiredValue(processId),
+                                    parse.GetRequiredValue(artifactId),
+                                    Actor(parse, globalOptions)),
+                                cancellationToken).ConfigureAwait(false);
+                    if (prepared.IsFailure)
+                    {
+                        return Result.Failure<
+                            TenantTerminationExportDownloadReport>(
+                                prepared.Error);
+                    }
+
+                    Result<TenantTerminationExportDownloadReport> written =
+                        await TenantTerminationExportFileWriter.WriteAsync(
+                            parse.GetRequiredValue(outputFile),
+                            parse.GetValue(overwrite),
+                            prepared.Value,
+                            cancellationToken).ConfigureAwait(false);
+                    if (written.IsSuccess)
+                    {
+                        AdminCliOutput.WriteObject(
+                            written.Value,
+                            Output(parse, globalOptions));
+                    }
+
+                    return written;
+                },
+                token));
+        return command;
+    }
+
+    private static Command CreateConfirmExportCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<Guid> caseId = RequiredGuid("--case-id");
+        Option<Guid> processId = RequiredGuid("--process-id");
+        Option<Guid> artifactId = RequiredGuid("--artifact-id");
+        Option<long> operationRevision =
+            RequiredLong("--export-operation-revision");
+        Option<long> expectedProcessVersion =
+            RequiredLong("--expected-process-version");
+        Option<long> expectedArtifactVersion =
+            RequiredLong("--expected-artifact-version");
+        Option<string> frozenRevision =
+            RequiredString("--frozen-revision-sha256");
+        Option<string> fragmentSet =
+            RequiredString("--fragment-set-sha256");
+        Option<bool> yes = new("--yes");
+        Command command = new(
+            "confirm-export",
+            "Confirm the reviewed export and authorize irreversible destruction.")
+        {
+            caseId,
+            processId,
+            artifactId,
+            operationRevision,
+            expectedProcessVersion,
+            expectedArtifactVersion,
+            frozenRevision,
+            fragmentSet,
+            yes
+        };
+        command.SetAction((parse, token) => ExecuteConfirmedAsync(
+            services,
+            globalOptions,
+            parse,
+            yes,
+            DataRightsAdminOperationNames.TenantTerminationExportConfirm,
+            DataRightsAdminPermissions.TenantTerminationExportConfirm,
+            (dispatcher, actor, cancellationToken) => dispatcher.SendAsync(
+                new ConfirmTenantTerminationExportCommand(
+                    parse.GetRequiredValue(caseId),
+                    parse.GetRequiredValue(processId),
+                    parse.GetRequiredValue(artifactId),
+                    parse.GetRequiredValue(operationRevision),
+                    parse.GetRequiredValue(expectedProcessVersion),
+                    parse.GetRequiredValue(expectedArtifactVersion),
+                    parse.GetRequiredValue(frozenRevision),
+                    parse.GetRequiredValue(fragmentSet),
+                    actor),
+                cancellationToken),
+            WriteProcess,
+            token));
+        return command;
+    }
+
     private static Command CreateCancelCommand(
         IServiceProvider services,
         AdminCliGlobalOptions globalOptions)
@@ -400,6 +536,22 @@ internal static class TenantTerminationAdminCliCommandMap
                 ("Remaining", item => item.RemainingActiveCount?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
                 ("Version", item => item.Version.ToString(CultureInfo.InvariantCulture))
             ]);
+        if (status.ExportHandoff is not null)
+        {
+            AdminCliOutput.WriteRows(
+                [status.ExportHandoff],
+                output,
+                [
+                    ("ArtifactId", item => item.ArtifactId.ToString("D")),
+                    ("State", item => item.Status.ToString()),
+                    ("ExportRevision", item => item.ExportOperationRevision.ToString(CultureInfo.InvariantCulture)),
+                    ("ArtifactVersion", item => item.ArtifactVersion.ToString(CultureInfo.InvariantCulture)),
+                    ("Records", item => item.RecordCount?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+                    ("Expires", item => item.ExpiresAtUtc.ToString("O", CultureInfo.InvariantCulture)),
+                    ("Confirmed", item => item.Confirmed ? "yes" : "no"),
+                    ("ConfirmedArtifactVersion", item => item.ConfirmedArtifactVersion?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)
+                ]);
+        }
     }
 
     private static void WriteStart(TenantTerminationStartDto value, string output)
@@ -464,6 +616,9 @@ internal static class TenantTerminationAdminCliCommandMap
         new(name) { Required = true };
 
     private static Option<long> RequiredLong(string name) =>
+        new(name) { Required = true };
+
+    private static Option<string> RequiredString(string name) =>
         new(name) { Required = true };
 
     private sealed class ApprovalEvidenceOptions

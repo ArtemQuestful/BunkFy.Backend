@@ -1,17 +1,38 @@
 namespace BunkFy.Modules.Properties.Application.Mapping;
 
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Properties.Application.Handlers;
+using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Domain.Aggregates;
 using BunkFy.Modules.Properties.Domain.Entities;
+using BunkFy.TimeZones;
 
 public static class PropertiesMapper
 {
-    public static PropertyDto ToDto(Property property) =>
-        new(
+    public static PropertyDto ToDto(
+        Property property,
+        DateTimeOffset observedAtUtc,
+        TimeZoneRuntimeCompatibilityProbe runtimeTimeZones)
+    {
+        PropertiesObservationTime.ThrowIfInvalid(
+            observedAtUtc,
+            nameof(observedAtUtc));
+        PropertyTimeZoneHealth timeZone =
+            PropertyTimeZoneHealthClassifier.Classify(
+                property.TimeZoneId.Value,
+                property.Status == PropertyState.Active,
+                observedAtUtc,
+                runtimeTimeZones);
+        return new(
             property.Id,
             property.Name.Value,
             property.Code.Value,
             property.TimeZoneId.Value,
+            timeZone.Status,
+            timeZone.CanonicalTimeZoneId,
+            timeZone.CatalogVersion,
+            observedAtUtc,
+            timeZone.CorrectionAllowed,
             MapStatus(property.Status),
             MapProcessingStatus(property.ProcessingState),
             MapGovernanceBinding(property),
@@ -19,6 +40,54 @@ public static class PropertiesMapper
             property.CreatedAtUtc,
             property.UpdatedAtUtc,
             property.RetiredAtUtc);
+    }
+
+    public static PropertyListResponse ToListResponse(
+        PropertyReadPage page,
+        DateTimeOffset observedAtUtc,
+        TimeZoneRuntimeCompatibilityProbe runtimeTimeZones)
+    {
+        PropertiesObservationTime.ThrowIfInvalid(
+            observedAtUtc,
+            nameof(observedAtUtc));
+        PropertyListItemDto[] properties = page.Properties
+            .Select(property => ToListItemDto(
+                property,
+                observedAtUtc,
+                runtimeTimeZones))
+            .ToArray();
+        return new PropertyListResponse(
+            properties,
+            page.Page,
+            page.PageSize,
+            page.HasMore);
+    }
+
+    private static PropertyListItemDto ToListItemDto(
+        PropertyListReadModel property,
+        DateTimeOffset observedAtUtc,
+        TimeZoneRuntimeCompatibilityProbe runtimeTimeZones)
+    {
+        PropertyTimeZoneHealth timeZone =
+            PropertyTimeZoneHealthClassifier.Classify(
+                property.TimeZoneId,
+                property.Status == PropertyState.Active,
+                observedAtUtc,
+                runtimeTimeZones);
+        return new PropertyListItemDto(
+            property.PropertyId,
+            property.Name,
+            property.Code,
+            property.TimeZoneId,
+            timeZone.Status,
+            timeZone.CanonicalTimeZoneId,
+            timeZone.CatalogVersion,
+            observedAtUtc,
+            timeZone.CorrectionAllowed,
+            MapStatus(property.Status),
+            MapProcessingStatus(property.ProcessingState),
+            property.Version);
+    }
 
     public static PropertyMutationReceiptDto ToReceipt(Property property) =>
         new(

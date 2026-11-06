@@ -70,6 +70,8 @@ public static class DataRightsModuleMetadata
             Permission(DataRightsAdminPermissionCodes.TenantTerminationRequest, "Request tenant termination."),
             Permission(DataRightsAdminPermissionCodes.TenantTerminationApprove, "Approve or deny tenant termination."),
             Permission(DataRightsAdminPermissionCodes.TenantTerminationExecute, "Start approved tenant termination."),
+            Permission(DataRightsAdminPermissionCodes.TenantTerminationExportDownload, "Download a reviewed tenant-termination export."),
+            Permission(DataRightsAdminPermissionCodes.TenantTerminationExportConfirm, "Confirm the reviewed tenant export and authorize destruction."),
             Permission(DataRightsAdminPermissionCodes.TenantTerminationRetry, "Retry blocked or failed tenant termination."),
             Permission(DataRightsAdminPermissionCodes.TenantTerminationCancel, "Cancel reversible tenant termination."),
             Permission(DataRightsAdminPermissionCodes.TenantTerminationRecover, "Recover tenant-termination coordination."),
@@ -130,6 +132,8 @@ public static class DataRightsModuleMetadata
         .WithTask<ExecuteTenantTerminationExportOwnerWorkPayload>()
         .WithTask<ExecuteGlobalTenantTerminationOwnerWorkPayload>()
         .WithTask<GenerateTenantTerminationExportArtifactPayload>()
+        .WithTask<DeleteExpiredTenantTerminationExportArtifactPayload>()
+        .WithTask<DeleteExpiredTenantTerminationExportFragmentPayload>()
         .WithTask<VerifyTenantTerminationPayload>()
         .WithTask<DispatchDataRightsResponseDeadlineAlertsPayload>()
         .WithProfile(DataRightsProfiles.Default)

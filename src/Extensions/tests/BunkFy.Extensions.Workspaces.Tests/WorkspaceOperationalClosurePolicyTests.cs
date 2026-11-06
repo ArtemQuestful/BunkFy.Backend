@@ -1,5 +1,6 @@
 namespace BunkFy.Extensions.Workspaces.Tests;
 
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using Gma.Framework.AccessControl;
 using Gma.Modules.AccessControl.Contracts;
@@ -33,7 +34,9 @@ public sealed class WorkspaceOperationalClosurePolicyTests
         OrganizationMutationAdmissionDecision expected)
     {
         StubWorkspaceOperationalAdmissionPolicy admission = new(outcome);
-        WorkspaceOrganizationMutationAdmissionPolicy policy = new(admission);
+        WorkspaceOrganizationMutationAdmissionPolicy policy = new(
+            admission,
+            new UnexpectedStaffOperationalIdentityReader());
 
         OrganizationMutationAdmissionDecision actual =
             await policy.EvaluateAsync(new OrganizationMutationAdmissionContext(
@@ -213,4 +216,14 @@ public sealed class WorkspaceOperationalClosurePolicyTests
                 typeof(WorkspaceOperationalRoleAssignmentPolicy));
     }
 
+    private sealed class UnexpectedStaffOperationalIdentityReader
+        : IStaffOperationalIdentityReader
+    {
+        public Task<StaffOperationalIdentitySnapshot?> FindAsync(
+            string tenantId,
+            string authSubjectId,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException(
+                "A non-transfer organization mutation must not read Staff.");
+    }
 }

@@ -115,6 +115,26 @@ public sealed class DataRightsCorrectionExecution : ScopedAggregateRoot<Guid>
         DataRightsSubjectCoordinate subject,
         string fieldPolicyKey,
         string executedBy) =>
+        this.MatchesClaimCoordinates(
+            executionId,
+            caseKind,
+            propertyId,
+            caseId,
+            selectedCaseVersion,
+            approvalRevision,
+            subject,
+            fieldPolicyKey) &&
+        this.IsOwnedBy(executedBy);
+
+    public bool MatchesClaimCoordinates(
+        Guid executionId,
+        DataRightsCaseKind caseKind,
+        Guid? propertyId,
+        Guid caseId,
+        long selectedCaseVersion,
+        long approvalRevision,
+        DataRightsSubjectCoordinate subject,
+        string fieldPolicyKey) =>
         this.Id == executionId &&
         this.CaseKind == caseKind &&
         this.PropertyId == propertyId &&
@@ -128,7 +148,9 @@ public sealed class DataRightsCorrectionExecution : ScopedAggregateRoot<Guid>
         string.Equals(
             this.FieldPolicyKey,
             NormalizeFieldPolicy(fieldPolicyKey),
-            StringComparison.Ordinal) &&
+            StringComparison.Ordinal);
+
+    public bool IsOwnedBy(string executedBy) =>
         string.Equals(this.ExecutedBy, executedBy?.Trim(), StringComparison.Ordinal);
 
     public bool MatchesAuthorization(
@@ -194,15 +216,18 @@ public sealed class DataRightsCorrectionExecution : ScopedAggregateRoot<Guid>
         DateTimeOffset nowUtc,
         DateTimeOffset expiresAtUtc)
     {
+        string actor = executedBy?.Trim() ?? string.Empty;
         if (this.State != DataRightsCorrectionExecutionState.Claimed ||
-            !string.Equals(this.ExecutedBy, executedBy?.Trim(), StringComparison.Ordinal))
+            actor.Length is 0 or > DataRightsCase.ActorIdMaxLength)
         {
             return Result.Failure(DataRightsDomainErrors.CorrectionExecutionConflict);
         }
 
-        if (nowUtc <= this.ExpiresAtUtc)
+        if (nowUtc < this.ExpiresAtUtc)
         {
-            return Result.Success();
+            return this.IsOwnedBy(actor)
+                ? Result.Success()
+                : Result.Failure(DataRightsDomainErrors.CorrectionExecutionConflict);
         }
 
         if (expiresAtUtc <= nowUtc ||
@@ -211,6 +236,7 @@ public sealed class DataRightsCorrectionExecution : ScopedAggregateRoot<Guid>
             return Result.Failure(DataRightsDomainErrors.CorrectionExecutionCoordinateInvalid);
         }
 
+        this.ExecutedBy = actor;
         this.StartedAtUtc = nowUtc;
         this.ExpiresAtUtc = expiresAtUtc;
         this.Version++;
@@ -252,8 +278,7 @@ public sealed class DataRightsCorrectionExecution : ScopedAggregateRoot<Guid>
             changedFieldCount is <= 0 or > 32 ||
             fieldsDigest.Length != DigestLength ||
             receiptDigest.Length != DigestLength ||
-            completedAtUtc < this.StartedAtUtc ||
-            completedAtUtc > this.ExpiresAtUtc)
+            completedAtUtc == default)
         {
             return Result.Failure(DataRightsDomainErrors.CorrectionExecutionProofInvalid);
         }

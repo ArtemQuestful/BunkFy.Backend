@@ -12,9 +12,9 @@ using Xunit;
 public sealed class StaffIdentityProvisioningAnchorMigrationScriptTests
 {
     private const string PreviousMigration =
-        "20260811045655_AddStaffOnboardingProvisioningOperations";
+        "20260822003301_AddStaffRetentionControlProofAuditIntegrity";
     private const string AnchorMigration =
-        "20260811110753_AddStaffIdentityProvisioningAnchors";
+        "20261102220100_AddStaffIdentityProvisioningAnchors";
 
     [Fact]
     public void Upgrade_requires_fail_fast_writer_drain_and_fails_all_Closing_stages()

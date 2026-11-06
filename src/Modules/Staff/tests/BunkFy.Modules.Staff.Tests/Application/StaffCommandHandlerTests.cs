@@ -2622,6 +2622,11 @@ public sealed class StaffCommandHandlerTests
             new StaffPropertyDirectoryListResponse(
                 [], pageRequest.Page, pageRequest.PageSize, false));
 
+        public Task<StaffAccountDirectoryResponse> ResolveAccountDirectoryAsync(
+            IReadOnlyCollection<string> authSubjectIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new StaffAccountDirectoryResponse([]));
+
         public Task<bool> EmployeeNumberExistsAsync(string employeeNumber, Guid? exceptStaffMemberId,
             CancellationToken cancellationToken)
         {

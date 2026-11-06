@@ -8,6 +8,12 @@ public static class DataRightsApplicationErrors
     public static readonly Error TenantRequired = new(
         "DataRights.TenantRequired",
         "A tenant scope is required.");
+    public static readonly Error CreationOperationInvalid = new(
+        "DataRights.CreationOperationInvalid",
+        "A valid Data Rights case creation operation is required.");
+    public static readonly Error CreationOperationConflict = new(
+        "DataRights.CreationOperationConflict",
+        "The Data Rights case creation operation is already bound to another request.");
     public static readonly Error CaseNotFound = new(
         "DataRights.CaseNotFound",
         "The data-rights case was not found.");
@@ -20,6 +26,15 @@ public static class DataRightsApplicationErrors
     public static readonly Error SubjectOwnerUnavailable = new(
         "DataRights.SubjectOwnerUnavailable",
         "The selected subject owner is unavailable.");
+    public static readonly Error SubjectOwnerCatalogInvalid = new(
+        "DataRights.SubjectOwnerCatalogInvalid",
+        "The subject-owner catalogue is invalid.");
+    public static readonly Error SubjectOwnerRetryRequired = new(
+        "DataRights.SubjectOwnerRetryRequired",
+        "Subject-owner processing must be retried.");
+    public static readonly Error SubjectOwnerResultInvalid = new(
+        "DataRights.SubjectOwnerResultInvalid",
+        "A subject owner returned an invalid result.");
     public static readonly Error SubjectNotFound = new(
         "DataRights.SubjectNotFound",
         "The selected subject is not available in the requested scope.");
@@ -59,12 +74,31 @@ public static class DataRightsApplicationErrors
     public static readonly Error RestrictionOwnerUnavailable = new(
         "DataRights.RestrictionOwnerUnavailable",
         "The selected restriction owner is unavailable.");
+    public static readonly Error RestrictionOwnerCatalogInvalid = new(
+        "DataRights.RestrictionOwnerCatalogInvalid",
+        "The processing-restriction owner catalogue is invalid.");
+    public static readonly Error RestrictionOwnerRetryRequired = new(
+        "DataRights.RestrictionOwnerRetryRequired",
+        "Processing-restriction owner execution must be retried.");
     public static readonly Error RestrictionExecutionBlocked = new(
         "DataRights.RestrictionExecutionBlocked",
         "The selected owner cannot apply the approved processing restriction.");
     public static readonly Error RestrictionOwnerProofInvalid = new(
         "DataRights.RestrictionOwnerProofInvalid",
-        "The selected owner returned invalid processing-restriction proof.");
+        "The selected owner returned an invalid processing-restriction result or proof.");
+    public static readonly Error RestrictionReleaseTargetNotFound = new(
+        "DataRights.RestrictionReleaseTargetNotFound",
+        "The selected processing-restriction release target is not available.");
+    public static readonly Error RestrictionReleaseTargetStale = new(
+        "DataRights.RestrictionReleaseTargetStale",
+        "The processing-restriction release target changed and must be selected again.");
+    public static readonly Error RestrictionReleaseTargetResultInvalid = new(
+        "DataRights.RestrictionReleaseTargetResultInvalid",
+        "The selected owner returned an invalid processing-restriction target result.");
+    public static Error RestrictionReleaseTargetRequired =>
+        DataRightsDomainErrors.RestrictionReleaseTargetRequired;
+    public static Error RestrictionReleaseTargetInvalid =>
+        DataRightsDomainErrors.RestrictionReleaseTargetInvalid;
     public static Error RestrictionExecutionConflict =>
         DataRightsDomainErrors.RestrictionExecutionConflict;
     public static readonly Error CorrectionExecutionDenied = new(
@@ -73,6 +107,9 @@ public static class DataRightsApplicationErrors
     public static readonly Error CorrectionOwnerUnavailable = new(
         "DataRights.CorrectionOwnerUnavailable",
         "The selected correction owner is unavailable.");
+    public static readonly Error CorrectionOwnerCatalogInvalid = new(
+        "DataRights.CorrectionOwnerCatalogInvalid",
+        "The correction-owner policy catalogue is invalid.");
     public static readonly Error CorrectionExecutionNotFound = new(
         "DataRights.CorrectionExecutionNotFound",
         "The correction execution was not found.");
@@ -131,9 +168,15 @@ public static class DataRightsApplicationErrors
     public static readonly Error ExportArtifactAlreadyRequested = new(
         "DataRights.ExportArtifactAlreadyRequested",
         "The protected export was already requested with different coordinates.");
+    public static readonly Error ExportArtifactVersionConflict = new(
+        "DataRights.ExportArtifactVersionConflict",
+        "The protected export artifact changed before the retry was requested.");
     public static readonly Error ExportOwnerUnavailable = new(
         "DataRights.ExportOwnerUnavailable",
-        "A selected data owner has no unique export contributor.");
+        "A selected data owner is unavailable for protected export.");
+    public static readonly Error ExportOwnerCatalogInvalid = new(
+        "DataRights.ExportOwnerCatalogInvalid",
+        "The protected-export owner catalogue is invalid.");
     public static readonly Error ExportGenerationConflict = new(
         "DataRights.ExportGenerationConflict",
         "The protected export generation no longer matches the approved case.");
@@ -185,6 +228,21 @@ public static class DataRightsApplicationErrors
     public static readonly Error TenantTerminationExportProofInvalid = new(
         "DataRights.TenantTerminationExportProofInvalid",
         "The tenant-termination export does not contain the exact durable owner proof set.");
+    public static readonly Error TenantTerminationExportArtifactNotFound = new(
+        "DataRights.TenantTerminationExportArtifactNotFound",
+        "The tenant-termination export artifact was not found.");
+    public static readonly Error TenantTerminationExportArtifactNotAvailable = new(
+        "DataRights.TenantTerminationExportArtifactNotAvailable",
+        "The tenant-termination export artifact is not available.");
+    public static readonly Error TenantTerminationExportArtifactExpired = new(
+        "DataRights.TenantTerminationExportArtifactExpired",
+        "The tenant-termination export artifact has expired.");
+    public static readonly Error TenantTerminationExportVerificationFailed = new(
+        "DataRights.TenantTerminationExportVerificationFailed",
+        "The tenant-termination export artifact could not be verified.");
+    public static readonly Error TenantTerminationExportConfirmationInvalid = new(
+        "DataRights.TenantTerminationExportConfirmationInvalid",
+        "The tenant-termination export confirmation is stale or invalid.");
     public static readonly Error TenantTerminationVerificationProofInvalid = new(
         "DataRights.TenantTerminationVerificationProofInvalid",
         "Tenant termination cannot complete until every destruction owner and protected replay proof is verified.");

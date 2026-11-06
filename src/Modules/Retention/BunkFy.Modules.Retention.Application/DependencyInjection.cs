@@ -27,6 +27,9 @@ public static class DependencyInjection
                 ISecuritySignalDefinitionSource,
                 RetentionSecuritySignalDefinitions>());
         services.AddApplicationServicesFromAssembly(typeof(DependencyInjection).Assembly);
+        services.TryAddScoped<
+            IRetentionRunRetryExecutor,
+            UnavailableRetentionRunRetryExecutor>();
         services.TryAddScoped<RetentionExecutionMutationCoordinator>();
         services.TryAddScoped<RetentionScopeMutationCoordinator>();
         services.AddIntegrationEventHandler<
@@ -59,6 +62,11 @@ public static class DependencyInjection
             RetentionPropertyProcessingSuspendedHandler>(
                 RetentionModuleMetadata.Name,
                 PropertiesModuleMetadata.Name);
+        services.AddIntegrationEventHandler<
+            RetentionRunRetryRequestedIntegrationEvent,
+            RetentionRunRetryRequestedHandler>(
+                RetentionModuleMetadata.Name,
+                RetentionModuleMetadata.Name);
         services.AddGmaAccessControlPermissionPolicies(
             RetentionModuleMetadata.Descriptor);
         return services;

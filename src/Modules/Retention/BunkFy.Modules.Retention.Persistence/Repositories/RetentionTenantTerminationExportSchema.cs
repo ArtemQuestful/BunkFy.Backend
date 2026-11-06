@@ -21,7 +21,8 @@ internal static class RetentionTenantTerminationExportSchema
     private static readonly Type[] SourceTypes =
     [
         typeof(RetentionExecutionTenantExport),
-        typeof(RetentionScheduleStateTenantExport)
+        typeof(RetentionScheduleStateTenantExport),
+        typeof(RetentionRunRetryRequestTenantExport)
     ];
 
     private static readonly SensitiveBinding[] SensitiveBindings =
@@ -40,6 +41,14 @@ internal static class RetentionTenantTerminationExportSchema
             "organizations"),
         Binding<RetentionScheduleStateTenantExport>(
             nameof(RetentionScheduleStateTenantExport.PropertyId),
+            "retention.property-reference",
+            "properties"),
+        Binding<RetentionRunRetryRequestTenantExport>(
+            nameof(RetentionRunRetryRequestTenantExport.ScopeId),
+            "retention.tenant-scope-reference",
+            "organizations"),
+        Binding<RetentionRunRetryRequestTenantExport>(
+            nameof(RetentionRunRetryRequestTenantExport.PropertyId),
             "retention.property-reference",
             "properties")
     ];

@@ -61,6 +61,10 @@ public sealed class PropertiesIntegrationEventContractTests
     {
         Assert.Equal("gma.properties.property-created.v2", PropertiesIntegrationSubjects.PropertyCreated);
         Assert.Equal("bunkfy.properties.property-updated.v2", PropertiesIntegrationSubjects.CreatePropertyUpdated("bunkfy"));
+        Assert.Equal(
+            "bunkfy.properties.property-time-zone-changed.v1",
+            PropertiesIntegrationSubjects.CreatePropertyTimeZoneChanged(
+                "bunkfy"));
         Assert.Equal("bunkfy.properties.property-retired.v1", PropertiesIntegrationSubjects.CreatePropertyRetired("bunkfy"));
         Assert.Equal("bunkfy.properties.room-created.v2", PropertiesIntegrationSubjects.CreateRoomCreated("bunkfy"));
         Assert.Equal("bunkfy.properties.room-retired.v2", PropertiesIntegrationSubjects.CreateRoomRetired("bunkfy"));
@@ -153,6 +157,83 @@ public sealed class PropertiesIntegrationEventContractTests
         Assert.Equal(PropertyStatus.Active, JsonSerializer.Deserialize<PropertyStatus>("\"Active\"", JsonOptions));
     }
 
+    [Fact]
+    public void Time_zone_changed_event_round_trips_complete_catalog_provenance()
+    {
+        PropertyTimeZoneChangedIntegrationEvent integrationEvent = new(
+            EventId,
+            "tenant-a",
+            OccurredAtUtc,
+            PropertyId,
+            "UTC",
+            "Etc/UTC",
+            "Etc/UTC",
+            PropertyTimeZoneChangeKind.Canonicalized,
+            "TZDB: 2026c (mapping: $Revision$)",
+            2);
+
+        string json = JsonSerializer.Serialize(integrationEvent, JsonOptions);
+        PropertyTimeZoneChangedIntegrationEvent? deserialized =
+            JsonSerializer.Deserialize<
+                PropertyTimeZoneChangedIntegrationEvent>(
+                    json,
+                    JsonOptions);
+
+        Assert.Contains(
+            "\"changeKind\":\"canonicalized\"",
+            json,
+            StringComparison.Ordinal);
+        Assert.Equal(integrationEvent, deserialized);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new
+            PropertyTimeZoneChangedIntegrationEvent(
+                EventId,
+                "tenant-a",
+                OccurredAtUtc,
+                PropertyId,
+                "Etc/UTC",
+                "Etc/UTC",
+                "Etc/UTC",
+                PropertyTimeZoneChangeKind.Unchanged,
+                "TZDB: 2026c",
+                2));
+        Assert.Throws<ArgumentException>(() => new
+            PropertyTimeZoneChangedIntegrationEvent(
+                EventId,
+                "tenant-a",
+                OccurredAtUtc,
+                PropertyId,
+                "Etc/UTC",
+                "Etc/UTC",
+                "Etc/UTC",
+                PropertyTimeZoneChangeKind.Canonicalized,
+                "TZDB: 2026c",
+                2));
+        Assert.Throws<ArgumentException>(() => new
+            PropertyTimeZoneChangedIntegrationEvent(
+                EventId,
+                "tenant-a",
+                OccurredAtUtc,
+                PropertyId,
+                "UTC",
+                null,
+                "Etc/UTC",
+                PropertyTimeZoneChangeKind.Canonicalized,
+                "TZDB: 2026c",
+                2));
+        Assert.Throws<ArgumentException>(() => new
+            PropertyTimeZoneChangedIntegrationEvent(
+                EventId,
+                "tenant-a",
+                OccurredAtUtc,
+                PropertyId,
+                "UTC",
+                "Etc/UTC",
+                "Etc/UTC",
+                PropertyTimeZoneChangeKind.Changed,
+                "TZDB: 2026c",
+                2));
+    }
+
     [Theory]
     [InlineData(RoomStatus.Active, "active")]
     [InlineData(RoomStatus.Retired, "retired")]
@@ -164,6 +245,36 @@ public sealed class PropertiesIntegrationEventContractTests
     [InlineData(BedStatus.Retired, "retired")]
     public void Bed_status_names_use_stable_wire_names(BedStatus status, string expected)
         => Assert.Equal(expected, BedStatusNames.ToWireName(status));
+
+    [Theory]
+    [InlineData(PropertyTimeZoneChangeKind.Created, "created")]
+    [InlineData(PropertyTimeZoneChangeKind.Unchanged, "unchanged")]
+    [InlineData(PropertyTimeZoneChangeKind.Canonicalized, "canonicalized")]
+    [InlineData(PropertyTimeZoneChangeKind.Changed, "changed")]
+    public void Time_zone_change_kind_uses_strict_stable_wire_names(
+        PropertyTimeZoneChangeKind kind,
+        string expected)
+    {
+        Assert.Equal(
+            $"\"{expected}\"",
+            JsonSerializer.Serialize(kind, JsonOptions));
+        Assert.Equal(
+            kind,
+            JsonSerializer.Deserialize<PropertyTimeZoneChangeKind>(
+                $"\"{expected}\"",
+                JsonOptions));
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("\"Created\"")]
+    [InlineData("\"unknown\"")]
+    public void Time_zone_change_kind_rejects_numeric_or_unknown_values(
+        string json) =>
+        Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<PropertyTimeZoneChangeKind>(
+                json,
+                JsonOptions));
 
     [Theory]
     [InlineData("1")]

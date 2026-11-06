@@ -25,6 +25,7 @@ internal sealed class DataRightsLedgerDeltaStartupValidator(
         DataRightsLedgerDeltaStoreReadiness readiness =
             await store.CheckReadinessAsync(cancellationToken)
                 .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!readiness.IsReady)
         {
             throw new DataRightsLedgerDeltaStoreException(

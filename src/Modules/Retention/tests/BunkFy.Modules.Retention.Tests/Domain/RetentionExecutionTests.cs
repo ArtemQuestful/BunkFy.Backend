@@ -27,6 +27,11 @@ public sealed class RetentionExecutionTests
 
         Assert.True(execution.BeginRetry(
             attempt: 2,
+            StartedAt.AddMinutes(5),
+            StartedAt.AddMinutes(10)).IsFailure);
+
+        Assert.True(execution.BeginRetry(
+            attempt: 2,
             StartedAt.AddMinutes(10),
             StartedAt.AddMinutes(15)).IsSuccess);
 
@@ -34,6 +39,20 @@ public sealed class RetentionExecutionTests
         Assert.Equal(RetentionExecutionState.Running, execution.State);
         Assert.Null(execution.CompletedAtUtc);
         Assert.Null(execution.OutcomeCode);
+    }
+
+    [Fact]
+    public void Running_retry_rejects_a_regressed_start_window()
+    {
+        RetentionExecution execution = Start();
+
+        Assert.True(execution.BeginRetry(
+            attempt: 2,
+            StartedAt.AddMinutes(-1),
+            StartedAt.AddMinutes(4)).IsFailure);
+
+        Assert.Equal(1, execution.Attempt);
+        Assert.Equal(StartedAt, execution.StartedAtUtc);
     }
 
     [Fact]
@@ -64,6 +83,49 @@ public sealed class RetentionExecutionTests
             attempt: 2,
             StartedAt.AddMinutes(10),
             StartedAt.AddMinutes(15)).IsFailure);
+    }
+
+    [Fact]
+    public void Completion_rejects_an_unstructured_outcome_code()
+    {
+        RetentionExecution execution = Start();
+
+        Assert.True(execution.Complete(
+            RetentionExecutionState.Completed,
+            attempt: 1,
+            scannedCount: 1,
+            affectedCount: 1,
+            remainingCount: 0,
+            "guest record completed",
+            StartedAt.AddMinutes(2),
+            holdReviewDueAtUtc: null).IsFailure);
+
+        Assert.Equal(RetentionExecutionState.Running, execution.State);
+        Assert.Equal(1, execution.Version);
+    }
+
+    [Fact]
+    public void Mutating_an_exhausted_execution_version_fails_closed()
+    {
+        RetentionExecution retry = Start();
+        SetVersion(retry, long.MaxValue);
+
+        Assert.True(retry.BeginRetry(
+            attempt: 2,
+            StartedAt.AddMinutes(1),
+            StartedAt.AddMinutes(6)).IsFailure);
+
+        RetentionExecution completion = Start();
+        SetVersion(completion, long.MaxValue);
+        Assert.True(completion.Complete(
+            RetentionExecutionState.Completed,
+            attempt: 1,
+            scannedCount: 1,
+            affectedCount: 1,
+            remainingCount: 0,
+            "guests.retention.completed",
+            StartedAt.AddMinutes(2),
+            holdReviewDueAtUtc: null).IsFailure);
     }
 
     [Fact]
@@ -120,6 +182,33 @@ public sealed class RetentionExecutionTests
         Assert.Null(state.HoldReviewDueAtUtc);
     }
 
+    [Fact]
+    public void Schedule_mutation_rejects_an_exhausted_version()
+    {
+        RetentionExecution first = Start();
+        RetentionScheduleState state = new(
+            first,
+            StartedAt.AddHours(1));
+        SetVersion(state, long.MaxValue);
+        RetentionExecution next = RetentionExecution.Start(
+            Guid.NewGuid(),
+            "tenant-a",
+            "ingestion",
+            "raw-source-evidence",
+            RetentionExecutionTargetKind.Tenant,
+            propertyId: null,
+            executionPolicyVersion: 1,
+            attempt: 1,
+            StartedAt.AddHours(2),
+            StartedAt.AddHours(2).AddMinutes(5)).Value;
+
+        InvalidOperationException failure = Assert.Throws<InvalidOperationException>(
+            () => state.RecordStarted(next, StartedAt.AddHours(3)));
+
+        Assert.Equal("Retention.ScheduleVersionExhausted", failure.Message);
+        Assert.Equal(first.Id, state.LastExecutionId);
+    }
+
     private static RetentionExecution Start() =>
         RetentionExecution.Start(
             Guid.NewGuid(),
@@ -132,4 +221,9 @@ public sealed class RetentionExecutionTests
             attempt: 1,
             StartedAt,
             StartedAt.AddMinutes(5)).Value;
+
+    private static void SetVersion(object target, long value) =>
+        target.GetType()
+            .GetProperty(nameof(RetentionExecution.Version))!
+            .SetValue(target, value);
 }

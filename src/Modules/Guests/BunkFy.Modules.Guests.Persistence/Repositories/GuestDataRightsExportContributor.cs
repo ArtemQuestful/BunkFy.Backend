@@ -71,7 +71,10 @@ internal sealed class GuestDataRightsExportContributor(
                 candidate.Version,
                 candidate.CreatedAtUtc,
                 candidate.LastChangedAtUtc,
-                candidate.ArchivedAtUtc))
+                candidate.ArchivedAtUtc)
+            {
+                LanguageTags = candidate.LanguageTags
+            })
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
         if (profile is null)

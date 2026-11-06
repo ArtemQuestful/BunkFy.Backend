@@ -62,3 +62,28 @@ internal sealed record RetentionScheduleStateTenantExportPayload(
     string? OutcomeCode,
     DateTimeOffset? HoldReviewDueAtUtc,
     long Version);
+
+internal sealed record RetentionRunRetryRequestTenantExport(
+    [property: RetentionTenantExportField(
+        "retention.tenant-scope-reference")]
+    string ScopeId,
+    [property: RetentionTenantExportField("retention.property-reference")]
+    Guid? PropertyId,
+    [property: RetentionTenantExportField("retention.run-retry-request")]
+    RetentionRunRetryRequestTenantExportPayload RetryRequest);
+
+internal sealed record RetentionRunRetryRequestTenantExportPayload(
+    Guid RequestId,
+    Guid RunId,
+    string OwnerKey,
+    string DataClassKey,
+    RetentionExecutionTargetKind TargetKind,
+    int ExecutionPolicyVersion,
+    long EvidenceVersion,
+    int Attempt,
+    RetentionRunRetryRequestState State,
+    DateTimeOffset RequestedAtUtc,
+    DateTimeOffset? ScheduledAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    string? FailureCode,
+    long Version);

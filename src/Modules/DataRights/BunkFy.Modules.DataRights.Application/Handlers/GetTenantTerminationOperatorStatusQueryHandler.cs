@@ -11,7 +11,8 @@ using Gma.Framework.Results;
 
 internal sealed class GetTenantTerminationOperatorStatusQueryHandler(
     ITenantTerminationCaseRepository cases,
-    ITenantTerminationOperatorStatusRepository statusRepository)
+    ITenantTerminationOperatorStatusRepository statusRepository,
+    ITenantTerminationExportArtifactRepository artifacts)
     : IQueryHandler<GetTenantTerminationOperatorStatusQuery,
         TenantTerminationOperatorStatusDto>
 {
@@ -38,7 +39,19 @@ internal sealed class GetTenantTerminationOperatorStatusQueryHandler(
                 : await statusRepository.ListOwnerWorkItemsAsync(
                     process.Id,
                     cancellationToken).ConfigureAwait(false);
-        if (!IsConsistent(dataRightsCase, process, workItems))
+        TenantTerminationExportArtifact? artifact =
+            process is null || !process.ExportRequested ||
+                process.FreezeOperationRevision is null
+                ? null
+                : await artifacts.GetByProcessAsync(
+                    process.Id,
+                    process.ExportConfirmedOperationRevision ??
+                        (process.Phase ==
+                            TenantTerminationProcessPhase.Export
+                            ? process.OperationRevision
+                            : 0),
+                    cancellationToken).ConfigureAwait(false);
+        if (!IsConsistent(dataRightsCase, process, workItems, artifact))
         {
             return Result.Failure<TenantTerminationOperatorStatusDto>(
                 DataRightsApplicationErrors
@@ -48,13 +61,15 @@ internal sealed class GetTenantTerminationOperatorStatusQueryHandler(
         return Result.Success(new TenantTerminationOperatorStatusDto(
             dataRightsCase.ToTenantTerminationDto(),
             process?.ToDto(),
-            workItems.Select(item => item.ToDto()).ToArray()));
+            workItems.Select(item => item.ToDto()).ToArray(),
+            artifact?.ToHandoffDto(process!)));
     }
 
     private static bool IsConsistent(
         DataRightsCase dataRightsCase,
         TenantTerminationProcess? process,
-        IReadOnlyCollection<TenantTerminationOwnerWorkItem> workItems)
+        IReadOnlyCollection<TenantTerminationOwnerWorkItem> workItems,
+        TenantTerminationExportArtifact? artifact)
     {
         bool isTenantTermination =
             dataRightsCase.Kind == DataRightsCaseKind.TenantTermination &&
@@ -69,6 +84,7 @@ internal sealed class GetTenantTerminationOperatorStatusQueryHandler(
         if (process is null)
         {
             return workItems.Count == 0 &&
+                artifact is null &&
                 dataRightsCase.Status is
                     DataRightsCaseState.ReviewRequired or
                     DataRightsCaseState.Approved or
@@ -110,6 +126,41 @@ internal sealed class GetTenantTerminationOperatorStatusQueryHandler(
                 TenantTerminationProcess.MaximumFrozenOwners * 5 &&
             workItems.All(item =>
                 item.ProcessId == process.Id &&
-                item.OperationRevision <= process.OperationRevision);
+                item.OperationRevision <= process.OperationRevision) &&
+            IsArtifactConsistent(process, artifact);
+    }
+
+    private static bool IsArtifactConsistent(
+        TenantTerminationProcess process,
+        TenantTerminationExportArtifact? artifact)
+    {
+        if (artifact is null)
+        {
+            return process.ExportArtifactId is null;
+        }
+
+        long expectedOperation = process.ExportConfirmedOperationRevision ??
+            process.OperationRevision;
+        return process.ExportRequested &&
+            artifact.ProcessId == process.Id &&
+            artifact.CaseId == process.CaseId &&
+            artifact.ApprovalRevision == process.ApprovalRevision &&
+            artifact.ExportOperationRevision == expectedOperation &&
+            artifact.TerminationEpoch == process.TerminationEpoch &&
+            string.Equals(
+                artifact.ScopeId,
+                process.ScopeId,
+                StringComparison.Ordinal) &&
+            string.Equals(
+                artifact.PolicyEvidenceSha256,
+                process.PolicyEvidenceSha256,
+                StringComparison.Ordinal) &&
+            string.Equals(
+                artifact.FrozenRevisionSha256,
+                process.FrozenRevisionSha256,
+                StringComparison.Ordinal) &&
+            (!process.ExportConfirmedOperationRevision.HasValue ||
+             TenantTerminationExportArtifactCoordinator
+                 .MatchesConfirmationReceipt(process, artifact));
     }
 }

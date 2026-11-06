@@ -29,7 +29,7 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
                     "guests.completed",
                     "guests.profile-anonymised",
                     new string('d', 64),
-                    Now.AddSeconds(30)));
+                    Now));
         FakeTaskDispatcher dispatcher = new(
             DataRightsAnonymisationWorkItemStart.Ready(
                 workItemVersion: 2,
@@ -110,6 +110,73 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
     }
 
     [Fact]
+    public async Task Owner_result_returned_at_deadline_is_not_recorded()
+    {
+        DataRightsAnonymisationContributionRequest request = CreateRequest();
+        MutableClock clock = new(Now);
+        FakeTaskDispatcher dispatcher = new(
+            DataRightsAnonymisationWorkItemStart.Ready(
+                workItemVersion: 2,
+                request));
+        RecordingContributor contributor = new(
+            DataRightsAnonymisationContributionResult.Failed("retry-required"),
+            ownerRequest => clock.UtcNow = ownerRequest.DeadlineUtc);
+        ExecuteDataRightsAnonymisationTaskHandler handler = new(
+            dispatcher,
+            [contributor],
+            clock);
+
+        TimeoutException exception = await Assert.ThrowsAsync<TimeoutException>(
+            () => handler.HandleAsync(
+                Payload(request),
+                CreateContext(),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.AnonymisationOwnerDeadlineExceeded",
+            exception.Message);
+        Assert.Same(request, contributor.Request);
+        Assert.Null(dispatcher.Recorded);
+        Assert.Null(dispatcher.Finalized);
+    }
+
+    [Fact]
+    public async Task Owner_proof_completed_at_deadline_is_not_recorded()
+    {
+        DataRightsAnonymisationContributionRequest request = CreateRequest();
+        DataRightsAnonymisationContributionResult contribution =
+            DataRightsAnonymisationContributionResult.Completed(
+                new DataRightsAnonymisationOwnerProof(
+                    ReceiptContractVersion: 1,
+                    Guid.NewGuid(),
+                    ResultingRecordVersion: request.Coordinate.RecordVersion + 1,
+                    "guests.completed",
+                    "guests.profile-anonymised",
+                    new string('d', 64),
+                    request.DeadlineUtc));
+        FakeTaskDispatcher dispatcher = new(
+            DataRightsAnonymisationWorkItemStart.Ready(
+                workItemVersion: 2,
+                request));
+        ExecuteDataRightsAnonymisationTaskHandler handler = new(
+            dispatcher,
+            [new RecordingContributor(contribution)],
+            new TestClock());
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<
+            InvalidOperationException>(() => handler.HandleAsync(
+                Payload(request),
+                CreateContext(),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.AnonymisationOwnerResultInvalid",
+            exception.Message);
+        Assert.Null(dispatcher.Recorded);
+        Assert.Null(dispatcher.Finalized);
+    }
+
+    [Fact]
     public async Task V2_task_dispatches_exact_scoped_contributor_and_records_result()
     {
         DataRightsAnonymisationContributionRequestV2 request =
@@ -125,7 +192,7 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
                     "staff.completed",
                     "staff.profile-anonymised",
                     new string('d', 64),
-                    Now.AddSeconds(30)));
+                    Now));
         FakeTaskDispatcher dispatcher = new(
             DataRightsAnonymisationWorkItemStart.Ready(
                 workItemVersion: 2,
@@ -232,6 +299,46 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
             "DataRights.AnonymisationPrerequisiteUnavailable",
             exception.Message);
         Assert.Null(dispatcher.Recorded);
+    }
+
+    [Fact]
+    public async Task V2_prerequisite_returned_at_deadline_does_not_call_owner()
+    {
+        DataRightsAnonymisationContributionRequestV2 request =
+            CreateScopedRequest();
+        MutableClock clock = new(Now);
+        FakeTaskDispatcher dispatcher = new(
+            DataRightsAnonymisationWorkItemStart.Ready(
+                workItemVersion: 2,
+                request));
+        RecordingScopedContributor contributor = new(
+            DataRightsAnonymisationContributionResult.Failed(
+                DataRightsAnonymisationContractV2.CurrentVersion,
+                "not-used"));
+        RecordingPrerequisite prerequisite = new(
+            DataRightsAnonymisationExecutionPrerequisiteResult.Completed(
+                DataRightsAnonymisationExecutionPrerequisiteContractV2
+                    .CurrentVersion),
+            ownerRequest => clock.UtcNow = ownerRequest.DeadlineUtc);
+        ExecuteDataRightsAnonymisationTaskV2Handler handler = new(
+            dispatcher,
+            [contributor],
+            clock,
+            [prerequisite]);
+
+        TimeoutException exception = await Assert.ThrowsAsync<TimeoutException>(
+            () => handler.HandleAsync(
+                Payload(request),
+                CreateContext(),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.AnonymisationPrerequisiteDeadlineExceeded",
+            exception.Message);
+        Assert.Same(request, prerequisite.Request);
+        Assert.Null(contributor.Request);
+        Assert.Null(dispatcher.Recorded);
+        Assert.Null(dispatcher.Finalized);
     }
 
     private static ExecuteDataRightsAnonymisationPayload Payload(
@@ -394,7 +501,8 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
     }
 
     private sealed class RecordingContributor(
-        DataRightsAnonymisationContributionResult result)
+        DataRightsAnonymisationContributionResult result,
+        Action<DataRightsAnonymisationContributionRequest>? onExecute = null)
         : IDataRightsAnonymisationContributor
     {
         public string OwnerKey => "guests";
@@ -406,6 +514,7 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
             CancellationToken cancellationToken)
         {
             this.Request = request;
+            onExecute?.Invoke(request);
             return Task.FromResult(result);
         }
     }
@@ -437,7 +546,8 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
     }
 
     private sealed class RecordingPrerequisite(
-        DataRightsAnonymisationExecutionPrerequisiteResult result)
+        DataRightsAnonymisationExecutionPrerequisiteResult result,
+        Action<DataRightsAnonymisationContributionRequestV2>? onExecute = null)
         : IDataRightsAnonymisationExecutionPrerequisiteV2
     {
         public string OwnerKey => "staff";
@@ -459,6 +569,7 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
                 CancellationToken cancellationToken)
         {
             this.Request = request;
+            onExecute?.Invoke(request);
             return Task.FromResult(result);
         }
     }
@@ -466,5 +577,10 @@ public sealed class ExecuteDataRightsAnonymisationTaskHandlerTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class MutableClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
     }
 }

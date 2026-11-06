@@ -14,7 +14,6 @@ public sealed class WorkspaceAccessProfileAssignmentPolicyTests
     private static readonly AccessSubject Target = AccessSubject.User("member-a");
 
     [Theory]
-    [InlineData(WorkspaceAccessRoles.Owner)]
     [InlineData(WorkspaceAccessRoles.MembershipMarker)]
     [InlineData(WorkspaceAccessRoles.LegacyMember)]
     public async Task Trusted_provisioner_can_assign_profile_to_workspace_member(string membershipRole)
@@ -28,6 +27,24 @@ public sealed class WorkspaceAccessProfileAssignmentPolicyTests
             CancellationToken.None);
 
         Assert.True(allowed);
+    }
+
+    [Fact]
+    public async Task Owner_target_is_rejected_even_when_an_ordinary_membership_marker_exists()
+    {
+        StubRoleProvisioner accessControl = new();
+        accessControl.Assign(Target, WorkspaceAccessRoles.Owner, WorkspaceScope);
+        accessControl.Assign(Target, WorkspaceAccessRoles.MembershipMarker, WorkspaceScope);
+        WorkspaceAccessProfileAssignmentPolicy policy = CreatePolicy(accessControl);
+
+        bool allowed = await policy.IsAllowedAsync(
+            CreateContext(AccessSubject.System(WorkspaceAccessActors.Provisioner)),
+            CancellationToken.None);
+
+        Assert.False(allowed);
+        Assert.Equal(
+            WorkspaceAccessRoles.Owner,
+            Assert.Single(accessControl.Checks).Role);
     }
 
     [Fact]

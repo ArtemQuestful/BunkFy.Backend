@@ -2,18 +2,14 @@ namespace BunkFy.Modules.DataRights.Application.Handlers;
 
 using BunkFy.Modules.DataRights.Application.Commands;
 using BunkFy.Modules.DataRights.Application.Ports;
-using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.DataRights.Domain.Aggregates;
 using BunkFy.Modules.DataRights.Domain.Models;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
-using Gma.Framework.Runtime.Time;
 
 internal sealed class CompleteTenantTerminationExportArtifactGenerationCommandHandler(
     TenantTerminationMutationCoordinator mutations,
-    ITenantTerminationExportArtifactRepository artifacts,
-    ITenantTerminationCoordinationSignal coordinationSignal,
-    ISystemClock clock)
+    ITenantTerminationExportArtifactRepository artifacts)
     : ICommandHandler<
         CompleteTenantTerminationExportArtifactGenerationCommand,
         TenantTerminationExportArtifactGenerationCompleted>
@@ -65,23 +61,6 @@ internal sealed class CompleteTenantTerminationExportArtifactGenerationCommandHa
                     available.Error);
         }
 
-        Result confirmed = TenantTerminationExportArtifactCoordinator.Confirm(
-            process,
-            artifact,
-            command.ExpectedProcessVersion,
-            TenantTerminationCoordination.ExecutorActorId,
-            clock.UtcNow);
-        if (confirmed.IsFailure)
-        {
-            return Result.Failure<
-                TenantTerminationExportArtifactGenerationCompleted>(
-                    confirmed.Error);
-        }
-
-        _ = await coordinationSignal.EnqueueAsync(
-            process,
-            process.LastChangedAtUtc,
-            cancellationToken).ConfigureAwait(false);
         return Result.Success(new
             TenantTerminationExportArtifactGenerationCompleted(
                 process.Id,

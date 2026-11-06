@@ -7,10 +7,29 @@ using Gma.Framework.Scoping;
 
 internal sealed class DataRightsCaseMutationCoordinator(
     IDataRightsCaseRepository cases,
+    IDataRightsCaseIdentityRepository caseIdentities,
     ITenantTerminationCaseRepository tenantTerminationCases,
     IDataRightsOperationLock operationLock,
     IScopeContext scopeContext)
 {
+    public async Task<DataRightsCase?> AcquireCreationAsync(
+        Guid operationId,
+        CancellationToken cancellationToken)
+    {
+        if (!this.HasValidCoordinates(operationId))
+        {
+            return null;
+        }
+
+        await operationLock.AcquireCaseWriteAsync(
+            operationId,
+            cancellationToken).ConfigureAwait(false);
+        return this.Validate(await caseIdentities.GetByIdAsync(
+                operationId,
+                cancellationToken).ConfigureAwait(false),
+            operationId);
+    }
+
     public async Task<DataRightsCase?> AcquireAsync(
         DataRightsCaseScope scope,
         Guid caseId,

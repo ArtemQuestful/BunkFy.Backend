@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Retention.Persistence;
 
 using Gma.Framework.Domain;
+using Gma.Framework.Naming;
 
 public sealed class RetentionTenantProjection : IScopedEntity
 {
@@ -12,7 +13,15 @@ public sealed class RetentionTenantProjection : IScopedEntity
         bool isActive,
         long sourceVersion)
     {
-        this.ScopeId = scopeId;
+        this.ScopeId = TenantIds.Normalize(scopeId);
+        if (organizationId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A Retention tenant projection requires an organization id.",
+                nameof(organizationId));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceVersion);
         this.OrganizationId = organizationId;
         this.IsActive = isActive;
         this.SourceVersion = sourceVersion;
@@ -25,15 +34,28 @@ public sealed class RetentionTenantProjection : IScopedEntity
 
     public void Apply(Guid organizationId, bool isActive, long sourceVersion)
     {
-        if (sourceVersion <= this.SourceVersion)
+        if (organizationId == Guid.Empty ||
+            organizationId != this.OrganizationId)
+        {
+            throw new InvalidOperationException(
+                "Retention.OrganizationCoordinateConflict");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceVersion);
+        if (sourceVersion < this.SourceVersion)
         {
             return;
         }
 
-        if (organizationId != this.OrganizationId)
+        if (sourceVersion == this.SourceVersion)
         {
-            throw new InvalidOperationException(
-                "Retention.OrganizationCoordinateConflict");
+            if (this.IsActive != isActive)
+            {
+                throw new InvalidOperationException(
+                    "Retention.OrganizationProjectionConflict");
+            }
+
+            return;
         }
 
         this.IsActive = isActive;

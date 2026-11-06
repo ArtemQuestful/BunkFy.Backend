@@ -36,7 +36,9 @@ internal sealed class IngestionRetentionExecutor(
                     new ClaimExpiredRawPayloadsCommand(
                         request.ExecutionId,
                         PurgeExpiredRawPayloadsPayload.DefaultBatchSize,
-                        PurgeExpiredRawPayloadsPayload.DefaultStaleClaimMinutes),
+                        PurgeExpiredRawPayloadsPayload.DefaultStaleClaimMinutes,
+                        request.ExecutionId,
+                        request.Attempt),
                     cancellationToken).ConfigureAwait(false);
             IReadOnlyList<RawPayloadPurgeCandidate> candidates =
                 Require(claimed);
@@ -51,7 +53,8 @@ internal sealed class IngestionRetentionExecutor(
                     new CompleteRawPayloadPurgeCommand(
                         candidate.ReceiptId,
                         request.ExecutionId,
-                        request.ExecutionId),
+                        request.ExecutionId,
+                        request.Attempt),
                     cancellationToken).ConfigureAwait(false);
                 _ = Require(completed);
             }
@@ -92,7 +95,8 @@ internal sealed class IngestionRetentionExecutor(
                 await dispatcher.SendAsync(
                     new RedactExpiredSensitiveHistoryCommand(
                         RedactExpiredReservationHistoryPayload.DefaultBatchSize,
-                        request.ExecutionId),
+                        request.ExecutionId,
+                        request.Attempt),
                     cancellationToken).ConfigureAwait(false);
             SensitiveHistoryRedactionBatchResult result = Require(redacted);
             if (result.TotalCount <
@@ -145,6 +149,7 @@ internal sealed class IngestionRetentionExecutor(
             await dispatcher.SendAsync(
                 new CompleteIngestionRetentionExecutionCommand(
                     request.ExecutionId,
+                    request.Attempt,
                     checked(backlog.EligibleCount + backlog.BlockedCount),
                     outcomeCode,
                     completedAtUtc,

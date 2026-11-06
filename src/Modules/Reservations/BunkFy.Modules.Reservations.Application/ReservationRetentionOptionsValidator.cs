@@ -16,10 +16,13 @@ internal sealed class ReservationRetentionOptionsValidator
                 $"{ReservationRetentionOptions.SectionName}:IntervalMinutes must be between 15 and 1440.");
         }
 
-        if (options.ScanSize is < 1 or > 1000)
+        if (options.ScanSize is < 1 or >
+            ReservationRetentionOptions.MaximumScanSize)
         {
             failures.Add(
-                $"{ReservationRetentionOptions.SectionName}:ScanSize must be between 1 and 1000.");
+                $"{ReservationRetentionOptions.SectionName}:ScanSize must " +
+                $"be between 1 and " +
+                $"{ReservationRetentionOptions.MaximumScanSize}.");
         }
 
         if (options.MutationBatchSize is < 1 or > 250)

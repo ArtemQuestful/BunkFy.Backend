@@ -8,14 +8,26 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 internal sealed class RetentionScheduleStateConfiguration
     : IEntityTypeConfiguration<RetentionScheduleState>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(EntityTypeBuilder<RetentionScheduleState> builder)
     {
         builder.ToTable("schedule_state", table =>
         {
             table.HasCheckConstraint(
+                "CK_retention_schedule_state_coordinates",
+                $"trim(\"ScopeId\") <> '' AND \"LastExecutionId\" <> '{EmptyGuid}' AND " +
+                "\"OwnerKey\" ~ '^[a-z0-9.-]+$' AND " +
+                "\"DataClassKey\" ~ '^[a-z0-9.-]+$' AND " +
+                "(\"OutcomeCode\" IS NULL OR " +
+                "\"OutcomeCode\" ~ '^[A-Za-z0-9.-]+$')");
+            table.HasCheckConstraint(
                 "CK_retention_schedule_state_versions",
                 "\"ExecutionPolicyVersion\" >= 1 AND \"Version\" >= 1 AND " +
-                "\"ConsecutiveFailures\" >= 0");
+                "\"ConsecutiveFailures\" >= 0 AND " +
+                $"(\"State\" = {(int)RetentionExecutionState.Running} OR " +
+                "\"Version\" >= 2)");
             table.HasCheckConstraint(
                 "CK_retention_schedule_state_time",
                 "\"NextDueAtUtc\" > \"LastStartedAtUtc\" AND " +
@@ -24,19 +36,32 @@ internal sealed class RetentionScheduleStateConfiguration
             table.HasCheckConstraint(
                 "CK_retention_schedule_state_target",
                 "(\"TargetKey\" = 'tenant' AND \"PropertyId\" IS NULL) OR " +
-                "(char_length(\"TargetKey\") = 32 AND \"PropertyId\" IS NOT NULL)");
+                $"(\"PropertyId\" IS NOT NULL AND \"PropertyId\" <> '{EmptyGuid}' AND " +
+                "\"TargetKey\" = replace(\"PropertyId\"::text, '-', ''))");
             table.HasCheckConstraint(
                 "CK_retention_schedule_state_result",
-                $"\"State\" IN ({(int)RetentionExecutionState.Running}, " +
-                $"{(int)RetentionExecutionState.Completed}, " +
-                $"{(int)RetentionExecutionState.Blocked}, " +
-                $"{(int)RetentionExecutionState.Failed}) AND " +
-                "((\"LastCompletedAtUtc\" IS NULL AND \"LastScannedCount\" IS NULL AND " +
+                $"(\"State\" = {(int)RetentionExecutionState.Running} AND " +
+                "\"LastCompletedAtUtc\" IS NULL AND \"LastScannedCount\" IS NULL AND " +
                 "\"LastAffectedCount\" IS NULL AND \"LastRemainingCount\" IS NULL AND " +
-                "\"OutcomeCode\" IS NULL) OR (\"LastCompletedAtUtc\" IS NOT NULL AND " +
+                "\"OutcomeCode\" IS NULL AND \"HoldReviewDueAtUtc\" IS NULL) OR " +
+                $"(\"State\" = {(int)RetentionExecutionState.Completed} AND " +
+                "\"LastCompletedAtUtc\" IS NOT NULL AND " +
                 "\"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND " +
                 "\"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND " +
-                "length(trim(\"OutcomeCode\")) > 0))");
+                "\"OutcomeCode\" IS NOT NULL AND \"HoldReviewDueAtUtc\" IS NULL AND " +
+                "\"ConsecutiveFailures\" = 0) OR " +
+                $"(\"State\" = {(int)RetentionExecutionState.Blocked} AND " +
+                "\"LastCompletedAtUtc\" IS NOT NULL AND " +
+                "\"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND " +
+                "\"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND " +
+                "\"OutcomeCode\" IS NOT NULL AND \"HoldReviewDueAtUtc\" IS NOT NULL AND " +
+                "\"ConsecutiveFailures\" = 0) OR " +
+                $"(\"State\" = {(int)RetentionExecutionState.Failed} AND " +
+                "\"LastCompletedAtUtc\" IS NOT NULL AND " +
+                "\"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND " +
+                "\"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND " +
+                "\"OutcomeCode\" IS NOT NULL AND \"HoldReviewDueAtUtc\" IS NULL AND " +
+                "\"ConsecutiveFailures\" >= 1)");
         });
         builder.HasKey(state => new
         {
@@ -73,5 +98,10 @@ internal sealed class RetentionScheduleStateConfiguration
             state.ScopeId,
             state.HoldReviewDueAtUtc
         });
+        builder.HasIndex(state => new
+        {
+            state.ScopeId,
+            state.LastExecutionId
+        }).IsUnique();
     }
 }

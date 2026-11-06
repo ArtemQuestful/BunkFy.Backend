@@ -11,6 +11,7 @@ using Gma.Framework.Scoping;
 
 internal sealed class BeginIngestionRetentionExecutionCommandHandler(
     IIngestionRetentionExecutionRepository executions,
+    IngestionRetentionMutationCoordinator mutations,
     IScopeContext scopeContext)
     : ICommandHandler<
         BeginIngestionRetentionExecutionCommand,
@@ -40,9 +41,16 @@ internal sealed class BeginIngestionRetentionExecutionCommandHandler(
                 IngestionRetentionExecutionErrors.CoordinateInvalid);
         }
 
-        IngestionRetentionExecution? execution = await executions.GetAsync(
+        Result<IngestionRetentionExecutionLease> acquired = await mutations.AcquireAsync(
             request.ExecutionId,
             cancellationToken).ConfigureAwait(false);
+        if (acquired.IsFailure)
+        {
+            return Result.Failure<IngestionRetentionExecutionStart>(
+                acquired.Error);
+        }
+
+        IngestionRetentionExecution? execution = acquired.Value.Execution;
         if (execution is null)
         {
             Result<IngestionRetentionExecution> started =
@@ -114,7 +122,7 @@ internal sealed class BeginIngestionRetentionExecutionCommandHandler(
 }
 
 internal sealed class CompleteIngestionRetentionExecutionCommandHandler(
-    IIngestionRetentionExecutionRepository executions)
+    IngestionRetentionMutationCoordinator mutations)
     : ICommandHandler<
         CompleteIngestionRetentionExecutionCommand,
         RetentionContributionResult>
@@ -123,21 +131,25 @@ internal sealed class CompleteIngestionRetentionExecutionCommandHandler(
         CompleteIngestionRetentionExecutionCommand command,
         CancellationToken cancellationToken)
     {
-        IngestionRetentionExecution? execution = await executions.GetAsync(
+        Result<IngestionRetentionExecution> acquired =
+            await mutations.AcquireAttemptAsync(
             command.ExecutionId,
+            command.Attempt,
             cancellationToken).ConfigureAwait(false);
-        if (execution is null)
+        if (acquired.IsFailure)
         {
             return Result.Failure<RetentionContributionResult>(
-                IngestionApplicationErrors.RetentionExecutionNotFound);
+                acquired.Error);
         }
 
+        IngestionRetentionExecution execution = acquired.Value;
         IngestionRetentionExecutionState state =
             command.HoldReviewDueAtUtc is null
                 ? IngestionRetentionExecutionState.Completed
                 : IngestionRetentionExecutionState.Blocked;
         Result completed = execution.Complete(
             state,
+            command.Attempt,
             command.RemainingCount,
             command.OutcomeCode,
             command.CompletedAtUtc,

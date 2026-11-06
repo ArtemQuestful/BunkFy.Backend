@@ -25,6 +25,40 @@ internal static class DataRightsExportAuditFacts
             occurredAtUtc);
 
     public static DataRightsExportAuditFact Create(
+        TenantTerminationExportArtifact artifact,
+        DataRightsExportAuditAction action,
+        string actorId,
+        string outcomeCode,
+        DateTimeOffset occurredAtUtc) =>
+        new(
+            artifact.ScopeId,
+            artifact.Id,
+            artifact.CaseId,
+            DataRightsCaseType.TenantTermination,
+            PropertyId: null,
+            action,
+            actorId,
+            outcomeCode,
+            occurredAtUtc);
+
+    public static DataRightsExportAuditFact Create(
+        TenantTerminationExportFragment fragment,
+        DataRightsExportAuditAction action,
+        string actorId,
+        string outcomeCode,
+        DateTimeOffset occurredAtUtc) =>
+        new(
+            fragment.ScopeId,
+            fragment.Id,
+            fragment.CaseId,
+            DataRightsCaseType.TenantTermination,
+            PropertyId: null,
+            action,
+            actorId,
+            outcomeCode,
+            occurredAtUtc);
+
+    public static DataRightsExportAuditFact Create(
         string tenantId,
         DataRightsCaseScope scope,
         Guid artifactId,

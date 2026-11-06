@@ -119,7 +119,8 @@ public sealed class GuestsAdminApiModule : IAdminApiModule
                     request.NationalityCountryCode,
                     request.PreferredLanguageTag,
                     request.Notes,
-                    Actor(context)), token),
+                    Actor(context),
+                    LanguageTags: request.LanguageTags), token),
                 cancellationToken,
                 errorStatusCodes: ErrorStatusCodes).ConfigureAwait(false))
             .Produces<GuestMutationReceiptDto>(StatusCodes.Status200OK);
@@ -148,7 +149,8 @@ public sealed class GuestsAdminApiModule : IAdminApiModule
                     request.PreferredLanguageTag,
                     request.Notes,
                     request.ExpectedVersion,
-                    Actor(context)), token),
+                    Actor(context),
+                    request.LanguageTags), token),
                 cancellationToken,
                 errorStatusCodes: ErrorStatusCodes).ConfigureAwait(false))
             .Produces<GuestMutationReceiptDto>(StatusCodes.Status200OK);
@@ -186,7 +188,8 @@ public sealed class GuestsAdminApiModule : IAdminApiModule
         DateOnly? DateOfBirth,
         string? NationalityCountryCode,
         string? PreferredLanguageTag,
-        string? Notes);
+        string? Notes,
+        string[]? LanguageTags = null);
 
     public sealed record GuestProfileUpdateRequest(
         Guid OperationId,
@@ -198,7 +201,8 @@ public sealed class GuestsAdminApiModule : IAdminApiModule
         string? NationalityCountryCode,
         string? PreferredLanguageTag,
         string? Notes,
-        long ExpectedVersion);
+        long ExpectedVersion,
+        string[]? LanguageTags = null);
 
     public sealed record ArchiveGuestProfileRequest(
         Guid OperationId,

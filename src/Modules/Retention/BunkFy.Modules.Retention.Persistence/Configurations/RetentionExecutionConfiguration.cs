@@ -8,21 +8,39 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 internal sealed class RetentionExecutionConfiguration
     : IEntityTypeConfiguration<RetentionExecution>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(EntityTypeBuilder<RetentionExecution> builder)
     {
         builder.ToTable("executions", table =>
         {
             table.HasCheckConstraint(
                 "CK_retention_executions_coordinate",
-                "(\"TargetKind\" = 1 AND \"PropertyId\" IS NULL) OR " +
-                "(\"TargetKind\" = 2 AND \"PropertyId\" IS NOT NULL)");
+                $"\"Id\" <> '{EmptyGuid}' AND trim(\"ScopeId\") <> '' AND " +
+                "((\"TargetKind\" = 1 AND \"PropertyId\" IS NULL) OR " +
+                $"(\"TargetKind\" = 2 AND \"PropertyId\" IS NOT NULL AND " +
+                $"\"PropertyId\" <> '{EmptyGuid}'))");
+            table.HasCheckConstraint(
+                "CK_retention_executions_keys",
+                "\"OwnerKey\" ~ '^[a-z0-9.-]+$' AND " +
+                "\"DataClassKey\" ~ '^[a-z0-9.-]+$' AND " +
+                "(\"OutcomeCode\" IS NULL OR " +
+                "\"OutcomeCode\" ~ '^[A-Za-z0-9.-]+$')");
             table.HasCheckConstraint(
                 "CK_retention_executions_versions",
                 "\"ExecutionPolicyVersion\" >= 1 AND \"Attempt\" >= 1 AND " +
-                "\"Version\" >= 1");
+                "\"Version\" >= 1 AND " +
+                $"(\"State\" = {(int)RetentionExecutionState.Running} OR " +
+                "\"Version\" >= 2)");
             table.HasCheckConstraint(
                 "CK_retention_executions_time",
-                "\"DeadlineUtc\" > \"StartedAtUtc\"");
+                "\"DeadlineUtc\" > \"StartedAtUtc\" AND " +
+                "(\"CompletedAtUtc\" IS NULL OR " +
+                "\"CompletedAtUtc\" >= \"StartedAtUtc\") AND " +
+                $"(\"State\" = {(int)RetentionExecutionState.Failed} OR " +
+                "\"CompletedAtUtc\" IS NULL OR " +
+                "\"CompletedAtUtc\" <= \"DeadlineUtc\")");
             table.HasCheckConstraint(
                 "CK_retention_executions_state",
                 $"(\"State\" = {(int)RetentionExecutionState.Running} AND " +

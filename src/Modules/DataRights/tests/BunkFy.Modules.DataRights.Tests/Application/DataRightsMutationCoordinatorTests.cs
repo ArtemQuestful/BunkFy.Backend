@@ -28,6 +28,7 @@ public sealed class DataRightsMutationCoordinatorTests
         DataRightsCaseMutationCoordinator coordinator = new(
             cases,
             cases,
+            cases,
             new RecordingOperationLock(calls),
             new TestScopeContext());
 
@@ -42,6 +43,32 @@ public sealed class DataRightsMutationCoordinatorTests
             [
                 $"case-write:{dataRightsCase.Id:N}",
                 $"case-reload:{dataRightsCase.Id:N}"
+            ],
+            calls);
+    }
+
+    [Fact]
+    public async Task Case_creation_locks_before_tenant_identity_reload()
+    {
+        List<string> calls = [];
+        DataRightsCase dataRightsCase = CreateCase();
+        RecordingCaseRepository cases = new(dataRightsCase, calls);
+        DataRightsCaseMutationCoordinator coordinator = new(
+            cases,
+            cases,
+            cases,
+            new RecordingOperationLock(calls),
+            new TestScopeContext());
+
+        DataRightsCase? acquired = await coordinator.AcquireCreationAsync(
+            dataRightsCase.Id,
+            CancellationToken.None);
+
+        Assert.Same(dataRightsCase, acquired);
+        Assert.Equal(
+            [
+                $"case-write:{dataRightsCase.Id:N}",
+                $"case-identity-reload:{dataRightsCase.Id:N}"
             ],
             calls);
     }
@@ -147,6 +174,7 @@ public sealed class DataRightsMutationCoordinatorTests
             typeof(BeginDataRightsExportGenerationCommandHandler),
             typeof(CancelDataRightsCaseCommandHandler),
             typeof(CompleteDataRightsExportGenerationCommandHandler),
+            typeof(CreateDataRightsCaseCommandHandler),
             typeof(DataRightsAnonymisationExecutionReconciler),
             typeof(DataRightsCorrectionCompletionCoordinator),
             typeof(DecideTenantTerminationCommandHandler),
@@ -305,7 +333,9 @@ public sealed class DataRightsMutationCoordinatorTests
     private sealed class RecordingCaseRepository(
         DataRightsCase? dataRightsCase,
         List<string> calls)
-        : IDataRightsCaseRepository, ITenantTerminationCaseRepository
+        : IDataRightsCaseRepository,
+          IDataRightsCaseIdentityRepository,
+          ITenantTerminationCaseRepository
     {
         public Task AddAsync(
             DataRightsCase candidate,
@@ -318,6 +348,15 @@ public sealed class DataRightsMutationCoordinatorTests
             CancellationToken cancellationToken)
         {
             calls.Add($"case-reload:{caseId:N}");
+            return Task.FromResult(
+                dataRightsCase?.Id == caseId ? dataRightsCase : null);
+        }
+
+        public Task<DataRightsCase?> GetByIdAsync(
+            Guid caseId,
+            CancellationToken cancellationToken)
+        {
+            calls.Add($"case-identity-reload:{caseId:N}");
             return Task.FromResult(
                 dataRightsCase?.Id == caseId ? dataRightsCase : null);
         }

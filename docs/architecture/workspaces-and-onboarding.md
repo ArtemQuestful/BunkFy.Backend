@@ -203,6 +203,8 @@ A module-owned EF inbox already provides the transaction for its handler. Module
 
 Workspace creation and invitation acceptance are durable processes with explicit states such as `Pending`, `Provisioning`, `Completed`, `Failed`, `Revoked`, and `Superseded`. Process steps are replay-safe. The client can poll/read current status and never treats an HTTP timeout as proof that a command failed.
 
+A Staff identity-anchor continuation commits an explicit partial-provisioning domain failure as `Failed` with its existing Staff target. Subsequent delivery and the legacy retry route cannot reopen that application; an authorized owner's receipted recovery verifies the current membership, Staff and access facts. This also covers a lost response after another authority has committed. Admission or lifecycle precondition failures and infrastructure exceptions keep the inbox delivery retryable. A completed resolution is immutable and cannot be rewritten into a failed application.
+
 The membership gate and AccessControl both fail closed. A partially provisioned membership without grants cannot enter PMS operations. Removing membership blocks access even if stale role assignments still await cleanup.
 
 ## Migration Direction
@@ -220,12 +222,23 @@ BunkFy's current composition uses global Auth identities and no workspace-id log
 
 The migration and the steady-state schema must be covered against PostgreSQL. Provider-specific migration code remains outside Auth domain/application behavior.
 
+The deferred Staff claim withdrawal migration is appended as
+`20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals`, after the published
+Workspaces recovery migration. Its earlier, unpublished PR identifier
+`20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals` was never part of the
+canonical dev history. The application migration host requires the applied
+history to be an exact prefix of its loaded catalogue. Keep that guard intact:
+both fresh databases and the nonempty published history use the appended
+migration; a database that applied the unpublished identifier requires a
+separately inspected recovery path and is refused automatically. Do not rename,
+insert or delete applied history rows to make admission pass. The new migration's
+`Down` also refuses to discard nonempty durable withdrawal observations.
 ### Identity-Anchor Stop/Drain Deployment Contract
 
 The following migrations form one non-rolling-compatible release boundary:
 
-- Staff `20260811110753_AddStaffIdentityProvisioningAnchors`;
-- Workspaces `20260811205004_AddWorkspaceStaffIdentityProvisioningAnchors`.
+- Staff `20261102220100_AddStaffIdentityProvisioningAnchors`;
+- Workspaces `20261102220200_AddWorkspaceStaffIdentityProvisioningAnchors`.
 
 The generic [Migrations Host Production Safety](../operations/migrations-host-production-safety.md)
 contract still applies. This feature additionally requires one stop-the-world
@@ -242,8 +255,8 @@ cutover:
    safe states: processed/terminal, or an explicitly recorded retry/failed item
    whose coordinates and forward-replay owner have been reviewed. Unknown or
    still-running work is not a safe drain state.
-4. Apply `20260811110753_AddStaffIdentityProvisioningAnchors` first and
-   `20260811205004_AddWorkspaceStaffIdentityProvisioningAnchors` second from the
+4. Apply `20261102220100_AddStaffIdentityProvisioningAnchors` first and
+   `20261102220200_AddWorkspaceStaffIdentityProvisioningAnchors` second from the
    same approved Migrations artifact. A partial run remains stopped and uses
    the approved same-release forward-resume or restore procedure.
 5. Deploy the matching API, Admin, and Worker binaries together before any
@@ -289,3 +302,18 @@ resume decision.
 - Trust the tenant header after global login: lets selection masquerade as authorization.
 - Store roles in invitation JWTs: makes revocation, single-use claims, delegation policy, and server-side corrections unsafe.
 - Treat reusable QR as a normal invitation: hides materially different risk and lifecycle rules.
+
+
+## Browser join credential custody
+
+The app API exposes `/api/workspace-join/{contextId}` as a browser transport facade. The context ID and source kind are public recovery metadata, not permission or membership authority. Every operation requires `X-BunkFy-Join-Context` to match the route; the host's configured CORS policy and the existing workspace-join write-rate policy also apply.
+
+Preparation receives the original link credential, validates it through Organizations preview and places it in a Data Protection envelope in a host-only, HttpOnly, SameSite=Strict browser-session cookie. The cookie path belongs to one context so independent tabs do not overwrite each other or send every join credential on ordinary API requests. Production requires HTTPS. Development, Preview and Integration retain their existing local HTTP workflows. The existing application name and durable/shared Data Protection key ring remain required for restart and replica continuity.
+
+The browser proves that it retained the cookie before clearing the link fragment or migrating an existing raw `bunkfy.join.secret.v1` entry. New client storage contains only the public context metadata. A pending-enrollment hint contains the public source ID and is keyed by immutable subject ID; it never contains the credential. Failed custody or metadata persistence retains the original recovery input for retry. External sign-in and MFA resume a pending join without changing account-link destinations.
+
+Preview, Staff-profile submission and joining forward the original Organizations queries/commands and Workspaces authoritative-scope submitter. Their owning APIs supply their existing HTTP error mappings. Authenticated user identity, verification, source validity, expiry, revocation, capacity, frozen proposal, journal, role/property constraints and membership decisions remain with the same owners. An expired source can still preview an existing pending application; cookie custody supplies no admission decision or extended token lifetime. The original API routes remain available for existing clients and CLI operations.
+
+Leaving, successful activation and terminal withdrawal/expiry clear local recovery and request deletion of the context cookie. The active page keeps public metadata in memory to show its terminal result. A reload then requires the complete link again. If cookie cleanup cannot reach the API, the residual cookie remains HttpOnly/session-only and the source owner's validity and membership checks continue to apply.
+
+Before release, qualify the paired browser/API source, legacy migration, password/external/MFA return paths, verified-email recovery, account changes, independent tabs, withdrawal/expiry display, restart with the same key ring and the existing genuine onboarding/booking/restore rehearsal. Focused transport tests use controlled business-owner responses and do not replace native Auth/Organizations/Staff or deployment qualification.

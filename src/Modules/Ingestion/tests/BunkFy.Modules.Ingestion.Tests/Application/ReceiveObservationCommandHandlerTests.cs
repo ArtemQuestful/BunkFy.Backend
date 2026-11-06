@@ -645,6 +645,11 @@ public sealed class ReceiveObservationCommandHandlerTests
             int taskAttempt,
             CancellationToken cancellationToken) => Unexpected();
 
+        public Task AcquireRetentionExecutionAsync(
+            string tenantId,
+            Guid executionId,
+            CancellationToken cancellationToken) => Unexpected();
+
         public Task AcquireConnectionReadAsync(
             string tenantId,
             Guid connectionId,
@@ -676,6 +681,11 @@ public sealed class ReceiveObservationCommandHandlerTests
             string tenantId,
             Guid taskRunId,
             int taskAttempt,
+            CancellationToken cancellationToken) => Unexpected();
+
+        public Task AcquireRetentionExecutionAsync(
+            string tenantId,
+            Guid executionId,
             CancellationToken cancellationToken) => Unexpected();
 
         public Task AcquireConnectionReadAsync(

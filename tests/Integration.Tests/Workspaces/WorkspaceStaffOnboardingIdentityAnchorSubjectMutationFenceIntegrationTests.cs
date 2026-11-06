@@ -246,7 +246,7 @@ public sealed class
         await using (WorkspacesDbContext tenant =
             CreateDbContext(connectionString, TenantId))
         {
-            await tenant.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await tenant.Database.MigrateAsync().ConfigureAwait(false);
             for (int index = 1; index <= 501; index++)
             {
                 tenant.StaffOnboardingApplications.Add(CreateApplication(
@@ -294,7 +294,8 @@ public sealed class
         string connectionString,
         string tenantId) => new(
         new DbContextOptionsBuilder<WorkspacesDbContext>()
-            .UseNpgsql(connectionString)
+            .UseNpgsql(connectionString, options => options.MigrationsAssembly(
+                WorkspacesMigrations.PostgreSqlAssembly))
             .Options,
         new TestScopeContext(tenantId));
 

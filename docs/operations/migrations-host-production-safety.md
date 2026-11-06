@@ -1,5 +1,9 @@
 # Migrations Host Production Safety
 
+## Guest language collection rollout qualification
+
+The additive Guest language migration retains legacy scalar bytes and old correction receipt meanings. Enable collection-writing clients only after a homogeneous compatible API/worker release and migration have been verified. Mixed old API peers ignore the new JSON collection. Web rollback comes first; keep the additive schema and collection-aware backend and forward-fix it. Old scalar writes can diverge from the collection, and old anonymisation cannot clear it. A backend rollback therefore needs separately approved write suspension and tested restore/repair evidence, not merely a retained column. See [the bounded contract task](../planning/guest-multilanguage-contract-task.md). No local test or preview receipt grants production Apply admission.
+
 `BunkFy.Host.Migrations` is the only BunkFy executable that advances the
 product's PostgreSQL schemas. Module assemblies still own their migrations; the
 host owns cross-module deployment safety.
@@ -72,6 +76,61 @@ The release identity and database identity required for `Plan` remain required
 for `Apply`. Evidence references are identifiers, never credentials or evidence
 payloads.
 
+## Existing Inventory convergence history
+
+The published `20260812082324_AddInventoryManualBlockGroupConvergence`
+migration sorts before the two canonical Inventory integrity migrations dated
+21 August. A database that already applied the complete 15-migration Inventory
+catalogue from `315acadb49e4842ed63529a26bb47efb6643bfc9` consequently needs
+an explicit, qualified history transition. The ordinary exact-prefix mode
+refuses this shape before applying any module. Direct EF upgrade evidence
+alone does not qualify the application migration host.
+
+For this transition, select the following disposition for both `Plan` and
+`Apply` on the migration job:
+
+```text
+Migrations__ProductionAdmission__ExistingHistoryDisposition=ApplyInventoryConvergenceV1
+```
+
+The host recognizes only the exact canonical `inventory` module name, an exact
+ordered prefix of the published 15-ID predecessor catalogue, and the exact
+16-ID target catalogue. With all 15 predecessors applied, only convergence is
+pending. An interrupted predecessor run with 14 applied IDs also retains the
+remaining canonical integrity migration in its plan. These transitions report
+`inventory-convergence-v1`. Arbitrary gaps, unknown history, another module,
+reordered IDs, or a different target catalogue still fail before mutation. The host does
+not edit, rename, delete, or synthesize any previously applied history record.
+
+Use the same immutable release and database target throughout the operation.
+Quiesce API, Worker, CLI and maintenance writers; rehearse against an isolated
+restored database and retain actual backup/restore and forward-recovery
+evidence. Production still requires every release, target, approval, backup and
+rollback admission value above. Selecting this disposition supplies no approval
+and changes no runtime-host configuration or access-profile assignment.
+
+After `Apply`, verify the target digest is unchanged, no migrations remain
+pending, old history records and retained block rows are preserved, both
+canonical integrity constraints remain, and the unrelated tenants' revisions
+are unchanged. Reacquire affected tenants' export coordinates. Repeating
+`Apply` reaches the same complete history without further work. Return to
+`ApplyCompatiblePrefix` for ordinary future releases. If a later Inventory
+catalogue needs this old history reconciled, first use the qualified 16-ID
+transition release; this fixed adapter does not admit arbitrary future gaps.
+
+## Shared-station PIN qualification (28 September 2026)
+
+Select `Stations:Http:Enabled=true` explicitly in the migration executable to
+compose Stations and its PostgreSQL assembly, while leaving serving APIs
+disabled during expansion. Plan must include the Stations catalogue and the
+Reservations attribution migration. Verify exact hashes, backup/restore,
+constraints, indexes and applied history before enabling runtime HTTP.
+After use, roll back feature entry points, not durable credentials or audit
+schemas. Restored device authority must fail closed under an advanced external
+epoch. Pepper-version and Data Protection continuity are separate required
+proofs. See [Shared-station PIN admission](stations-production-admission.md).
+Local migration tests are not target-specific Apply admission.
+
 ## Concurrency And Recovery
 
 One session-scoped PostgreSQL advisory lock covers inspection and all module
@@ -112,3 +171,30 @@ Before promotion, private operations still owns:
 
 This repository does not prove those external controls merely because their
 references pass startup validation.
+
+## Staff-Onboarding Recovery Expansion
+
+The Workspaces recovery-audit migration is additive: it adds nullable accepted
+membership coordinates and an append-only recovery-receipt table. It does not
+backfill historical applications. Its guarded downgrade refuses when either a
+receipt or a membership binding exists, because silently discarding audit or
+authority evidence is not an acceptable rollback.
+
+The unpublished pre-release migration was replaced locally before any hosted
+upgrade evidence existed. Its database constraints enforce the same recovery
+truth table as the domain: expected version equals selected version; selected
+status is `Failed`; outcome/reason/result status and version are compatible;
+Organizations, Staff, and Access verification stages have compatible proof
+presence; unobserved stages carry no invented observation; and every observed
+time is no later than `RecordedAtUtc`. This local replacement is not hosted
+migration history and authorizes no historical membership-binding backfill.
+
+Deploy in this order: expand -> keep the recovery endpoint disabled -> run the
+exact `Plan`/`Apply` and post-migration model/constraint verification -> verify
+the exact API/Worker release composition -> isolated QA. The switch is
+`BunkFy:WorkspaceStaffOnboardingRecovery:PostEnabled`; Production currently
+refuses startup when it is true while privacy blockers remain open. A rollback
+disables POST and retains the schema, receipts, and latest-receipt GET; it must
+not run the guarded downgrade against populated data. Capture backup/restore
+and forward-repair proof for the exact candidate. Local migration tests are
+repository evidence, not proof that a hosted database has been migrated safely.

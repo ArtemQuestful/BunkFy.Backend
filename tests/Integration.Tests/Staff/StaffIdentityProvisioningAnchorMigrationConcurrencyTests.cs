@@ -17,9 +17,9 @@ using Xunit;
 public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
 {
     private const string PreviousMigration =
-        "20260811045655_AddStaffOnboardingProvisioningOperations";
+        "20260822003301_AddStaffRetentionControlProofAuditIntegrity";
     private const string CurrentMigration =
-        "20260811110753_AddStaffIdentityProvisioningAnchors";
+        "20261102220100_AddStaffIdentityProvisioningAnchors";
     private const string TenantId =
         "10000000-0000-0000-0000-000000000001";
     private const string OtherTenantId =
@@ -79,7 +79,8 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             """
             UPDATE staff.staff_members
             SET "Status" = 2,
-                "SuspendedAtUtc" = '2026-08-11T11:58:00Z',
+                "SuspendedAtUtc" = '2026-08-11T12:00:30Z',
+                "LastChangedAtUtc" = '2026-08-11T12:00:30Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
@@ -126,6 +127,7 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "Status" = 1,
                 "SuspendedAtUtc" = NULL,
+                "LastChangedAtUtc" = '2026-08-11T12:01:00Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
@@ -244,6 +246,7 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "Status" = 2,
                 "SuspendedAtUtc" = '2026-08-11T12:02:00Z',
+                "LastChangedAtUtc" = '2026-08-11T12:02:00Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
@@ -262,6 +265,7 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "Status" = 1,
                 "SuspendedAtUtc" = NULL,
+                "LastChangedAtUtc" = '2026-08-11T12:02:01Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
@@ -333,16 +337,26 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "AuthSubjectId" = NULL,
                 "Status" = 4,
+                "DisplayName" = @anonymisedName,
+                "DisplayNameSearch" = @anonymisedNameSearch,
+                "LegalName" = NULL, "LegalNameSearch" = NULL,
+                "WorkEmail" = NULL, "WorkEmailSearch" = NULL,
+                "WorkPhone" = NULL, "WorkPhoneSearch" = NULL,
+                "EmployeeNumber" = NULL, "EmployeeNumberSearch" = NULL,
+                "JobTitle" = NULL, "Department" = NULL,
                 "SuspendedAtUtc" = NULL,
                 "DepartedAtUtc" = '2026-08-11T12:02:00Z',
                 "DepartureEffectiveOn" = DATE '2026-08-11',
                 "AnonymisedAtUtc" = '2026-08-11T12:03:00Z',
+                "LastChangedAtUtc" = '2026-08-11T12:03:00Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
             """,
             ("scopeId", TenantId),
-            ("staffMemberId", staffMemberId)));
+            ("staffMemberId", staffMemberId),
+            ("anonymisedName", StaffMember.AnonymisedDisplayName),
+            ("anonymisedNameSearch", StaffMember.AnonymisedDisplayName.ToUpperInvariant())));
         Assert.Equal("P0001", statusFailure.SqlState);
         Assert.Contains(
             "Unresolved Workspace onboarding anchor blocks Staff identity lifecycle mutation",
@@ -444,6 +458,7 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "Status" = 2,
                 "SuspendedAtUtc" = '2026-08-11T12:04:00Z',
+                "LastChangedAtUtc" = '2026-08-11T12:04:00Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
@@ -456,6 +471,7 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "Status" = 1,
                 "SuspendedAtUtc" = NULL,
+                "LastChangedAtUtc" = '2026-08-11T12:04:01Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
@@ -474,16 +490,27 @@ public sealed class StaffIdentityProvisioningAnchorMigrationConcurrencyTests
             UPDATE staff.staff_members
             SET "AuthSubjectId" = NULL,
                 "Status" = 4,
+                "DisplayName" = @anonymisedName,
+                "DisplayNameSearch" = @anonymisedNameSearch,
+                "LegalName" = NULL, "LegalNameSearch" = NULL,
+                "WorkEmail" = NULL, "WorkEmailSearch" = NULL,
+                "WorkPhone" = NULL, "WorkPhoneSearch" = NULL,
+                "EmployeeNumber" = NULL, "EmployeeNumberSearch" = NULL,
+                "JobTitle" = NULL, "Department" = NULL,
                 "SuspendedAtUtc" = NULL,
                 "DepartedAtUtc" = '2026-08-11T12:05:00Z',
                 "DepartureEffectiveOn" = DATE '2026-08-11',
                 "AnonymisedAtUtc" = '2026-08-11T12:06:00Z',
+                "LastChangedAtUtc" = '2026-08-11T12:06:00Z',
                 "Version" = "Version" + 1
             WHERE "ScopeId" = @scopeId
               AND "Id" = @staffMemberId;
             """,
             ("scopeId", TenantId),
-            ("staffMemberId", otherStaffMemberId)).ConfigureAwait(false);
+            ("staffMemberId", otherStaffMemberId),
+            ("anonymisedName", StaffMember.AnonymisedDisplayName),
+            ("anonymisedNameSearch", StaffMember.AnonymisedDisplayName.ToUpperInvariant()))
+            .ConfigureAwait(false);
         Assert.Equal(
             4,
             await ReadStatusAsync(

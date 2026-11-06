@@ -7,11 +7,12 @@ using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Stations.Contracts;
 using Gma.Modules.AccessControl.Contracts;
 
 public static class WorkspaceAccessProfileSeeds
 {
-    public const int Version = 4;
+    public const int Version = 7;
     public const string ManagerKey = "manager";
     public const string FrontDeskKey = "front-desk";
     public const string HousekeepingKey = "housekeeping";
@@ -22,17 +23,20 @@ public static class WorkspaceAccessProfileSeeds
         "Manager",
         "Manage daily property operations, staff, guests, reservations, and standard integrations.",
         [
+            StationsPermissionCodes.Manage,
             AccessControlProfilePermissionCodes.Read,
             AccessControlProfilePermissionCodes.Manage,
             AccessControlProfilePermissionCodes.Assign,
             WorkspacesPermissionCodes.StaffOnboardingManage,
             PropertiesAdminPermissionCodes.Read,
             PropertiesAdminPermissionCodes.PropertiesManage,
+            PropertiesAdminPermissionCodes.TimeZonesManage,
             PropertiesAdminPermissionCodes.RoomsManage,
             PropertiesAdminPermissionCodes.BedsManage,
             InventoryAdminPermissionCodes.Read,
             InventoryAdminPermissionCodes.Configure,
             InventoryAdminPermissionCodes.BlocksManage,
+            InventoryAdminPermissionCodes.BlockGroupsManage,
             InventoryAdminPermissionCodes.Retire,
             ReservationsAdminPermissionCodes.Read,
             ReservationsAdminPermissionCodes.Create,

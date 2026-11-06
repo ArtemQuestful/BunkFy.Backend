@@ -19,6 +19,10 @@ public sealed class IngestionExecutionLockTests
             Guid.NewGuid(),
             1,
             CancellationToken.None);
+        await executionLock.AcquireRetentionExecutionAsync(
+            "tenant-a",
+            Guid.NewGuid(),
+            CancellationToken.None);
         await executionLock.AcquireConnectionReadAsync(
             "tenant-a",
             Guid.NewGuid(),
@@ -58,6 +62,11 @@ public sealed class IngestionExecutionLockTests
                 "tenant-a",
                 Guid.NewGuid(),
                 0,
+                CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            executionLock.AcquireRetentionExecutionAsync(
+                "tenant-b",
+                Guid.NewGuid(),
                 CancellationToken.None));
     }
 

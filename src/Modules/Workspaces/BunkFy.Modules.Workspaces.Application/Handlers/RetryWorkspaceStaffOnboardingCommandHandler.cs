@@ -30,6 +30,14 @@ internal sealed class RetryWorkspaceStaffOnboardingCommandHandler(
                 WorkspaceStaffOnboardingApplicationErrors.ApplicationNotFound);
         }
 
+        if (application.Status == WorkspaceStaffOnboardingState.Failed &&
+            application.StaffMemberId.HasValue)
+        {
+            return Result.Failure<WorkspaceStaffOnboardingDto>(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .RecoveryAttemptRequired);
+        }
+
         Result processed = await processor.ProcessForSourceFinalizationAsync(
             application,
             cancellationToken).ConfigureAwait(false);

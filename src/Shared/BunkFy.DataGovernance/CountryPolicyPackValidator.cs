@@ -8,7 +8,21 @@ public static class CountryPolicyPackValidator
     private const int MaximumSourceItems = 32;
     private const int MaximumTimeZoneItems = 64;
 
-    public static IReadOnlyList<string> Validate(CountryPolicyPackDocument pack)
+    public static IReadOnlyList<string> Validate(
+        CountryPolicyPackDocument pack) =>
+        ValidateCore(pack, timeZoneRules: null);
+
+    public static IReadOnlyList<string> Validate(
+        CountryPolicyPackDocument pack,
+        CountryPolicyTimeZoneRules timeZoneRules)
+    {
+        ArgumentNullException.ThrowIfNull(timeZoneRules);
+        return ValidateCore(pack, timeZoneRules);
+    }
+
+    private static List<string> ValidateCore(
+        CountryPolicyPackDocument pack,
+        CountryPolicyTimeZoneRules? timeZoneRules)
     {
         ArgumentNullException.ThrowIfNull(pack);
         List<string> errors = [];
@@ -41,7 +55,11 @@ public static class CountryPolicyPackValidator
         HashSet<string> purposeCodes = ValidatePurposeRules(pack.PurposeRules, errors);
         ValidateFieldRules(pack.FieldRules, guestCategories, purposeCodes, errors);
         ValidateRetentionRules(pack.RetentionRules, errors);
-        ValidateRightsRule(pack.RightsRule, pack.SchemaVersion, errors);
+        ValidateRightsRule(
+            pack.RightsRule,
+            pack.SchemaVersion,
+            timeZoneRules,
+            errors);
         ValidateRestrictions(pack.Restrictions, errors);
         ValidateKeys(pack.PermittedDataRegions, "PermittedDataRegions", errors);
         ValidateKeys(pack.PermittedTransferProfiles, "PermittedTransferProfiles", errors);
@@ -54,6 +72,17 @@ public static class CountryPolicyPackValidator
     public static void ValidateAndThrow(CountryPolicyPackDocument pack)
     {
         IReadOnlyList<string> errors = Validate(pack);
+        if (errors.Count > 0)
+        {
+            throw new CountryPolicyPackValidationException(errors);
+        }
+    }
+
+    public static void ValidateAndThrow(
+        CountryPolicyPackDocument pack,
+        CountryPolicyTimeZoneRules timeZoneRules)
+    {
+        IReadOnlyList<string> errors = Validate(pack, timeZoneRules);
         if (errors.Count > 0)
         {
             throw new CountryPolicyPackValidationException(errors);
@@ -179,6 +208,7 @@ public static class CountryPolicyPackValidator
     private static void ValidateRightsRule(
         CountryPolicyRightsRule? rule,
         int schemaVersion,
+        CountryPolicyTimeZoneRules? timeZoneRules,
         List<string> errors)
     {
         if (rule is null)
@@ -241,6 +271,7 @@ public static class CountryPolicyPackValidator
             ValidateTimeZoneIds(
                 responseRule.AllowedTimeZoneIds,
                 $"{path}.AllowedTimeZoneIds",
+                timeZoneRules,
                 errors);
         }
 
@@ -262,6 +293,7 @@ public static class CountryPolicyPackValidator
     private static void ValidateTimeZoneIds(
         string[]? values,
         string path,
+        CountryPolicyTimeZoneRules? timeZoneRules,
         List<string> errors)
     {
         if (!ValidateCollection(
@@ -274,11 +306,13 @@ public static class CountryPolicyPackValidator
         }
 
         HashSet<string> unique = new(StringComparer.Ordinal);
+        HashSet<string> canonicalUnique = new(StringComparer.Ordinal);
         foreach (string? value in values!)
         {
             if (string.IsNullOrWhiteSpace(value) ||
                 value.Length > 128 ||
-                value.Any(char.IsControl))
+                value.Any(char.IsControl) ||
+                !string.Equals(value, value.Trim(), StringComparison.Ordinal))
             {
                 errors.Add(
                     $"{path} must contain bounded time-zone identifiers.");
@@ -291,17 +325,31 @@ public static class CountryPolicyPackValidator
                 continue;
             }
 
-            try
+            if (timeZoneRules is null)
             {
-                _ = TimeZoneInfo.FindSystemTimeZoneById(value);
+                continue;
             }
-            catch (TimeZoneNotFoundException)
+
+            if (!timeZoneRules.TryResolve(
+                    value,
+                    out CountryPolicyTimeZoneResolution resolution))
             {
-                errors.Add($"{path} contains unavailable time zone '{value}'.");
+                errors.Add(
+                    $"{path} contains unavailable time zone '{value}'.");
+                continue;
             }
-            catch (InvalidTimeZoneException)
+
+            if (resolution.Kind !=
+                CountryPolicyTimeZoneResolutionKind.Canonical)
             {
-                errors.Add($"{path} contains invalid time zone '{value}'.");
+                errors.Add(
+                    $"{path} must contain primary TZDB identifiers; '{value}' resolves to '{resolution.CanonicalTimeZoneId}'.");
+            }
+
+            if (!canonicalUnique.Add(resolution.CanonicalTimeZoneId))
+            {
+                errors.Add(
+                    $"{path} contains duplicate primary time zone '{resolution.CanonicalTimeZoneId}'.");
             }
         }
     }

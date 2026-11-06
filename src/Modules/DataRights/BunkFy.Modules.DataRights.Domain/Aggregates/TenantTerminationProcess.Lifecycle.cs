@@ -91,6 +91,7 @@ public sealed partial class TenantTerminationProcess
             (this.Phase == TenantTerminationProcessPhase.Export &&
                 this.Status is
                     TenantTerminationProcessStatus.Pending or
+                    TenantTerminationProcessStatus.Running or
                     TenantTerminationProcessStatus.Blocked or
                     TenantTerminationProcessStatus.Failed) ||
             (this.Phase == TenantTerminationProcessPhase.Destroy &&

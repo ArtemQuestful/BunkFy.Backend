@@ -47,12 +47,11 @@ public sealed class IngestionRuntimeBaselineIntegrationTests(ITestOutputHelper o
         await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bunkfy_ingestion_runtime_baseline")
             .Build();
-        await using IContainer minio = new ContainerBuilder("quay.io/minio/minio:latest")
+        await using IContainer minio = ProviderTestContainers.Minio()
             .WithEnvironment("MINIO_ROOT_USER", AccessKey)
             .WithEnvironment("MINIO_ROOT_PASSWORD", SecretKey)
             .WithPortBinding(9000, assignRandomHostPort: true)
             .WithCommand("server", "/data", "--console-address", ":9001")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(9000))
             .Build();
 
         await Task.WhenAll(nats.StartAsync(), postgreSql.StartAsync(), minio.StartAsync()).ConfigureAwait(false);
@@ -192,18 +191,20 @@ public sealed class IngestionRuntimeBaselineIntegrationTests(ITestOutputHelper o
         IIntegrationEventHandler<PropertyCreatedIntegrationEvent> handler =
             ResolveHandler<PropertyCreatedIntegrationEvent>(scope.ServiceProvider, IngestionModuleMetadata.Name);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        await handler.HandleAsync(
-            new PropertyCreatedIntegrationEvent(
-                Guid.NewGuid(),
-                seed.TenantId,
-                now,
-                seed.PropertyId,
-                $"Runtime {seed.TenantId}",
-                seed.TenantId,
-                "UTC",
-                PropertyStatus.Active,
-                1),
-            CancellationToken.None).ConfigureAwait(false);
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            dbContext,
+            token => handler.HandleAsync(
+                new PropertyCreatedIntegrationEvent(
+                    Guid.NewGuid(),
+                    seed.TenantId,
+                    now,
+                    seed.PropertyId,
+                    $"Runtime {seed.TenantId}",
+                    seed.TenantId,
+                    "UTC",
+                    PropertyStatus.Active,
+                    1),
+                token)).ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
             IngestionModuleMetadata.Name,

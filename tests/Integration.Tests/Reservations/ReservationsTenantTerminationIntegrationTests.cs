@@ -1,5 +1,9 @@
 namespace Integration.Tests;
 
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Contracts;
@@ -9,7 +13,9 @@ using BunkFy.Modules.Reservations.Domain.Events;
 using BunkFy.Modules.Reservations.Domain.GuestRecords;
 using BunkFy.Modules.Reservations.Domain.Models;
 using BunkFy.Modules.Reservations.Domain.Retention;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using BunkFy.Modules.Reservations.Persistence;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using BunkFy.Modules.Workspaces.Persistence;
@@ -127,6 +133,25 @@ public sealed class ReservationsTenantTerminationIntegrationTests
                 .Select(record => record.RecordType)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray());
+        DataRightsExportRecord stayAmendment = Assert.Single(
+            first.Records,
+            record => record.RecordType ==
+                    ReservationsTenantTerminationMetadata
+                        .StayAmendmentOperationRecordType &&
+                record.RecordId ==
+                DataRightsExportRecordIds.CreateDeterministicChild(
+                    proofIds.StayAmendmentReservationId,
+                    proofIds.StayAmendmentOperationId.ToString("N")));
+        Assert.Equal(
+            "applied",
+            Field(stayAmendment, "reservations.stay-amendment-operation")
+                .GetProperty("outcome")
+                .GetString());
+        Assert.Equal(
+            1,
+            Field(stayAmendment, "reservations.stay-amendment-operation")
+                .GetProperty("resultingAllocationVersion")
+                .GetInt64());
 
         CollectingSink replay = new();
         TenantTerminationContributionResult replayResult =
@@ -434,6 +459,36 @@ public sealed class ReservationsTenantTerminationIntegrationTests
             TenantA) > 0);
         Assert.Equal(
             1,
+            await CountForTenantAsync(
+                connectionString,
+                "reservations.stay_amendment_operations",
+                TenantA));
+        Assert.Equal(
+            2,
+            await CountForTenantAsync(
+                connectionString,
+                "reservations.management_operations",
+                TenantA));
+        Assert.Equal(
+            1,
+            await CountForTenantAsync(
+                connectionString,
+                "reservations.external_operations",
+                TenantA));
+        Assert.Equal(
+            1,
+            await CountForTenantAsync(
+                connectionString,
+                "reservations.reservation_details_history",
+                TenantA));
+        Assert.Equal(
+            1,
+            await CountForTenantAsync(
+                connectionString,
+                "reservations.guest_profile_projection",
+                TenantA));
+        Assert.Equal(
+            1,
             await ScalarForTenantAsync(
                 connectionString,
                 """
@@ -460,10 +515,19 @@ public sealed class ReservationsTenantTerminationIntegrationTests
             .GetRequiredService<IReservationManagementOperationRepository>();
         IReservationArrivalReminderRepository reminders = services
             .GetRequiredService<IReservationArrivalReminderRepository>();
+        await using var transaction =
+            await context.Database.BeginTransactionAsync();
         Reservation reservation = CreateReservation(
             tenantId,
             propertyId,
             "Maya Chen");
+        context.Set<ReservationGuestProfileProjection>().Add(
+            new ReservationGuestProfileProjection(
+                tenantId,
+                Guid.NewGuid(),
+                propertyId,
+                BunkFy.Modules.Guests.Contracts.GuestStatus.Active,
+                version: 1));
         Assert.True(reservation.ConfirmAllocation(
             reservation.AllocationRequestId,
             Guid.NewGuid(),
@@ -481,6 +545,7 @@ public sealed class ReservationsTenantTerminationIntegrationTests
         Guid adapterConnectionId = Guid.NewGuid();
         Guid externalOperationId = Guid.NewGuid();
         Assert.True(reservation.BeginAllocationAmendment(
+            Guid.NewGuid(),
             Guid.NewGuid(),
             new string('a', Reservation.RequestFingerprintLength),
             reservation.Arrival,
@@ -568,6 +633,69 @@ public sealed class ReservationsTenantTerminationIntegrationTests
                 BusinessDate: null,
                 CreatedAtUtc: ExportNowUtc.AddMinutes(-7)),
             CancellationToken.None);
+        Reservation stayEvidenceReservation = CreateReservation(
+            tenantId,
+            propertyId,
+            "Stay amendment evidence guest");
+        Assert.True(stayEvidenceReservation.ConfirmAllocation(
+            stayEvidenceReservation.AllocationRequestId,
+            Guid.NewGuid(),
+            allocationVersion: 1,
+            Guid.NewGuid(),
+            ExportNowUtc.AddMinutes(-6)).IsSuccess);
+        stayEvidenceReservation.ClearDomainEvents();
+        Guid stayAmendmentOperationId = Guid.NewGuid();
+        Guid[] stayUnits = stayEvidenceReservation.RequestedUnits
+            .Select(unit => unit.InventoryUnitId)
+            .ToArray();
+        string stayFingerprint = StayAmendmentFingerprint(
+            stayEvidenceReservation,
+            stayAmendmentOperationId,
+            stayUnits);
+        context.Reservations.Add(stayEvidenceReservation);
+        await context.SaveChangesAsync();
+        Assert.True(
+            stayEvidenceReservation.AdvanceStayAmendmentEvidenceCoordinate(
+                ExportNowUtc.AddMinutes(-5)).IsSuccess);
+        Assert.Equal(
+            EntityState.Modified,
+            context.Entry(stayEvidenceReservation).State);
+        Assert.True(
+            context.Entry(stayEvidenceReservation)
+                .Property(candidate => candidate.Version)
+                .IsModified);
+        await managementOperations.AddAsync(
+            new ReservationManagementOperationRecord(
+                stayAmendmentOperationId,
+                tenantId,
+                propertyId,
+                stayEvidenceReservation.Id,
+                ReservationManagementOperationKind.StayAmendment,
+                ExpectedVersion: null,
+                stayEvidenceReservation.DetailsRevision,
+                BusinessDate: null,
+                ExportNowUtc.AddMinutes(-5),
+                stayFingerprint),
+            CancellationToken.None);
+        context.Set<ReservationStayAmendmentOperation>().Add(
+            ReservationStayAmendmentOperation.CreateAppliedNoOp(
+                stayAmendmentOperationId,
+                tenantId,
+                propertyId,
+                stayEvidenceReservation.Id,
+                ReservationStayAmendmentOperation.CurrentRequestSchemaVersion,
+                stayFingerprint,
+                stayEvidenceReservation.Arrival,
+                stayEvidenceReservation.Departure,
+                stayEvidenceReservation.ExpectedArrivalTime,
+                stayEvidenceReservation.ExpectedDepartureTime,
+                stayUnits,
+                stayEvidenceReservation.DetailsRevision,
+                "user:stay-operator",
+                stayEvidenceReservation.DetailsRevision,
+                stayEvidenceReservation.Version,
+                stayEvidenceReservation.AllocationVersion!.Value,
+                ExportNowUtc.AddMinutes(-5)).Value);
         await reminders.RefreshReservationAsync(
             new(
                 tenantId,
@@ -665,6 +793,7 @@ public sealed class ReservationsTenantTerminationIntegrationTests
             SeedRetentionProof(context, tenantId, propertyId);
 
         await context.SaveChangesAsync();
+        await transaction.CommitAsync();
         return (
             reservation.Id,
             new(
@@ -674,7 +803,9 @@ public sealed class ReservationsTenantTerminationIntegrationTests
                 anonymisationReceipt.Id,
                 restoreReceipt.Id,
                 retentionReceipt.Id,
-                tombstone.Id));
+                tombstone.Id,
+                stayEvidenceReservation.Id,
+                stayAmendmentOperationId));
     }
 
     private static (
@@ -792,6 +923,8 @@ public sealed class ReservationsTenantTerminationIntegrationTests
         context.Reservations.Add(reservation);
         context.RetentionExecutions.Add(execution);
         context.RetentionAnonymisationReceipts.Add(receipt);
+        context.AnonymisationTombstones.Add(
+            ReservationAnonymisationTombstone.CreateForRetention(receipt).Value);
         return receipt;
     }
 
@@ -1090,6 +1223,32 @@ public sealed class ReservationsTenantTerminationIntegrationTests
     private static string RecordIdentity(DataRightsExportRecord record) =>
         $"{record.RecordType}|{record.RecordId:N}|{record.RecordVersion}";
 
+    private static JsonElement Field(
+        DataRightsExportRecord record,
+        string fieldId) =>
+        Assert.Single(
+            record.Fields,
+            field => field.FieldId == fieldId).Value;
+
+    private static string StayAmendmentFingerprint(
+        Reservation reservation,
+        Guid operationId,
+        IReadOnlyCollection<Guid> unitIds)
+    {
+        string canonical = string.Join(
+            '|',
+            "v2",
+            $"reservation={reservation.Id:N}",
+            $"operation={operationId:N}",
+            $"expected-details-revision={reservation.DetailsRevision.ToString(CultureInfo.InvariantCulture)}",
+            $"arrival={reservation.Arrival.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}",
+            $"departure={reservation.Departure.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}",
+            $"expected-arrival-time={reservation.ExpectedArrivalTime?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "-"}",
+            $"expected-departure-time={reservation.ExpectedDepartureTime?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "-"}",
+            $"units={string.Join(',', unitIds.Order().Select(id => id.ToString("N")))}");
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
     private static ServiceProvider CreatePersistenceProvider(
         string connectionString,
         string tenantId,
@@ -1105,6 +1264,8 @@ public sealed class ReservationsTenantTerminationIntegrationTests
             clock ?? new TestClock(ExportNowUtc));
         builder.Services.AddSingleton<IIdGenerator, TestIdGenerator>();
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddReservationsPersistence();
         return builder.Services.BuildServiceProvider();
     }
@@ -1116,7 +1277,9 @@ public sealed class ReservationsTenantTerminationIntegrationTests
         Guid AnonymisationReceiptId,
         Guid RestoreReceiptId,
         Guid RetentionReceiptId,
-        Guid TombstoneId);
+        Guid TombstoneId,
+        Guid StayAmendmentReservationId,
+        Guid StayAmendmentOperationId);
 
     private sealed class TestScopeContext(string scopeId) : IScopeContext
     {

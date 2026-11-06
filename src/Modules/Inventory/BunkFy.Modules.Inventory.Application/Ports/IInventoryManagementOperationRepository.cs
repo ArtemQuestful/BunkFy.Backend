@@ -31,7 +31,15 @@ public sealed record InventoryManagementOperationRecord(
     int? ResultAffectedBlockCount,
     long ResultVersion,
     DateTimeOffset CompletedAtUtc,
-    Guid? ResultTopologyChangeId = null)
+    Guid? ResultTopologyChangeId = null,
+    ManualInventoryBlockGroupStatus? ResultBlockGroupStatus = null,
+    Guid? ResultPreviousBlockGroupId = null,
+    int? ResultTotalBlockCount = null,
+    int? ResultActiveBlockCount = null,
+    int? ResultReleasedBlockCount = null,
+    int? ResultAlreadyReleasedBlockCount = null,
+    int? ResultCreatedBlockCount = null,
+    string? ResultMembershipDigest = null)
 {
     public bool Matches(
         InventoryManagementMutationKind kind,
@@ -95,7 +103,20 @@ public sealed record InventoryManagementOperationRecord(
         return new(
             this.ResultBlockGroupId.Value,
             this.PropertyId,
-            this.ResultAffectedBlockCount.Value);
+            this.ResultAffectedBlockCount.Value,
+            this.ResultBlockGroupStatus,
+            this.Kind is InventoryManagementMutationKind.ManualBlockGroupCreateV2 or
+                InventoryManagementMutationKind.ManualBlockGroupReplace or
+                InventoryManagementMutationKind.ManualBlockGroupReleaseV2
+                ? this.ResultVersion
+                : null,
+            this.ResultPreviousBlockGroupId,
+            this.ResultReleasedBlockCount,
+            this.ResultCreatedBlockCount,
+            this.ResultTotalBlockCount,
+            this.ResultActiveBlockCount,
+            this.ResultAlreadyReleasedBlockCount,
+            this.ResultMembershipDigest);
     }
 
     public InventoryRetirementOperationPointer ToRetirementPointer()
@@ -188,6 +209,76 @@ public sealed record InventoryManagementOperationRecord(
             0,
             completedAtUtc);
 
+    public static InventoryManagementOperationRecord ForBlockGroupV2(
+        Guid operationId,
+        string scopeId,
+        InventoryManagementResourceKind resourceKind,
+        Guid resourceId,
+        InventoryManagementMutationKind kind,
+        long expectedVersion,
+        string requestFingerprint,
+        ManualInventoryBlockGroupMutationReceiptDto receipt,
+        DateTimeOffset completedAtUtc)
+    {
+        if (receipt.Status is null || receipt.Version is null ||
+            receipt.ReleasedNowBlockCount is null || receipt.CreatedNowBlockCount is null ||
+            receipt.TotalBlockCount is null || receipt.ActiveBlockCount is null ||
+            receipt.AlreadyReleasedBlockCount is null ||
+            string.IsNullOrWhiteSpace(receipt.MembershipDigest))
+        {
+            throw new InvalidDataException(
+                "A V2 block-group operation requires a complete rich receipt.");
+        }
+
+        return new(
+            operationId,
+            scopeId,
+            receipt.PropertyId,
+            resourceKind,
+            resourceId,
+            kind,
+            expectedVersion,
+            requestFingerprint,
+            null,
+            null,
+            receipt.BlockGroupId,
+            null,
+            receipt.AffectedBlockCount,
+            receipt.Version ?? throw new InvalidDataException(
+                "A V2 block-group receipt requires a version."),
+            completedAtUtc,
+            ResultBlockGroupStatus: receipt.Status,
+            ResultPreviousBlockGroupId: receipt.PreviousBlockGroupId,
+            ResultTotalBlockCount: receipt.TotalBlockCount,
+            ResultActiveBlockCount: receipt.ActiveBlockCount,
+            ResultReleasedBlockCount: receipt.ReleasedNowBlockCount,
+            ResultAlreadyReleasedBlockCount: receipt.AlreadyReleasedBlockCount,
+            ResultCreatedBlockCount: receipt.CreatedNowBlockCount,
+            ResultMembershipDigest: receipt.MembershipDigest);
+    }
+
+    public ManualInventoryBlockGroupOperationDto ToBlockGroupOperationDto() => new(
+        this.OperationId,
+        this.PropertyId,
+        this.ResourceKind == InventoryManagementResourceKind.BlockGroup
+            ? this.ResourceId
+            : null,
+        this.Kind switch
+        {
+            InventoryManagementMutationKind.ManualBlockGroupCreate or
+                InventoryManagementMutationKind.ManualBlockGroupCreateV2 =>
+                ManualInventoryBlockGroupOperationKind.Create,
+            InventoryManagementMutationKind.ManualBlockGroupReplace =>
+                ManualInventoryBlockGroupOperationKind.Replace,
+            InventoryManagementMutationKind.ManualBlockGroupRelease or
+                InventoryManagementMutationKind.ManualBlockGroupReleaseV2 =>
+                ManualInventoryBlockGroupOperationKind.Release,
+            _ => ManualInventoryBlockGroupOperationKind.Unknown
+        },
+        ManualInventoryBlockGroupOperationStatus.Applied,
+        this.ToBlockGroupReceipt(),
+        this.CompletedAtUtc);
+
     public static InventoryManagementOperationRecord ForRetirement(
         Guid operationId,
         string scopeId,
@@ -246,5 +337,8 @@ public enum InventoryManagementMutationKind
     RoomRetirementRequest = 8,
     RoomRetirementRetry = 9,
     BedRetirementCancellation = 10,
-    RoomRetirementCancellation = 11
+    RoomRetirementCancellation = 11,
+    ManualBlockGroupCreateV2 = 12,
+    ManualBlockGroupReplace = 13,
+    ManualBlockGroupReleaseV2 = 14
 }

@@ -17,6 +17,11 @@ internal sealed class CreateDataRightsCaseCommandValidator
 
     public IEnumerable<string> Validate(CreateDataRightsCaseCommand command)
     {
+        if (command.OperationId == Guid.Empty)
+        {
+            yield return "OperationId is required.";
+        }
+
         if (command.Scope is null)
         {
             yield return "Scope is required.";

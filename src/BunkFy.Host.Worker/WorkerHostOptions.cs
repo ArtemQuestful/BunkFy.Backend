@@ -43,11 +43,13 @@ public sealed class WorkerHostOptions
             GetBoolean(modules, nameof(WorkerModuleOptions.Retention), defaultValue: false),
             GetBoolean(modules, nameof(WorkerModuleOptions.TaskRuntime), defaultValue: false));
 
-        return new WorkerHostOptions(
+        WorkerHostOptions options = new(
             moduleOptions,
             GetBoolean(configuration, "NatsJetStream:Enabled", defaultValue: false),
             GetBoolean(configuration, "NatsConsumers:Enabled", defaultValue: false),
             GetBoolean(configuration, "Tasks:Worker:Enabled", defaultValue: false));
+        options.ValidateRecoveryTopology();
+        return options;
     }
 
     public IReadOnlyList<string> GetComposedModuleNames()
@@ -128,6 +130,17 @@ public sealed class WorkerHostOptions
         return bool.TryParse(value, out bool parsed)
             ? parsed
             : defaultValue;
+    }
+
+    private void ValidateRecoveryTopology()
+    {
+        if (this.NatsConsumersEnabled &&
+            this.Modules.Retention &&
+            !this.Modules.TaskRuntime)
+        {
+            throw new InvalidOperationException(
+                "A Worker that consumes Retention messages must compose TaskRuntime for durable recovery execution.");
+        }
     }
 }
 

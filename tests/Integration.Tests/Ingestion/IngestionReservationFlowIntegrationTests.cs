@@ -58,12 +58,11 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
         await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bunkfy_ingestion_flow_tests")
             .Build();
-        await using IContainer minio = new ContainerBuilder("quay.io/minio/minio:latest")
+        await using IContainer minio = ProviderTestContainers.Minio()
             .WithEnvironment("MINIO_ROOT_USER", AccessKey)
             .WithEnvironment("MINIO_ROOT_PASSWORD", SecretKey)
             .WithPortBinding(9000, assignRandomHostPort: true)
             .WithCommand("server", "/data", "--console-address", ":9001")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(9000))
             .Build();
 
         await Task.WhenAll(nats.StartAsync(), postgreSql.StartAsync(), minio.StartAsync()).ConfigureAwait(false);
@@ -312,9 +311,24 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
             ResolveHandler<RoomCreatedIntegrationEvent>(scope.ServiceProvider, InventoryModuleMetadata.Name);
         PropertyCreatedIntegrationEvent propertyCreated = new(
             Guid.NewGuid(), TenantId, now, PropertyId, "Ingestion House", "ingestion", "UTC", PropertyStatus.Active, 1);
-        await propertyHandler.HandleAsync(propertyCreated, CancellationToken.None).ConfigureAwait(false);
-        await ingestionPropertyHandler.HandleAsync(propertyCreated, CancellationToken.None).ConfigureAwait(false);
-        await reservationPropertyHandler.HandleAsync(propertyCreated, CancellationToken.None).ConfigureAwait(false);
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            inventory,
+            async token =>
+            {
+                await propertyHandler.HandleAsync(propertyCreated, token)
+                    .ConfigureAwait(false);
+                await roomHandler.HandleAsync(
+                    new(Guid.NewGuid(), TenantId, now, PropertyId, RoomId, "101", null, null, RoomStatus.Active, 1),
+                    token).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            ingestion,
+            token => ingestionPropertyHandler.HandleAsync(propertyCreated, token))
+            .ConfigureAwait(false);
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            reservations,
+            token => reservationPropertyHandler.HandleAsync(propertyCreated, token))
+            .ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
             IngestionModuleMetadata.Name,
@@ -327,10 +341,6 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
             TenantId,
             PropertyId,
             2).ConfigureAwait(false);
-        await roomHandler.HandleAsync(
-            new(Guid.NewGuid(), TenantId, now, PropertyId, RoomId, "101", null, null, RoomStatus.Active, 1),
-            CancellationToken.None).ConfigureAwait(false);
-        await inventory.SaveChangesAsync().ConfigureAwait(false);
         Result<RoomInventoryMutationReceiptDto> configured = await scope.ServiceProvider.GetRequiredService<IRequestDispatcher>()
             .SendAsync(
                 new ConfigureRoomSalesModeCommand(
@@ -470,6 +480,7 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
         TimeSpan timeout)
     {
         DateTimeOffset deadline = DateTimeOffset.UtcNow.Add(timeout);
+        string lastObservedState = "No state observed.";
         while (DateTimeOffset.UtcNow < deadline)
         {
             using IServiceScope scope = api.Services.CreateScope();
@@ -495,11 +506,53 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
                     .SingleOrDefaultAsync(item => item.Id == allocationId)
                     .ConfigureAwait(false)
                 : null;
-            InventoryAllocationAmendmentDecision? decision = dispatch is null
+            InventoryAllocationAmendmentDecision? decision = reservation is null
                 ? null
                 : await inventory.AllocationAmendmentDecisions.AsNoTracking()
-                    .SingleOrDefaultAsync(item => item.Id == dispatch.Id)
+                    .Where(item =>
+                        item.ReservationId == reservation.Id &&
+                        !item.Confirmed &&
+                        item.RejectionReason == InventoryAllocationRejectionReason.AllocationConflict)
+                    .OrderByDescending(item => item.DecidedAtUtc)
+                    .FirstOrDefaultAsync()
                     .ConfigureAwait(false);
+            var inventoryInbox = await inventory.InboxMessages.AsNoTracking()
+                .Where(item => item.ProcessedAtUtc == null || item.LastError != null)
+                .OrderBy(item => item.CreatedAtUtc)
+                .Select(item => new { item.EventType, item.Handler, item.Status, item.LastError })
+                .ToListAsync()
+                .ConfigureAwait(false);
+
+            lastObservedState = JsonSerializer.Serialize(new
+            {
+                Receipt = receipt is null ? null : new { receipt.State, receipt.RejectionReason },
+                Dispatch = dispatch is null ? null : new { dispatch.State, dispatch.Kind, dispatch.ErrorCode },
+                Link = link is null ? null : new
+                {
+                    link.LastAppliedReservationDetailsRevision,
+                    link.LastAppliedReceiptId,
+                },
+                Reservation = reservation is null ? null : new
+                {
+                    reservation.Status,
+                    reservation.Departure,
+                    reservation.DetailsRevision,
+                    reservation.PendingAllocationAmendmentId,
+                    reservation.LastAllocationAmendmentRejectionCode,
+                },
+                Allocation = allocation is null ? null : new
+                {
+                    allocation.Status,
+                    allocation.Departure,
+                    allocation.Version,
+                },
+                Decision = decision is null ? null : new
+                {
+                    decision.Confirmed,
+                    decision.RejectionReason,
+                },
+                InventoryInbox = inventoryInbox,
+            });
 
             if (receipt?.State == ObservationReceiptState.Processed &&
                 dispatch?.State == ReservationDispatchState.Rejected &&
@@ -523,7 +576,8 @@ public sealed class IngestionReservationFlowIntegrationTests(ITestOutputHelper o
             await Task.Delay(100).ConfigureAwait(false);
         }
 
-        throw new TimeoutException("The conflicting allocation amendment did not reject atomically.");
+        throw new TimeoutException(
+            $"The conflicting allocation amendment did not reject atomically. Last state: {lastObservedState}");
     }
 
     private static async Task WaitForAppliedReceiptAsync(

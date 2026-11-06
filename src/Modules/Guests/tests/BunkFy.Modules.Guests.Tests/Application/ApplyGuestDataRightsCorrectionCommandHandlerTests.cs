@@ -98,8 +98,10 @@ public sealed class ApplyGuestDataRightsCorrectionCommandHandlerTests
         Assert.Null(receipts.Added);
     }
 
-    [Fact]
-    public async Task Equivalent_retry_returns_committed_receipt_without_rechecking_approval()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task Equivalent_retry_returns_committed_receipt_without_rechecking_approval(int receiptVersion)
     {
         GuestProfile profile = CreateProfile();
         ApplyGuestDataRightsCorrectionCommand command = CreateCommand(profile, "Corrected Guest");
@@ -132,6 +134,10 @@ public sealed class ApplyGuestDataRightsCorrectionCommandHandlerTests
             updated.Value.EventId,
             Guid.NewGuid(),
             updated.Value.OccurredAtUtc).Value;
+        // Model a historical persisted receipt without changing the production creation contract.
+        typeof(GuestDataRightsCorrectionReceipt).GetProperty(nameof(receipt.ContractVersion))!
+            .SetValue(receipt, receiptVersion);
+        receipt.ClearDomainEvents();
         RecordingReceiptRepository receipts = new(receipt);
         RecordingApprovalGate approval = new();
         ApplyGuestDataRightsCorrectionCommandHandler handler = CreateHandler(
@@ -148,6 +154,8 @@ public sealed class ApplyGuestDataRightsCorrectionCommandHandlerTests
         Assert.Null(approval.Request);
         Assert.Null(receipts.Added);
         Assert.Equal(2, profile.Version);
+        Assert.Equal(receiptVersion, receipt.ContractVersion);
+        Assert.Empty(receipt.DomainEvents);
     }
 
     [Fact]
@@ -198,6 +206,35 @@ public sealed class ApplyGuestDataRightsCorrectionCommandHandlerTests
 
         Assert.Equal(GuestsApplicationErrors.CorrectionIdempotencyConflict, result.Error);
         Assert.Equal("Corrected Guest", profile.DisplayName);
+        Assert.Equal(2, profile.Version);
+    }
+
+    [Fact]
+    public async Task Collection_only_correction_records_v2_and_equivalent_set_replay_without_another_event()
+    {
+        GuestProfile profile = CreateProfile();
+        RecordingReceiptRepository receipts = new();
+        ApplyGuestDataRightsCorrectionCommand command = CreateCommand(profile, profile.DisplayName) with
+        {
+            LanguageTags = ["en-GB", "fr"]
+        };
+        ApplyGuestDataRightsCorrectionCommandHandler handler = CreateHandler(
+            profile, receipts, new RecordingApprovalGate(),
+            new QueueIdGenerator(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
+        Result<GuestDataRightsCorrectionReceiptDto> first = await handler.HandleAsync(command, CancellationToken.None);
+        Assert.True(first.IsSuccess);
+        Assert.Equal(2, receipts.Added!.ContractVersion);
+        Assert.Equal("guest.profile.language-tags", Assert.Single(first.Value.ChangedFields));
+        int eventCount = receipts.Added.DomainEvents.Count;
+        handler = CreateHandler(profile, new RecordingReceiptRepository(receipts.Added),
+            new RecordingApprovalGate(isApproved: false), new QueueIdGenerator());
+        Result<GuestDataRightsCorrectionReceiptDto> replay = await handler.HandleAsync(
+            command with { LanguageTags = ["FR", "en-gb"] }, CancellationToken.None);
+        Assert.True(replay.IsSuccess);
+        Assert.Equal(first.Value.ReceiptId, replay.Value.ReceiptId);
+        Assert.Equal(eventCount, receipts.Added.DomainEvents.Count);
+        Assert.Equal(GuestsApplicationErrors.CorrectionIdempotencyConflict,
+            (await handler.HandleAsync(command with { LanguageTags = ["en-gb", "de"] }, CancellationToken.None)).Error);
         Assert.Equal(2, profile.Version);
     }
 

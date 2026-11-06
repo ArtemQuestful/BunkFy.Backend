@@ -63,6 +63,7 @@ internal sealed class DataRightsRequiredCompanionExpander(
         HashSet<CoordinateKey> initialKeys = [.. closure.Keys];
         while (pending.TryDequeue(out DataRightsSubjectCoordinate? source))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Result<DataRightsSubjectCoordinate> validatedSource =
                 await this.ValidateCoordinateAsync(
                     dataRightsCase,
@@ -114,6 +115,7 @@ internal sealed class DataRightsRequiredCompanionExpander(
                             validatedSource.Value,
                             remaining),
                         cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
                 catch (Exception exception)
                     when (exception is not OperationCanceledException)
@@ -221,7 +223,12 @@ internal sealed class DataRightsRequiredCompanionExpander(
         if (owner.IsFailure)
         {
             return Result.Failure<DataRightsSubjectCoordinate>(
-                DataRightsApplicationErrors.RequiredCompanionUnavailable);
+                string.Equals(
+                    owner.Error.Code,
+                    DataRightsApplicationErrors.SubjectOwnerUnavailable.Code,
+                    StringComparison.Ordinal)
+                    ? DataRightsApplicationErrors.RequiredCompanionUnavailable
+                    : DataRightsApplicationErrors.RequiredCompanionResultInvalid);
         }
 
         DataRightsSubjectSelectionValidation validation;
@@ -234,6 +241,7 @@ internal sealed class DataRightsRequiredCompanionExpander(
                     dataRightsCase.PropertyId,
                     coordinate),
                 cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
         }
         catch (Exception exception)
             when (exception is not OperationCanceledException)
@@ -257,6 +265,13 @@ internal sealed class DataRightsRequiredCompanionExpander(
         if (validation.Status !=
             DataRightsSubjectSelectionValidationStatus.Valid)
         {
+            if (validation.Coordinate is not null)
+            {
+                return Result.Failure<DataRightsSubjectCoordinate>(
+                    DataRightsApplicationErrors
+                        .RequiredCompanionResultInvalid);
+            }
+
             return Result.Failure<DataRightsSubjectCoordinate>(
                 MapValidationError(validation.Status));
         }
@@ -384,6 +399,8 @@ internal sealed class DataRightsRequiredCompanionExpander(
                 DataRightsApplicationErrors.SubjectNotFound,
             DataRightsSubjectSelectionValidationStatus.ScopeUnavailable =>
                 DataRightsApplicationErrors.DiscoveryScopeUnavailable,
+            DataRightsSubjectSelectionValidationStatus.RetryRequired =>
+                DataRightsApplicationErrors.RequiredCompanionRetryRequired,
             _ =>
                 DataRightsApplicationErrors
                     .RequiredCompanionResultInvalid

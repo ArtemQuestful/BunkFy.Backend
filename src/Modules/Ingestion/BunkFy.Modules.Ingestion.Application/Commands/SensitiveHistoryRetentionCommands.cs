@@ -5,5 +5,6 @@ using BunkFy.Modules.Ingestion.Application.Ports;
 
 public sealed record RedactExpiredSensitiveHistoryCommand(
     int BatchSize,
-    Guid? RetentionExecutionId = null)
+    Guid? RetentionExecutionId = null,
+    int? RetentionAttempt = null)
     : ITransactionalCommand<SensitiveHistoryRedactionBatchResult>;

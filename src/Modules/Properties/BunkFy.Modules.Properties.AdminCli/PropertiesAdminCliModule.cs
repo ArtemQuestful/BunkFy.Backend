@@ -8,6 +8,7 @@ using BunkFy.Modules.Properties.Application;
 using BunkFy.Modules.Properties.Application.Commands;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Properties.Domain.Errors;
 using BunkFy.Modules.Properties.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -39,6 +40,13 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
             CreateCreatePropertyCommand(commands.Services, globalOptions),
             CreateUpdatePropertyCommand(commands.Services, globalOptions),
             CreateRetirePropertyCommand(commands.Services, globalOptions),
+            new Command("time-zones", "Inspect and correct property time zones.")
+            {
+                CreateTimeZoneCatalogCommand(commands.Services, globalOptions),
+                CreateTimeZoneComplianceCommand(commands.Services, globalOptions),
+                CreateSetPropertyTimeZoneCommand(commands.Services, globalOptions),
+                CreateGetPropertyTimeZoneOperationCommand(commands.Services, globalOptions)
+            },
             new Command("rooms", "Manage property rooms.")
             {
                 CreateListRoomsCommand(commands.Services, globalOptions),
@@ -90,6 +98,11 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
                                 ("Code", property => property.Code),
                                 ("Name", property => property.Name),
                                 ("TimeZone", property => property.TimeZoneId),
+                                ("TimeZoneStatus", property => property.TimeZoneStatus.ToString()),
+                                ("CanonicalTimeZone", property => property.CanonicalTimeZoneId ?? string.Empty),
+                                ("TimeZoneCatalog", property => property.TimeZoneCatalogVersion),
+                                ("TimeZoneObservedAtUtc", property => property.TimeZoneObservedAtUtc.ToString("O", CultureInfo.InvariantCulture)),
+                                ("CorrectionAllowed", property => property.TimeZoneCorrectionAllowed.ToString()),
                                 ("Status", property => property.Status.ToString()),
                                 ("Version", property => property.Version.ToString(CultureInfo.InvariantCulture))
                             ]);
@@ -132,6 +145,11 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
                                 ("Code", property => property.Code),
                                 ("Name", property => property.Name),
                                 ("TimeZone", property => property.TimeZoneId),
+                                ("TimeZoneStatus", property => property.TimeZoneStatus.ToString()),
+                                ("CanonicalTimeZone", property => property.CanonicalTimeZoneId ?? string.Empty),
+                                ("TimeZoneCatalog", property => property.TimeZoneCatalogVersion),
+                                ("TimeZoneObservedAtUtc", property => property.TimeZoneObservedAtUtc.ToString("O", CultureInfo.InvariantCulture)),
+                                ("CorrectionAllowed", property => property.TimeZoneCorrectionAllowed.ToString()),
                                 ("Status", property => property.Status.ToString()),
                                 ("Version", property => property.Version.ToString(CultureInfo.InvariantCulture))
                             ]);
@@ -150,7 +168,7 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
         Option<Guid> operationIdOption = new("--operation-id") { Required = true };
         Option<string> nameOption = new("--name") { Required = true };
         Option<string> codeOption = new("--code") { Required = true };
-        Option<string> timeZoneOption = new("--time-zone") { DefaultValueFactory = _ => "UTC" };
+        Option<string> timeZoneOption = new("--time-zone") { Required = true };
         Command command = new("create", "Create a property.")
         {
             operationIdOption,
@@ -168,13 +186,21 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
                 requireTenant: true,
                 async (provider, token) =>
                 {
+                    Result<string> actor = ResolveAdminActor(
+                        provider.GetRequiredService<IAdminActorContext>());
+                    if (actor.IsFailure)
+                    {
+                        return Result.Failure<PropertyMutationReceiptDto>(actor.Error);
+                    }
+
                     IRequestDispatcher dispatcher = provider.GetRequiredService<IRequestDispatcher>();
                     Result<PropertyMutationReceiptDto> result = await dispatcher.SendAsync(
                         new CreatePropertyCommand(
                             parseResult.GetRequiredValue(operationIdOption),
                             parseResult.GetRequiredValue(nameOption),
                             parseResult.GetRequiredValue(codeOption),
-                            parseResult.GetValue(timeZoneOption) ?? "UTC"),
+                            parseResult.GetRequiredValue(timeZoneOption),
+                            actor.Value),
                         token).ConfigureAwait(false);
 
                     if (result.IsSuccess)
@@ -192,13 +218,223 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
         return command;
     }
 
+    private static Command CreateTimeZoneCatalogCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<Guid> propertyIdOption = new("--property-id");
+        Option<string?> searchOption = new("--search");
+        Option<string?> countryCodeOption = new("--country-code");
+        countryCodeOption.Validators.Add(result =>
+        {
+            string? value = result.GetValueOrDefault<string?>();
+            if (!string.IsNullOrWhiteSpace(value) &&
+                (value.Trim().Length != 2 ||
+                 value.Trim().Any(character =>
+                     !char.IsAsciiLetter(character))))
+            {
+                result.AddError("--country-code must be a two-letter country code.");
+            }
+        });
+        Option<string?> cursorOption = new("--cursor");
+        Option<int> pageSizeOption = new("--page-size") { DefaultValueFactory = _ => 50 };
+        Command command = new("catalog", "List canonical IANA time zones.")
+        {
+            propertyIdOption,
+            searchOption,
+            countryCodeOption,
+            cursorOption,
+            pageSizeOption
+        };
+        command.SetAction((parseResult, cancellationToken) =>
+        {
+            AdminCliExecutor executor = services.GetRequiredService<AdminCliExecutor>();
+            return executor.ExecuteAsync(
+                parseResult,
+                AdminOperation.Create(
+                    PropertiesAdminOperationNames.TimeZonesCatalog,
+                    PropertiesAdminPermissions.Read),
+                parseResult.GetValue(globalOptions.TenantOption),
+                requireTenant: true,
+                async (provider, token) =>
+                {
+                    IRequestDispatcher dispatcher = provider.GetRequiredService<IRequestDispatcher>();
+                    Result<PropertyTimeZoneCatalogPageDto> result = await dispatcher.QueryAsync(
+                        new ListPropertyTimeZoneCatalogQuery(
+                            parseResult.GetValue(searchOption),
+                            NormalizeCountryCode(
+                                parseResult.GetValue(countryCodeOption)),
+                            parseResult.GetValue(cursorOption),
+                            parseResult.GetValue(pageSizeOption)),
+                        token).ConfigureAwait(false);
+                    if (result.IsSuccess)
+                    {
+                        WriteTimeZoneCatalog(
+                            result.Value,
+                            parseResult.GetValue(globalOptions.OutputOption) ?? AdminCliOutput.Table);
+                    }
+
+                    return result;
+                },
+                cancellationToken);
+        });
+        return command;
+    }
+
+    private static Command CreateTimeZoneComplianceCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<string?> cursorOption = new("--cursor");
+        Option<int> pageSizeOption = new("--page-size") { DefaultValueFactory = _ => 50 };
+        Command command = new("compliance", "List property time-zone compliance.")
+        {
+            cursorOption,
+            pageSizeOption
+        };
+        command.SetAction((parseResult, cancellationToken) =>
+        {
+            AdminCliExecutor executor = services.GetRequiredService<AdminCliExecutor>();
+            return executor.ExecuteAsync(
+                parseResult,
+                AdminOperation.Create(
+                    PropertiesAdminOperationNames.TimeZoneComplianceList,
+                    PropertiesAdminPermissions.TimeZonesManage),
+                parseResult.GetValue(globalOptions.TenantOption),
+                requireTenant: true,
+                async (provider, token) =>
+                {
+                    IRequestDispatcher dispatcher = provider.GetRequiredService<IRequestDispatcher>();
+                    Result<PropertyTimeZoneCompliancePageDto> result = await dispatcher.QueryAsync(
+                        new ListPropertyTimeZoneComplianceQuery(
+                            parseResult.GetValue(cursorOption),
+                            parseResult.GetValue(pageSizeOption)),
+                        token).ConfigureAwait(false);
+                    if (result.IsSuccess)
+                    {
+                        WriteTimeZoneCompliance(
+                            result.Value,
+                            parseResult.GetValue(globalOptions.OutputOption) ?? AdminCliOutput.Table);
+                    }
+
+                    return result;
+                },
+                cancellationToken);
+        });
+        return command;
+    }
+
+    private static Command CreateSetPropertyTimeZoneCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<Guid> propertyIdOption = CreatePropertyIdOption();
+        Option<Guid> operationIdOption = new("--operation-id") { Required = true };
+        Option<string> timeZoneOption = new("--time-zone") { Required = true };
+        Option<long> expectedVersionOption = CreateRequiredVersionOption("--expected-version");
+        Option<bool> yesOption = new("--yes");
+        Command command = new("set", "Set a property time zone using a primary or known-alias IANA identifier.")
+        {
+            propertyIdOption,
+            operationIdOption,
+            timeZoneOption,
+            expectedVersionOption,
+            yesOption
+        };
+        command.SetAction((parseResult, cancellationToken) =>
+        {
+            AdminCliExecutor executor = services.GetRequiredService<AdminCliExecutor>();
+            return executor.ExecuteAsync(
+                parseResult,
+                AdminOperation.Create(
+                    PropertiesAdminOperationNames.PropertyTimeZoneSet,
+                    PropertiesAdminPermissions.TimeZonesManage),
+                parseResult.GetValue(globalOptions.TenantOption),
+                requireTenant: true,
+                async (provider, token) =>
+                {
+                    Result<string> actor = ResolveAdminActor(
+                        provider.GetRequiredService<IAdminActorContext>());
+                    if (actor.IsFailure)
+                    {
+                        return Result.Failure<SetPropertyTimeZoneReceiptDto>(
+                            actor.Error);
+                    }
+
+                    IRequestDispatcher dispatcher = provider.GetRequiredService<IRequestDispatcher>();
+                    Result<SetPropertyTimeZoneReceiptDto> result = await dispatcher.SendAsync(
+                        new SetPropertyTimeZoneCommand(
+                            parseResult.GetRequiredValue(propertyIdOption),
+                            parseResult.GetRequiredValue(operationIdOption),
+                            parseResult.GetRequiredValue(timeZoneOption),
+                            parseResult.GetValue(yesOption),
+                            parseResult.GetRequiredValue(expectedVersionOption),
+                            actor.Value),
+                        token).ConfigureAwait(false);
+                    if (result.IsSuccess)
+                    {
+                        AdminCliOutput.WriteObject(
+                            result.Value,
+                            parseResult.GetValue(globalOptions.OutputOption) ?? AdminCliOutput.Table);
+                    }
+
+                    return result;
+                },
+                cancellationToken);
+        });
+        return command;
+    }
+
+    private static Command CreateGetPropertyTimeZoneOperationCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<Guid> propertyIdOption = CreatePropertyIdOption();
+        Option<Guid> operationIdOption = new("--operation-id") { Required = true };
+        Command command = new("operation-get", "Recover a property time-zone operation receipt.")
+        {
+            propertyIdOption,
+            operationIdOption
+        };
+        command.SetAction((parseResult, cancellationToken) =>
+        {
+            AdminCliExecutor executor = services.GetRequiredService<AdminCliExecutor>();
+            return executor.ExecuteAsync(
+                parseResult,
+                AdminOperation.Create(
+                    PropertiesAdminOperationNames.PropertyTimeZoneOperationGet,
+                    PropertiesAdminPermissions.TimeZonesManage),
+                parseResult.GetValue(globalOptions.TenantOption),
+                requireTenant: true,
+                async (provider, token) =>
+                {
+                    IRequestDispatcher dispatcher = provider.GetRequiredService<IRequestDispatcher>();
+                    Result<PropertyTimeZoneRecoveryDto> result = await dispatcher.QueryAsync(
+                        new GetPropertyTimeZoneRecoveryQuery(
+                            parseResult.GetRequiredValue(propertyIdOption),
+                            parseResult.GetRequiredValue(operationIdOption)),
+                        token).ConfigureAwait(false);
+                    if (result.IsSuccess)
+                    {
+                        AdminCliOutput.WriteObject(
+                            result.Value,
+                            parseResult.GetValue(globalOptions.OutputOption) ?? AdminCliOutput.Table);
+                    }
+
+                    return result;
+                },
+                cancellationToken);
+        });
+        return command;
+    }
+
     private static Command CreateUpdatePropertyCommand(IServiceProvider services, AdminCliGlobalOptions globalOptions)
     {
         Option<Guid> propertyIdOption = CreatePropertyIdOption();
         Option<Guid> operationIdOption = new("--operation-id") { Required = true };
         Option<string> nameOption = new("--name") { Required = true };
         Option<string> codeOption = new("--code") { Required = true };
-        Option<string> timeZoneOption = new("--time-zone") { DefaultValueFactory = _ => "UTC" };
+        Option<string?> timeZoneOption = new("--time-zone");
         Option<long> expectedVersionOption = CreateRequiredVersionOption("--expected-version");
         Command command = new("update", "Update a property.")
         {
@@ -226,7 +462,7 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
                             parseResult.GetRequiredValue(operationIdOption),
                             parseResult.GetRequiredValue(nameOption),
                             parseResult.GetRequiredValue(codeOption),
-                            parseResult.GetValue(timeZoneOption) ?? "UTC",
+                            parseResult.GetValue(timeZoneOption),
                             parseResult.GetRequiredValue(expectedVersionOption)),
                         token).ConfigureAwait(false);
 
@@ -828,6 +1064,97 @@ public sealed class PropertiesAdminCliModule : IAdminCliModule
                 ("Version", bed => bed.Version.ToString(CultureInfo.InvariantCulture)),
                 ("RoomVersion", bed => bed.RoomVersion.ToString(CultureInfo.InvariantCulture))
             ]);
+
+    private static void WriteTimeZoneCatalog(PropertyTimeZoneCatalogPageDto page, string output)
+    {
+        if (AdminCliOutput.NormalizeFormat(output) == AdminCliOutput.Json)
+        {
+            AdminCliOutput.WriteObject(page, output);
+            return;
+        }
+
+        AdminCliOutput.WriteMessage(
+            $"Catalog {page.CatalogVersion}; observed {page.ObservedAtUtc:O}.");
+        AdminCliOutput.WriteRows(
+            page.TimeZones,
+            output,
+            [
+                ("TimeZone", item => item.TimeZoneId),
+                ("UTC offset", item => FormatUtcOffset(item.UtcOffsetMinutes)),
+                ("RuntimeAvailable", item => item.RuntimeAvailable.ToString()),
+                ("Countries", item => string.Join(", ", item.Countries.Select(country =>
+                    $"{country.Code} ({country.Name})"))),
+                ("Comment", item => item.Comment ?? string.Empty)
+            ]);
+        WriteNextCursor(page.HasMore, page.NextCursor);
+    }
+
+    private static string? NormalizeCountryCode(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim().ToUpperInvariant();
+
+    private static void WriteTimeZoneCompliance(PropertyTimeZoneCompliancePageDto page, string output)
+    {
+        if (AdminCliOutput.NormalizeFormat(output) == AdminCliOutput.Json)
+        {
+            AdminCliOutput.WriteObject(page, output);
+            return;
+        }
+
+        AdminCliOutput.WriteMessage(
+            $"Catalog {page.CatalogVersion}; observed {page.ObservedAtUtc:O}.");
+        AdminCliOutput.WriteRows(
+            page.Properties,
+            output,
+            [
+                ("PropertyId", item => item.PropertyId.ToString()),
+                ("Code", item => item.Code),
+                ("Name", item => item.Name),
+                ("TimeZone", item => item.TimeZoneId),
+                ("TimeZoneStatus", item => item.TimeZoneStatus.ToString()),
+                ("CanonicalTimeZone", item => item.CanonicalTimeZoneId ?? string.Empty),
+                ("ObservedAtUtc", _ => page.ObservedAtUtc.ToString("O", CultureInfo.InvariantCulture)),
+                ("PropertyStatus", item => item.Status.ToString()),
+                ("ProcessingStatus", item => item.ProcessingStatus.ToString()),
+                ("OperatingCountry", item => item.OperatingCountryCode ?? string.Empty),
+                ("Version", item => item.Version.ToString(CultureInfo.InvariantCulture)),
+                ("CorrectionAllowed", item => item.CorrectionAllowed.ToString())
+            ]);
+        WriteNextCursor(page.HasMore, page.NextCursor);
+    }
+
+    private static void WriteNextCursor(bool hasMore, string? nextCursor)
+    {
+        if (hasMore)
+        {
+            AdminCliOutput.WriteMessage($"Next cursor: {nextCursor}");
+        }
+    }
+
+    private static string FormatUtcOffset(int offsetMinutes)
+    {
+        char sign = offsetMinutes < 0 ? '-' : '+';
+        int absoluteMinutes = Math.Abs(offsetMinutes);
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{sign}{absoluteMinutes / 60:00}:{absoluteMinutes % 60:00}");
+    }
+
+    private static Result<string> ResolveAdminActor(IAdminActorContext actorContext)
+    {
+        ArgumentNullException.ThrowIfNull(actorContext);
+        if (actorContext.Actor is not { } actor)
+        {
+            return Result.Failure<string>(AdminErrors.Unauthorized);
+        }
+
+        string actorId = $"admin-cli:{actor.Id}";
+        return actorId.Length <= PropertiesContractLimits.ActorIdMaxLength &&
+               !actorId.Any(char.IsControl)
+            ? Result.Success(actorId)
+            : Result.Failure<string>(PropertiesDomainErrors.ActorIdInvalid);
+    }
 
     private static Option<Guid> CreatePropertyIdOption() =>
         new("--property-id") { Required = true };

@@ -28,7 +28,8 @@ internal sealed record GuestRetentionCandidateSnapshot(
     Guid OriginPropertyId,
     IReadOnlyList<GuestRetentionStaySnapshot> Stays,
     IReadOnlyList<GuestRetentionHoldSnapshot> ActiveHolds,
-    IReadOnlyList<GuestRetentionPropertySnapshot> Properties);
+    IReadOnlyList<GuestRetentionPropertySnapshot> Properties,
+    bool AssociationOverflowed);
 
 internal sealed record GuestRetentionStaySnapshot(
     Guid PropertyId,
@@ -46,6 +47,11 @@ internal sealed record GuestRetentionPropertySnapshot(
     PropertyStatus Status,
     PropertyProcessingStatus ProcessingStatus,
     string? TimeZoneId,
+    string? CanonicalTimeZoneId,
+    PropertyTimeZoneStatus TimeZoneStatus,
+    string? TimeZoneCatalogVersion,
+    GuestPropertyTimeZoneEvidenceSource TimeZoneEvidenceSource,
+    long TimeZoneEvidenceSourceVersion,
     long TopologySourceVersion,
     long PolicySourceVersion,
     PropertyGovernancePolicyBinding? GovernancePolicy);

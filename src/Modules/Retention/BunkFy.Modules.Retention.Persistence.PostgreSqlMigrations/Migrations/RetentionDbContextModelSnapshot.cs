@@ -98,13 +98,95 @@ namespace BunkFy.Modules.Retention.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("executions", "retention", t =>
                         {
-                            t.HasCheckConstraint("CK_retention_executions_coordinate", "(\"TargetKind\" = 1 AND \"PropertyId\" IS NULL) OR (\"TargetKind\" = 2 AND \"PropertyId\" IS NOT NULL)");
+                            t.HasCheckConstraint("CK_retention_executions_coordinate", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> '' AND ((\"TargetKind\" = 1 AND \"PropertyId\" IS NULL) OR (\"TargetKind\" = 2 AND \"PropertyId\" IS NOT NULL AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000'))");
+
+                            t.HasCheckConstraint("CK_retention_executions_keys", "\"OwnerKey\" ~ '^[a-z0-9.-]+$' AND \"DataClassKey\" ~ '^[a-z0-9.-]+$' AND (\"OutcomeCode\" IS NULL OR \"OutcomeCode\" ~ '^[A-Za-z0-9.-]+$')");
 
                             t.HasCheckConstraint("CK_retention_executions_state", "(\"State\" = 1 AND \"CompletedAtUtc\" IS NULL AND \"ScannedCount\" IS NULL AND \"AffectedCount\" IS NULL AND \"RemainingCount\" IS NULL AND \"OutcomeCode\" IS NULL AND \"HoldReviewDueAtUtc\" IS NULL) OR (\"State\" IN (2, 3, 4) AND \"CompletedAtUtc\" IS NOT NULL AND \"ScannedCount\" >= 0 AND \"AffectedCount\" BETWEEN 0 AND \"ScannedCount\" AND \"RemainingCount\" >= 0 AND length(trim(\"OutcomeCode\")) > 0 AND ((\"State\" = 3 AND \"HoldReviewDueAtUtc\" IS NOT NULL) OR (\"State\" <> 3 AND \"HoldReviewDueAtUtc\" IS NULL)))");
 
-                            t.HasCheckConstraint("CK_retention_executions_time", "\"DeadlineUtc\" > \"StartedAtUtc\"");
+                            t.HasCheckConstraint("CK_retention_executions_time", "\"DeadlineUtc\" > \"StartedAtUtc\" AND (\"CompletedAtUtc\" IS NULL OR \"CompletedAtUtc\" >= \"StartedAtUtc\") AND (\"State\" = 4 OR \"CompletedAtUtc\" IS NULL OR \"CompletedAtUtc\" <= \"DeadlineUtc\")");
 
-                            t.HasCheckConstraint("CK_retention_executions_versions", "\"ExecutionPolicyVersion\" >= 1 AND \"Attempt\" >= 1 AND \"Version\" >= 1");
+                            t.HasCheckConstraint("CK_retention_executions_versions", "\"ExecutionPolicyVersion\" >= 1 AND \"Attempt\" >= 1 AND \"Version\" >= 1 AND (\"State\" = 1 OR \"Version\" >= 2)");
+                        });
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Retention.Domain.Aggregates.RetentionRunRetryRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataClassKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("EvidenceVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ExecutionPolicyVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("OwnerKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("PropertyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("RequestedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ScheduledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TargetKind")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScopeId", "RunId", "EvidenceVersion")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "State", "RequestedAtUtc");
+
+                    b.ToTable("run_retry_requests", "retention", t =>
+                        {
+                            t.HasCheckConstraint("CK_retention_run_retry_request_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"RunId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> '' AND \"OwnerKey\" ~ '^[a-z0-9.-]+$' AND \"DataClassKey\" ~ '^[a-z0-9.-]+$' AND (\"FailureCode\" IS NULL OR \"FailureCode\" ~ '^[a-z0-9.-]+$')");
+
+                            t.HasCheckConstraint("CK_retention_run_retry_request_state", "\"State\" IN (1, 2, 3) AND ((\"State\" = 1 AND \"CompletedAtUtc\" IS NULL AND \"FailureCode\" IS NULL) OR (\"State\" = 2 AND \"CompletedAtUtc\" IS NOT NULL AND \"FailureCode\" IS NULL) OR (\"State\" = 3 AND \"CompletedAtUtc\" IS NOT NULL AND \"FailureCode\" IS NOT NULL))");
+
+                            t.HasCheckConstraint("CK_retention_run_retry_request_target", "(\"TargetKind\" = 1 AND \"PropertyId\" IS NULL) OR (\"TargetKind\" = 2 AND \"PropertyId\" IS NOT NULL AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000')");
+
+                            t.HasCheckConstraint("CK_retention_run_retry_request_timestamps", "(\"ScheduledAtUtc\" IS NULL OR \"ScheduledAtUtc\" >= \"RequestedAtUtc\") AND (\"CompletedAtUtc\" IS NULL OR \"CompletedAtUtc\" >= \"RequestedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_retention_run_retry_request_versions", "\"ExecutionPolicyVersion\" >= 1 AND \"EvidenceVersion\" >= 1 AND \"Attempt\" >= 1 AND \"Version\" >= 1 AND (\"State\" = 1 OR \"Version\" >= 2)");
                         });
                 });
 
@@ -143,7 +225,13 @@ namespace BunkFy.Modules.Retention.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("property_projection", "retention", t =>
                         {
-                            t.HasCheckConstraint("CK_retention_property_projection_policy", "(\"PolicySourceVersion\" = 0 AND \"RetentionPolicyVersion\" IS NULL AND \"IsProcessingEnabled\" = FALSE) OR (\"PolicySourceVersion\" >= 1 AND \"RetentionPolicyVersion\" >= 1)");
+                            t.HasCheckConstraint("CK_retention_property_projection_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND char_length(\"ScopeId\") > 0 AND \"ScopeId\" = btrim(\"ScopeId\") AND \"ScopeId\" !~ '[[:space:][:cntrl:]]'");
+
+                            t.HasCheckConstraint("CK_retention_property_projection_known", "\"IsKnown\" = (\"TopologySourceVersion\" >= 1 OR \"PolicySourceVersion\" >= 1)");
+
+                            t.HasCheckConstraint("CK_retention_property_projection_policy", "(\"PolicySourceVersion\" = 0 AND \"RetentionPolicyVersion\" IS NULL AND \"IsProcessingEnabled\" = FALSE) OR (\"PolicySourceVersion\" >= 1 AND \"RetentionPolicyVersion\" IS NOT NULL AND \"RetentionPolicyVersion\" >= 1)");
+
+                            t.HasCheckConstraint("CK_retention_property_projection_topology", "(\"TopologySourceVersion\" = 0 AND \"IsActive\" = FALSE) OR \"TopologySourceVersion\" >= 1");
 
                             t.HasCheckConstraint("CK_retention_property_projection_versions", "\"TopologySourceVersion\" >= 0 AND \"PolicySourceVersion\" >= 0");
                         });
@@ -215,17 +303,22 @@ namespace BunkFy.Modules.Retention.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasIndex("ScopeId", "HoldReviewDueAtUtc");
 
+                    b.HasIndex("ScopeId", "LastExecutionId")
+                        .IsUnique();
+
                     b.HasIndex("ScopeId", "State", "NextDueAtUtc");
 
                     b.ToTable("schedule_state", "retention", t =>
                         {
-                            t.HasCheckConstraint("CK_retention_schedule_state_result", "\"State\" IN (1, 2, 3, 4) AND ((\"LastCompletedAtUtc\" IS NULL AND \"LastScannedCount\" IS NULL AND \"LastAffectedCount\" IS NULL AND \"LastRemainingCount\" IS NULL AND \"OutcomeCode\" IS NULL) OR (\"LastCompletedAtUtc\" IS NOT NULL AND \"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND \"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND length(trim(\"OutcomeCode\")) > 0))");
+                            t.HasCheckConstraint("CK_retention_schedule_state_coordinates", "trim(\"ScopeId\") <> '' AND \"LastExecutionId\" <> '00000000-0000-0000-0000-000000000000' AND \"OwnerKey\" ~ '^[a-z0-9.-]+$' AND \"DataClassKey\" ~ '^[a-z0-9.-]+$' AND (\"OutcomeCode\" IS NULL OR \"OutcomeCode\" ~ '^[A-Za-z0-9.-]+$')");
 
-                            t.HasCheckConstraint("CK_retention_schedule_state_target", "(\"TargetKey\" = 'tenant' AND \"PropertyId\" IS NULL) OR (char_length(\"TargetKey\") = 32 AND \"PropertyId\" IS NOT NULL)");
+                            t.HasCheckConstraint("CK_retention_schedule_state_result", "(\"State\" = 1 AND \"LastCompletedAtUtc\" IS NULL AND \"LastScannedCount\" IS NULL AND \"LastAffectedCount\" IS NULL AND \"LastRemainingCount\" IS NULL AND \"OutcomeCode\" IS NULL AND \"HoldReviewDueAtUtc\" IS NULL) OR (\"State\" = 2 AND \"LastCompletedAtUtc\" IS NOT NULL AND \"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND \"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND \"OutcomeCode\" IS NOT NULL AND \"HoldReviewDueAtUtc\" IS NULL AND \"ConsecutiveFailures\" = 0) OR (\"State\" = 3 AND \"LastCompletedAtUtc\" IS NOT NULL AND \"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND \"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND \"OutcomeCode\" IS NOT NULL AND \"HoldReviewDueAtUtc\" IS NOT NULL AND \"ConsecutiveFailures\" = 0) OR (\"State\" = 4 AND \"LastCompletedAtUtc\" IS NOT NULL AND \"LastScannedCount\" >= 0 AND \"LastAffectedCount\" BETWEEN 0 AND \"LastScannedCount\" AND \"LastRemainingCount\" >= 0 AND \"OutcomeCode\" IS NOT NULL AND \"HoldReviewDueAtUtc\" IS NULL AND \"ConsecutiveFailures\" >= 1)");
+
+                            t.HasCheckConstraint("CK_retention_schedule_state_target", "(\"TargetKey\" = 'tenant' AND \"PropertyId\" IS NULL) OR (\"PropertyId\" IS NOT NULL AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"TargetKey\" = replace(\"PropertyId\"::text, '-', ''))");
 
                             t.HasCheckConstraint("CK_retention_schedule_state_time", "\"NextDueAtUtc\" > \"LastStartedAtUtc\" AND (\"LastCompletedAtUtc\" IS NULL OR \"LastCompletedAtUtc\" >= \"LastStartedAtUtc\")");
 
-                            t.HasCheckConstraint("CK_retention_schedule_state_versions", "\"ExecutionPolicyVersion\" >= 1 AND \"Version\" >= 1 AND \"ConsecutiveFailures\" >= 0");
+                            t.HasCheckConstraint("CK_retention_schedule_state_versions", "\"ExecutionPolicyVersion\" >= 1 AND \"Version\" >= 1 AND \"ConsecutiveFailures\" >= 0 AND (\"State\" = 1 OR \"Version\" >= 2)");
                         });
                 });
 
@@ -254,6 +347,8 @@ namespace BunkFy.Modules.Retention.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("tenant_projection", "retention", t =>
                         {
+                            t.HasCheckConstraint("CK_retention_tenant_projection_coordinates", "\"OrganizationId\" <> '00000000-0000-0000-0000-000000000000' AND char_length(\"ScopeId\") > 0 AND \"ScopeId\" = btrim(\"ScopeId\") AND \"ScopeId\" !~ '[[:space:][:cntrl:]]'");
+
                             t.HasCheckConstraint("CK_retention_tenant_projection_version", "\"SourceVersion\" >= 1");
                         });
                 });
@@ -359,7 +454,7 @@ namespace BunkFy.Modules.Retention.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_retention_tenant_destroy_operation_batch", "\"BatchSize\" BETWEEN 1 AND 500");
 
-                            t.HasCheckConstraint("CK_retention_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 6 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
+                            t.HasCheckConstraint("CK_retention_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 8 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
 
                             t.HasCheckConstraint("CK_retention_tenant_destroy_operation_revisions", "\"SelectedRevision\" >= 0 AND \"ResultingRevision\" = \"SelectedRevision\" + 1");
 
@@ -491,6 +586,66 @@ namespace BunkFy.Modules.Retention.Persistence.PostgreSqlMigrations.Migrations
                     b.HasIndex("Status", "ProcessedAtUtc");
 
                     b.ToTable("inbox_messages", "retention");
+                });
+
+            modelBuilder.Entity("Gma.Framework.Messaging.Infrastructure.OutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("LockedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("LockedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ProcessedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("ScopeId");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProcessedAtUtc", "NextAttemptAtUtc", "LockedUntilUtc", "CreatedAtUtc");
+
+                    b.ToTable("outbox_messages", "retention");
                 });
 #pragma warning restore 612, 618
         }

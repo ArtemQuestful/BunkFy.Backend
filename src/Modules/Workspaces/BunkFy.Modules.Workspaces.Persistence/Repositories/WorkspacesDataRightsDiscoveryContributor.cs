@@ -50,6 +50,13 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
             subjectId,
             request.MaxCandidates,
             cancellationToken).ConfigureAwait(false);
+        await this.AddRecoveryReceiptCandidatesAsync(
+            candidates,
+            tenantId,
+            recordId,
+            subjectId,
+            request.MaxCandidates,
+            cancellationToken).ConfigureAwait(false);
         await this.AddAccessProcessCandidatesAsync(
             candidates,
             tenantId,
@@ -224,6 +231,55 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
         }
     }
 
+    private async Task AddRecoveryReceiptCandidatesAsync(
+        List<DataRightsSubjectCandidate> candidates,
+        string tenantId,
+        Guid? recordId,
+        string? subjectId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<WorkspaceStaffOnboardingRecoveryReceipt> query =
+            dbContext.StaffOnboardingRecoveryReceipts
+                .AsNoTracking()
+                .Where(receipt => receipt.ScopeId == tenantId);
+        query = recordId.HasValue
+            ? query.Where(receipt =>
+                receipt.Id == recordId.Value ||
+                receipt.OperationId == recordId.Value ||
+                receipt.ApplicationId == recordId.Value ||
+                receipt.StaffMemberId == recordId.Value)
+            : query.Where(receipt =>
+                receipt.ApplicantSubjectId == subjectId ||
+                receipt.PlanCreatorActorId == subjectId ||
+                receipt.RecoveryActorId == subjectId);
+        WorkspaceStaffOnboardingRecoveryCandidate[] records = await query
+            .OrderBy(receipt => receipt.RecordedAtUtc)
+            .ThenBy(receipt => receipt.Id)
+            .Take(limit)
+            .Select(receipt => new WorkspaceStaffOnboardingRecoveryCandidate(
+                receipt.Id,
+                receipt.ContractVersion,
+                receipt.Outcome,
+                receipt.RecordedAtUtc))
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (WorkspaceStaffOnboardingRecoveryCandidate record in records)
+        {
+            candidates.Add(new DataRightsSubjectCandidate(
+                new DataRightsSubjectCoordinate(
+                    WorkspacesDataRightsCoordinates.Owner,
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType,
+                    record.Id,
+                    record.ContractVersion),
+                $"Workspace onboarding recovery: {record.Outcome} on " +
+                $"{record.RecordedAtUtc:yyyy-MM-dd}",
+                EmailHint: null,
+                PhoneHint: null));
+        }
+    }
+
     private async Task AddAccessPlanCandidatesAsync(
         List<DataRightsSubjectCandidate> candidates,
         string tenantId,
@@ -333,6 +389,15 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
                         record.Id == recordId)
                     .Select(record => (long?)record.Version)
                     .SingleOrDefaultAsync(cancellationToken),
+            WorkspacesDataRightsCoordinates
+                .StaffOnboardingRecoveryReceiptRecordType =>
+                dbContext.StaffOnboardingRecoveryReceipts
+                    .AsNoTracking()
+                    .Where(record =>
+                        record.ScopeId == tenantId &&
+                        record.Id == recordId)
+                    .Select(record => (long?)record.ContractVersion)
+                    .SingleOrDefaultAsync(cancellationToken),
             WorkspacesDataRightsCoordinates.StaffAccessPlanRecordType =>
                 dbContext.StaffAccessPlans
                     .AsNoTracking()
@@ -405,6 +470,12 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
         Guid Id,
         long Version,
         WorkspaceStaffOnboardingState Status);
+
+    private sealed record WorkspaceStaffOnboardingRecoveryCandidate(
+        Guid Id,
+        long ContractVersion,
+        WorkspaceStaffOnboardingRecoveryOutcome Outcome,
+        DateTimeOffset RecordedAtUtc);
 
     private sealed record WorkspaceStaffAccessProcessCandidate(
         Guid Id,

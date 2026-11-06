@@ -557,8 +557,9 @@ public static partial class TenantTerminationReplayProof
                 contribution.CatalogSha256,
                 dispatch.CatalogSha256) ||
             contribution.RecordedAtUtc < dispatch.RecordedAtUtc ||
-            contribution.RecordedAtUtc > dispatch.DeadlineUtc ||
-            protectedAtUtc < contribution.RecordedAtUtc)
+            contribution.RecordedAtUtc >= dispatch.DeadlineUtc ||
+            protectedAtUtc < contribution.RecordedAtUtc ||
+            protectedAtUtc >= dispatch.DeadlineUtc)
         {
             return false;
         }

@@ -21,10 +21,61 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
     WorkspaceStaffAccessPlanPolicy planPolicy,
     WorkspaceAccessProvisioner access,
     WorkspaceOperationalAdmissionEvaluator operationalAdmission,
+    WorkspaceOrganizationMembershipObserver membershipObserver,
     ISystemClock clock,
     IIdGenerator ids,
     ILogger<WorkspaceStaffOnboardingProcessor> logger)
 {
+    private const string AccessProvisioningFailureCode =
+        "Workspaces.AccessProvisioningFailed";
+    private const string MembershipStateConflictCode =
+        "Workspaces.StaffOnboardingMembershipStateConflict";
+
+    // A captured partial-provisioning failure belongs to receipted owner
+    // recovery. Admission/lifecycle preconditions and infrastructure faults
+    // remain retryable without acknowledging an unsuccessful continuation.
+    internal static bool RequiresOwnerRecovery(
+        WorkspaceStaffOnboarding application,
+        Result processed) =>
+        processed.IsFailure &&
+        application.Status == WorkspaceStaffOnboardingState.Failed &&
+        application.StaffMemberId.HasValue &&
+        (processed.Error.Code == WorkspaceStaffOnboardingApplicationErrors
+            .ProvisioningFailed.Code ||
+         processed.Error.Code == WorkspaceStaffOnboardingApplicationErrors
+            .RecoveryAttemptRequired.Code);
+
+    internal WorkspaceStaffOnboardingProcessor(
+        IStaffOnboardingProvisioner staff,
+        IStaffPropertyAssignmentProvisioner staffProperties,
+        IWorkspaceStaffOnboardingProcessingRestrictionProjectionRepository
+            restrictionProjections,
+        WorkspaceStaffOnboardingMutationCoordinator mutations,
+        WorkspaceStaffOnboardingIdentityAnchorConvergence anchorConvergence,
+        IWorkspaceStaffAccessPlanRepository plans,
+        WorkspaceStaffAccessPlanPolicy planPolicy,
+        WorkspaceAccessProvisioner access,
+        WorkspaceOperationalAdmissionEvaluator operationalAdmission,
+        ISystemClock clock,
+        IIdGenerator ids,
+        ILogger<WorkspaceStaffOnboardingProcessor> logger)
+        : this(
+            staff,
+            staffProperties,
+            restrictionProjections,
+            mutations,
+            anchorConvergence,
+            plans,
+            planPolicy,
+            access,
+            operationalAdmission,
+            new WorkspaceOrganizationMembershipObserver([], [], clock),
+            clock,
+            ids,
+            logger)
+    {
+    }
+
     public Task<Result> ProcessAsync(
         WorkspaceStaffOnboarding application,
         CancellationToken cancellationToken) =>
@@ -187,6 +238,17 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
             return Result.Success();
         }
 
+        bool isFailedRecovery =
+            application.Status == WorkspaceStaffOnboardingState.Failed &&
+            application.StaffMemberId.HasValue;
+
+        if (isFailedRecovery)
+        {
+            return Result.Failure(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .RecoveryAttemptRequired);
+        }
+
         Result admitted = await this.RequireOperationalAsync(
             application.ScopeId,
             cancellationToken).ConfigureAwait(false);
@@ -214,6 +276,15 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
             return Result.Failure(
                 WorkspaceStaffOnboardingApplicationErrors
                     .ProcessingRestricted);
+        }
+
+        Result membershipBound = await this.EnsureMembershipBindingAsync(
+            application,
+            requireExistingBinding: false,
+            cancellationToken).ConfigureAwait(false);
+        if (membershipBound.IsFailure)
+        {
+            return membershipBound;
         }
 
         Result started = application.BeginProvisioning(clock.UtcNow);
@@ -410,6 +481,15 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
 
         try
         {
+            Result membershipRechecked = await this.EnsureMembershipBindingAsync(
+                application,
+                requireExistingBinding: true,
+                cancellationToken).ConfigureAwait(false);
+            if (membershipRechecked.IsFailure)
+            {
+                return membershipRechecked;
+            }
+
             admitted = await this.RequireOperationalAsync(
                 application.ScopeId,
                 cancellationToken).ConfigureAwait(false);
@@ -418,24 +498,96 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
                 return admitted;
             }
 
-            await access.ProvisionMemberAsync(
+            Result provisionedAccess = await access.ProvisionMemberAsync(
                     application.ScopeId,
                     application.SubjectId,
                     plan.ProfileId,
                     propertyIds,
                     cancellationToken)
                 .ConfigureAwait(false);
+            if (provisionedAccess.IsFailure)
+            {
+                application.Fail(AccessProvisioningFailureCode, clock.UtcNow);
+                logger.LogWarning(
+                    "Staff onboarding access provisioning failed at {FailureStage} with {ErrorCode}.",
+                    "profile-reconciliation",
+                    provisionedAccess.Error.Code);
+                return Result.Failure(
+                    WorkspaceStaffOnboardingApplicationErrors.ProvisioningFailed);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            application.Fail("Workspaces.AccessProvisioningFailed", clock.UtcNow);
+            application.Fail(AccessProvisioningFailureCode, clock.UtcNow);
             logger.LogWarning(
-                "Staff onboarding could not provision workspace access because {ExceptionType} was raised.",
+                "Staff onboarding access provisioning failed at {FailureStage} with {ErrorCode}; {ExceptionType} was raised.",
+                "access-bootstrap",
+                AccessProvisioningFailureCode,
                 exception.GetType().Name);
             return Result.Failure(WorkspaceStaffOnboardingApplicationErrors.ProvisioningFailed);
         }
 
         return application.Complete(clock.UtcNow);
+    }
+
+    private async Task<Result> EnsureMembershipBindingAsync(
+        WorkspaceStaffOnboarding application,
+        bool requireExistingBinding,
+        CancellationToken cancellationToken)
+    {
+        if (requireExistingBinding &&
+            (!application.AcceptedMembershipId.HasValue ||
+             !application.AcceptedMembershipVersion.HasValue))
+        {
+            application.Fail(MembershipStateConflictCode, clock.UtcNow);
+            return Result.Failure(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .MembershipStateConflict);
+        }
+
+        WorkspaceOrganizationMembershipObservation observation =
+            await membershipObserver.ObserveAsync(
+                application.ScopeId,
+                application.SubjectId,
+                cancellationToken).ConfigureAwait(false);
+        if (observation.Status != WorkspaceRecoveryVerificationStatus.Equivalent ||
+            !observation.MembershipId.HasValue ||
+            !observation.MembershipVersion.HasValue)
+        {
+            string code = observation.Status ==
+                WorkspaceRecoveryVerificationStatus.RetryLater
+                    ? WorkspaceStaffOnboardingApplicationErrors
+                        .MembershipStateUnavailable.Code
+                    : MembershipStateConflictCode;
+            application.Fail(code, clock.UtcNow);
+            return Result.Failure(
+                observation.Status == WorkspaceRecoveryVerificationStatus.RetryLater
+                    ? WorkspaceStaffOnboardingApplicationErrors
+                        .MembershipStateUnavailable
+                    : WorkspaceStaffOnboardingApplicationErrors
+                        .MembershipStateConflict);
+        }
+
+        if (application.AcceptedMembershipId.HasValue ||
+            application.AcceptedMembershipVersion.HasValue)
+        {
+            if (application.AcceptedMembershipId != observation.MembershipId ||
+                application.AcceptedMembershipVersion !=
+                    observation.MembershipVersion)
+            {
+                application.Fail(MembershipStateConflictCode, clock.UtcNow);
+                return Result.Failure(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .MembershipStateConflict);
+            }
+
+            return Result.Success();
+        }
+
+        return application.BindAcceptedMembership(
+            observation.MembershipId.Value,
+            observation.MembershipVersion.Value,
+            clock.UtcNow);
     }
 
     private async ValueTask<Result> RequireOperationalAsync(

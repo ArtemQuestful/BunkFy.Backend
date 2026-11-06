@@ -9,6 +9,8 @@ internal sealed class IngestionExecutionLock(IngestionDbContext dbContext)
 {
     private const string TaskExecutionPrefix =
         "bunkfy:ingestion:execution:task:";
+    private const string RetentionExecutionPrefix =
+        "bunkfy:ingestion:execution:retention:";
     private const string ConnectionPrefix =
         "bunkfy:ingestion:execution:connection:";
     private const string RunPrefix =
@@ -41,6 +43,16 @@ internal sealed class IngestionExecutionLock(IngestionDbContext dbContext)
         tenantId,
         connectionId,
         EfTransactionKeyLockMode.Shared,
+        cancellationToken);
+
+    public Task AcquireRetentionExecutionAsync(
+        string tenantId,
+        Guid executionId,
+        CancellationToken cancellationToken) => this.AcquireResourceAsync(
+        RetentionExecutionPrefix,
+        tenantId,
+        executionId,
+        EfTransactionKeyLockMode.Exclusive,
         cancellationToken);
 
     public Task AcquireConnectionWriteAsync(

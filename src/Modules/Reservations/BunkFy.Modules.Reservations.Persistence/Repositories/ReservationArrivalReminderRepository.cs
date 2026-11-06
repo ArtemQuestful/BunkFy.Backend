@@ -5,6 +5,7 @@ using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
+using Gma.Framework.Persistence.EntityFrameworkCore;
 using Gma.Framework.Runtime.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,10 +15,17 @@ internal sealed class ReservationArrivalReminderRepository(
     IReservationOperationLock operationLock)
     : IReservationArrivalReminderRepository, IReservationPropertyPolicyRepository
 {
+    private const string PropertyProjectionLockPrefix =
+        "bunkfy:reservations:property-projection:";
+
     public async Task ApplyPropertyAsync(
         ReservationReminderPropertyWriteModel property,
         CancellationToken cancellationToken)
     {
+        await this.AcquirePropertyProjectionLockAsync(
+            property.ScopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         ReservationPropertyProjection? projection = dbContext.PropertyProjections.Local.FirstOrDefault(
             item => item.Id == property.PropertyId && item.ScopeId == property.ScopeId) ??
             await dbContext.PropertyProjections.FirstOrDefaultAsync(
@@ -84,6 +92,10 @@ internal sealed class ReservationArrivalReminderRepository(
         ReservationPropertyPolicyWriteModel property,
         CancellationToken cancellationToken)
     {
+        await this.AcquirePropertyProjectionLockAsync(
+            property.ScopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         ReservationPropertyProjection projection = await this.GetOrCreatePropertyAsync(
             property.ScopeId,
             property.PropertyId,
@@ -363,6 +375,37 @@ internal sealed class ReservationArrivalReminderRepository(
         }
 
         return projection;
+    }
+
+    private async Task AcquirePropertyProjectionLockAsync(
+        string tenantId,
+        Guid propertyId,
+        CancellationToken cancellationToken)
+    {
+        string scopeId = tenantId?.Trim() ?? string.Empty;
+        if (scopeId.Length == 0 ||
+            !string.Equals(scopeId, dbContext.CurrentScopeId, StringComparison.Ordinal) ||
+            propertyId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                "A Reservations property projection lock requires valid scoped coordinates.");
+        }
+
+        if (!dbContext.Database.IsRelational())
+        {
+            return;
+        }
+
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                "A Reservations property projection lock requires an active database transaction.");
+        }
+
+        await EfTransactionKeyLock.AcquireAsync(
+            dbContext,
+            PropertyProjectionLockPrefix + scopeId + ':' + propertyId.ToString("N"),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static PropertyGovernancePolicyBinding? MapPolicy(ReservationPropertyPolicyBinding? policy) =>

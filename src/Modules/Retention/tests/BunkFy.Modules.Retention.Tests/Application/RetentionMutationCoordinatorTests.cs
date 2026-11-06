@@ -2,11 +2,13 @@ namespace BunkFy.Modules.Retention.Tests.Application;
 
 using System.Reflection;
 using BunkFy.Modules.Retention.Application.Commands;
+using BunkFy.Modules.Retention.Application.Errors;
 using BunkFy.Modules.Retention.Application.Handlers;
 using BunkFy.Modules.Retention.Application.Ports;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Retention.Domain.Aggregates;
 using BunkFy.Modules.Retention.Domain.Models;
+using Gma.Framework.Results;
 using Gma.Framework.Scoping;
 using Xunit;
 
@@ -29,6 +31,7 @@ public sealed class RetentionMutationCoordinatorTests
         RetentionExecutionMutationCoordinator coordinator = new(
             new RecordingMutationLock(calls),
             new RecordingExecutionRepository(execution, calls),
+            new RecordingScheduleHealthReader(snapshot: null, calls),
             new RecordingScopeRepository(calls),
             new TestScopeContext());
 
@@ -37,6 +40,7 @@ public sealed class RetentionMutationCoordinatorTests
             CancellationToken.None);
 
         Assert.True(lease.TargetAvailable);
+        Assert.True(lease.ScheduleAvailable);
         Assert.Same(execution, lease.Execution);
         Assert.Equal(
             [
@@ -45,9 +49,42 @@ public sealed class RetentionMutationCoordinatorTests
                 $"execution:{executionId:N}",
                 $"schedule:guests:guest-operational:{propertyId:N}:1",
                 "target-read",
-                $"execution-read:{executionId:N}"
+                $"execution-read:{executionId:N}",
+                $"schedule-read:{propertyId:N}"
             ],
             calls);
+    }
+
+    [Fact]
+    public async Task Start_rejects_a_different_execution_while_the_schedule_is_running()
+    {
+        Guid propertyId = Guid.Parse(
+            "10000000-0000-0000-0000-000000000004");
+        Guid executionId = Guid.Parse(
+            "20000000-0000-0000-0000-000000000004");
+        Guid activeExecutionId = Guid.Parse(
+            "30000000-0000-0000-0000-000000000004");
+        List<string> calls = [];
+        RecordingExecutionRepository executions = new(null, calls);
+        RetentionExecutionMutationCoordinator coordinator = new(
+            new RecordingMutationLock(calls),
+            executions,
+            new RecordingScheduleHealthReader(
+                RunningSchedule(activeExecutionId, propertyId),
+                calls),
+            new RecordingScopeRepository(calls),
+            new TestScopeContext());
+        BeginRetentionExecutionCommandHandler handler = new(
+            coordinator,
+            executions,
+            new NoopScheduleStateRepository());
+
+        Result<RetentionExecutionStart> result = await handler.HandleAsync(
+            CreateStartCommand(executionId, propertyId),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(RetentionApplicationErrors.ExecutionConflict, result.Error);
     }
 
     [Fact]
@@ -62,6 +99,7 @@ public sealed class RetentionMutationCoordinatorTests
         RetentionExecutionMutationCoordinator coordinator = new(
             new RecordingMutationLock(calls),
             new RecordingExecutionRepository(execution, calls),
+            new RecordingScheduleHealthReader(snapshot: null, calls),
             new RecordingScopeRepository(calls),
             new TestScopeContext());
 
@@ -77,6 +115,63 @@ public sealed class RetentionMutationCoordinatorTests
                 $"schedule:guests:guest-operational:{propertyId:N}:1"
             ],
             calls);
+    }
+
+    [Fact]
+    public async Task Reclaimed_lease_replays_terminal_execution()
+    {
+        Guid propertyId = Guid.Parse(
+            "10000000-0000-0000-0000-000000000004");
+        Guid executionId = Guid.Parse(
+            "20000000-0000-0000-0000-000000000004");
+        List<string> calls = [];
+        RetentionExecution execution = CreateExecution(
+            executionId,
+            propertyId);
+        Assert.True(execution.Complete(
+            RetentionExecutionState.Completed,
+            attempt: 1,
+            scannedCount: 2,
+            affectedCount: 1,
+            remainingCount: 0,
+            "guests.guest-operational.completed",
+            Now.AddMinutes(1),
+            holdReviewDueAtUtc: null).IsSuccess);
+        RecordingExecutionRepository executions = new(
+            execution,
+            calls);
+        RetentionExecutionMutationCoordinator coordinator = new(
+            new RecordingMutationLock(calls),
+            executions,
+            new RecordingScheduleHealthReader(snapshot: null, calls),
+            new RecordingScopeRepository(calls),
+            new TestScopeContext());
+        RecordingScheduleStateRepository schedules = new();
+        BeginRetentionExecutionCommandHandler handler = new(
+            coordinator,
+            executions,
+            schedules);
+        BeginRetentionExecutionCommand reclaimed =
+            CreateStartCommand(executionId, propertyId) with
+            {
+                Attempt = 2,
+                StartedAtUtc = Now.AddMinutes(2),
+                DeadlineUtc = Now.AddMinutes(7)
+            };
+
+        Result<RetentionExecutionStart> result =
+            await handler.HandleAsync(
+                reclaimed,
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.DispatchRequired);
+        Assert.Equal(
+            RetentionExecutionState.Completed,
+            result.Value.State);
+        Assert.Equal(1, result.Value.Request.Attempt);
+        Assert.Equal(1, execution.Attempt);
+        Assert.Equal(0, schedules.StartedCount);
     }
 
     [Fact]
@@ -109,6 +204,7 @@ public sealed class RetentionMutationCoordinatorTests
         RetentionExecutionMutationCoordinator coordinator = new(
             new RecordingMutationLock(calls),
             new RecordingExecutionRepository(null, calls),
+            new RecordingScheduleHealthReader(snapshot: null, calls),
             new RecordingScopeRepository(calls),
             new TestScopeContext());
         BeginRetentionExecutionCommand command = CreateStartCommand(
@@ -185,6 +281,27 @@ public sealed class RetentionMutationCoordinatorTests
         1,
         Now,
         Now.AddMinutes(5)).Value;
+
+    private static RetentionScheduleStateSnapshot RunningSchedule(
+        Guid executionId,
+        Guid propertyId) => new(
+            "guests",
+            "guest-operational",
+            propertyId,
+            ExecutionPolicyVersion: 1,
+            Version: 1,
+            State: (int)RetentionExecutionState.Running,
+            LastExecutionId: executionId,
+            LastStartedAtUtc: Now,
+            LastCompletedAtUtc: null,
+            NextDueAtUtc: Now.AddHours(1),
+            ConsecutiveFailures: 0,
+            LastScannedCount: null,
+            LastAffectedCount: null,
+            LastRemainingCount: null,
+            OutcomeCode: null,
+            HoldReviewDueAtUtc: null,
+            Retry: null);
 
     private sealed class RecordingMutationLock(List<string> calls)
         : IRetentionMutationLock
@@ -272,6 +389,53 @@ public sealed class RetentionMutationCoordinatorTests
         }
     }
 
+    private sealed class RecordingScheduleHealthReader(
+        RetentionScheduleStateSnapshot? snapshot,
+        List<string> calls)
+        : IRetentionScheduleHealthReader
+    {
+        public Task<RetentionScheduleStateSnapshot?> GetAsync(
+            string tenantId,
+            string ownerKey,
+            string dataClassKey,
+            Guid? propertyId,
+            int executionPolicyVersion,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(TenantId, tenantId);
+            Assert.Equal("guests", ownerKey);
+            Assert.Equal("guest-operational", dataClassKey);
+            Assert.Equal(1, executionPolicyVersion);
+            calls.Add($"schedule-read:{propertyId:N}");
+            return Task.FromResult(snapshot);
+        }
+
+        public Task<IReadOnlyList<RetentionScheduleStateSnapshot>> ListAsync(
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RetentionScheduleStateSnapshot?> GetByLastExecutionIdAsync(
+            string tenantId,
+            Guid lastExecutionId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class NoopScheduleStateRepository
+        : IRetentionScheduleStateRepository
+    {
+        public Task RecordStartedAsync(
+            RetentionExecution execution,
+            DateTimeOffset nextDueAtUtc,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task RecordCompletedAsync(
+            RetentionExecution execution,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     private sealed class RecordingScopeRepository(List<string> calls)
         : IRetentionScopeRepository
     {
@@ -326,5 +490,25 @@ public sealed class RetentionMutationCoordinatorTests
     {
         public bool IsEnabled => true;
         public string ScopeId => TenantId;
+    }
+
+    private sealed class RecordingScheduleStateRepository
+        : IRetentionScheduleStateRepository
+    {
+        public int StartedCount { get; private set; }
+
+        public Task RecordStartedAsync(
+            RetentionExecution execution,
+            DateTimeOffset nextDueAtUtc,
+            CancellationToken cancellationToken)
+        {
+            this.StartedCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task RecordCompletedAsync(
+            RetentionExecution execution,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

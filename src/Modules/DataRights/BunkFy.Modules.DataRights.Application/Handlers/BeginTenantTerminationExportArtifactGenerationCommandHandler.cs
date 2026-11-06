@@ -2,6 +2,7 @@ namespace BunkFy.Modules.DataRights.Application.Handlers;
 
 using BunkFy.Modules.DataRights.Application.Commands;
 using BunkFy.Modules.DataRights.Application.Ports;
+using BunkFy.Modules.DataRights.Application.Tasks;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.DataRights.Domain.Aggregates;
 using BunkFy.Modules.DataRights.Domain.Models;
@@ -14,7 +15,7 @@ internal sealed class BeginTenantTerminationExportArtifactGenerationCommandHandl
     TenantTerminationMutationCoordinator mutations,
     ITenantTerminationExportFragmentRepository fragments,
     ITenantTerminationExportArtifactRepository artifacts,
-    ITenantTerminationCoordinationSignal coordinationSignal,
+    ITenantTerminationExportRetentionScheduler retentionScheduler,
     ISystemClock clock)
     : ICommandHandler<
         BeginTenantTerminationExportArtifactGenerationCommand,
@@ -114,6 +115,14 @@ internal sealed class BeginTenantTerminationExportArtifactGenerationCommandHandl
             return Invalid();
         }
 
+        await retentionScheduler.EnqueueArtifactCleanupAsync(
+            process.ScopeId,
+            process.Id,
+            artifact.Id,
+            artifact.ExportOperationRevision,
+            artifact.ExpiresAtUtc,
+            cancellationToken).ConfigureAwait(false);
+
         if (process.HasCurrentExportConfirmation() &&
             !MatchesConfirmation(process, artifact))
         {
@@ -122,32 +131,6 @@ internal sealed class BeginTenantTerminationExportArtifactGenerationCommandHandl
 
         if (artifact.State == TenantTerminationExportArtifactState.Available)
         {
-            if (!process.HasCurrentExportConfirmation())
-            {
-                long previousVersion = process.Version;
-                Result confirmed = TenantTerminationExportArtifactCoordinator
-                    .Confirm(
-                        process,
-                        artifact,
-                        process.Version,
-                        TenantTerminationCoordination.ExecutorActorId,
-                        nowUtc);
-                if (confirmed.IsFailure)
-                {
-                    return Result.Failure<
-                        TenantTerminationExportArtifactGenerationStart>(
-                            confirmed.Error);
-                }
-
-                if (process.Version != previousVersion)
-                {
-                    _ = await coordinationSignal.EnqueueAsync(
-                        process,
-                        process.LastChangedAtUtc,
-                        cancellationToken).ConfigureAwait(false);
-                }
-            }
-
             return Result.Success(
                 new TenantTerminationExportArtifactGenerationStart(
                 DispatchRequired: false,

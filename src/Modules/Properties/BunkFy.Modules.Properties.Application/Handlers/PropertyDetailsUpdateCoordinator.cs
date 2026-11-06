@@ -21,14 +21,29 @@ internal sealed class PropertyDetailsUpdateCoordinator(
         Guid operationId,
         long expectedVersion,
         PropertyDetails details,
+        string? requestedTimeZoneId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(property);
         ArgumentNullException.ThrowIfNull(details);
-        string fingerprint = PropertyDetailsUpdateFingerprint.Compute(
+        string fingerprint = PropertyDetailsUpdateFingerprint.ComputeV3(
             property.Id,
             expectedVersion,
-            details);
+            details,
+            requestedTimeZoneId);
+        string? versionTwoFingerprint = requestedTimeZoneId is null
+            ? null
+            : PropertyDetailsUpdateFingerprint.ComputeV2(
+                property.Id,
+                expectedVersion,
+                details);
+        string? versionOneFingerprint = requestedTimeZoneId is null
+            ? null
+            : PropertyDetailsUpdateFingerprint.ComputeV1(
+                property.Id,
+                expectedVersion,
+                details,
+                requestedTimeZoneId);
         PropertyMutationReplayDecision<PropertyMutationReceiptDto> replay =
             await journal.InspectPropertyAsync(
             property,
@@ -36,10 +51,19 @@ internal sealed class PropertyDetailsUpdateCoordinator(
             PropertyMutationKind.DetailsUpdate,
             expectedVersion,
             fingerprint,
+            versionTwoFingerprint,
+            versionOneFingerprint,
             cancellationToken).ConfigureAwait(false);
         if (replay.Exists)
         {
             return replay.ToResult();
+        }
+
+        if (property.TimeZoneId != details.TimeZoneId)
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                PropertiesApplicationErrors
+                    .TimeZoneDedicatedOperationRequired);
         }
 
         Result<PropertyDetailsUpdateOutcome> evaluation =
@@ -50,7 +74,6 @@ internal sealed class PropertyDetailsUpdateCoordinator(
                 evaluation.Error);
         }
 
-        DateTimeOffset nowUtc = clock.UtcNow;
         if (evaluation.Value == PropertyDetailsUpdateOutcome.Changed)
         {
             await mutations.AcquirePropertyCodeAsync(
@@ -64,7 +87,17 @@ internal sealed class PropertyDetailsUpdateCoordinator(
                 return Result.Failure<PropertyMutationReceiptDto>(
                     PropertiesDomainErrors.PropertyCodeAlreadyExists);
             }
+        }
 
+        DateTimeOffset nowUtc = clock.UtcNow;
+        if (!PropertiesObservationTime.IsValid(nowUtc))
+        {
+            return Result.Failure<PropertyMutationReceiptDto>(
+                PropertiesApplicationErrors.TimeSourceUnavailable);
+        }
+
+        if (evaluation.Value == PropertyDetailsUpdateOutcome.Changed)
+        {
             Result<PropertyDetailsUpdateOutcome> update =
                 property.UpdateDetails(
                     details,

@@ -43,6 +43,27 @@ internal sealed class GuestPropertyProjectionRepository(
         current.ApplyPolicy(property.ProcessingStatus, property.GovernancePolicy, property.SourceVersion);
     }
 
+    public async Task ApplyTimeZoneAsync(
+        GuestPropertyTimeZoneWriteModel property,
+        CancellationToken cancellationToken)
+    {
+        await operationLock.AcquirePropertiesAsync(
+            property.ScopeId,
+            [property.PropertyId],
+            cancellationToken).ConfigureAwait(false);
+        GuestPropertyProjection current = await this.GetOrCreateAsync(
+            property.ScopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
+        current.ApplyTimeZone(
+            property.TimeZoneId,
+            property.CanonicalTimeZoneId,
+            property.TimeZoneStatus,
+            property.TimeZoneCatalogVersion,
+            property.TimeZoneEvidenceSource,
+            property.TimeZoneEvidenceSourceVersion);
+    }
+
     public async Task<GuestPropertyPolicySnapshot?> GetPolicyAsync(
         Guid propertyId,
         CancellationToken cancellationToken)
@@ -51,7 +72,9 @@ internal sealed class GuestPropertyProjectionRepository(
             .AsNoTracking()
             .Include(item => item.GovernancePolicy)
             .ThenInclude(policy => policy!.Acknowledgements)
-            .FirstOrDefaultAsync(item => item.Id == propertyId, cancellationToken)
+            .FirstOrDefaultAsync(
+                item => item.Id == propertyId,
+                cancellationToken)
             .ConfigureAwait(false);
         return property is null
             ? null
@@ -72,7 +95,7 @@ internal sealed class GuestPropertyProjectionRepository(
         GuestPropertyProjection? current = dbContext.PropertyProjections.Local.FirstOrDefault(
             item => item.ScopeId == scopeId && item.Id == propertyId) ??
             await dbContext.PropertyProjections.FirstOrDefaultAsync(
-                item => item.Id == propertyId,
+                item => item.ScopeId == scopeId && item.Id == propertyId,
                 cancellationToken).ConfigureAwait(false);
         if (current is not null)
         {

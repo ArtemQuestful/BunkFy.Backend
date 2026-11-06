@@ -90,6 +90,10 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("RestrictionDirective");
 
+                    b.Property<int?>("RestrictionTargetingContractVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("RestrictionTargetingContractVersion");
+
                     b.Property<int>("RoutingStatus")
                         .HasColumnType("integer");
 
@@ -165,7 +169,9 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
 
                             t.HasCheckConstraint("CK_data_rights_cases_restriction_directive", "((\"RequestedOperations\" & 4) = 0 AND \"RestrictionDirective\" = 0) OR ((\"RequestedOperations\" & 4) = 4 AND \"RestrictionDirective\" BETWEEN 0 AND 2)");
 
-                            t.HasCheckConstraint("CK_data_rights_cases_restriction_execution_proof", "((\"RequestedOperations\" = 4 AND \"Status\" = 9) AND \"RestrictionExecutionIdempotencyKey\" IS NOT NULL AND \"RestrictionExecutionApprovalRevision\" = \"DecisionRevision\" AND \"RestrictionExecutionDirective\" = \"RestrictionDirective\" AND length(trim(\"RestrictionExecutionOwnerKey\")) > 0 AND length(trim(\"RestrictionExecutionRecordType\")) > 0 AND \"RestrictionExecutionRecordId\" IS NOT NULL AND \"RestrictionExecutionSelectedRecordVersion\" >= 1 AND \"RestrictionExecutionReceiptContractVersion\" >= 1 AND \"RestrictionExecutionReceiptId\" IS NOT NULL AND \"RestrictionExecutionOwnerOperationId\" IS NOT NULL AND \"RestrictionExecutionResultingOwnerRevision\" >= 1 AND \"RestrictionExecutionResultingProjectionRevision\" >= 1 AND ((\"RestrictionExecutionDirective\" = 1 AND \"RestrictionExecutionEffectiveRestricted\" = TRUE) OR (\"RestrictionExecutionDirective\" = 2 AND \"RestrictionExecutionEffectiveRestricted\" = FALSE)) AND \"RestrictionExecutionReceiptSha256\" IS NOT NULL AND char_length(\"RestrictionExecutionReceiptSha256\") = 64 AND length(trim(\"RestrictionExecutionExecutedBy\")) > 0 AND \"RestrictionExecutionCompletedAtUtc\" >= \"DecidedAtUtc\" AND \"RestrictionExecutionCompletedAtUtc\" <= \"LastChangedAtUtc\") OR ((\"RequestedOperations\" <> 4 OR \"Status\" <> 9) AND \"RestrictionExecutionIdempotencyKey\" IS NULL AND \"RestrictionExecutionApprovalRevision\" IS NULL AND \"RestrictionExecutionDirective\" IS NULL AND \"RestrictionExecutionOwnerKey\" IS NULL AND \"RestrictionExecutionRecordType\" IS NULL AND \"RestrictionExecutionRecordId\" IS NULL AND \"RestrictionExecutionSelectedRecordVersion\" IS NULL AND \"RestrictionExecutionReceiptContractVersion\" IS NULL AND \"RestrictionExecutionReceiptId\" IS NULL AND \"RestrictionExecutionOwnerOperationId\" IS NULL AND \"RestrictionExecutionResultingOwnerRevision\" IS NULL AND \"RestrictionExecutionResultingProjectionRevision\" IS NULL AND \"RestrictionExecutionEffectiveRestricted\" IS NULL AND \"RestrictionExecutionReceiptSha256\" IS NULL AND \"RestrictionExecutionExecutedBy\" IS NULL AND \"RestrictionExecutionCompletedAtUtc\" IS NULL)");
+                            t.HasCheckConstraint("CK_data_rights_cases_restriction_execution_proof", "((\"RequestedOperations\" = 4 AND \"Status\" = 9) AND \"RestrictionExecutionIdempotencyKey\" IS NOT NULL AND \"RestrictionExecutionApprovalRevision\" = \"DecisionRevision\" AND \"RestrictionExecutionDirective\" = \"RestrictionDirective\" AND length(trim(\"RestrictionExecutionOwnerKey\")) > 0 AND length(trim(\"RestrictionExecutionRecordType\")) > 0 AND \"RestrictionExecutionRecordId\" IS NOT NULL AND \"RestrictionExecutionSelectedRecordVersion\" >= 1 AND \"RestrictionExecutionReceiptContractVersion\" >= 1 AND \"RestrictionExecutionReceiptId\" IS NOT NULL AND \"RestrictionExecutionOwnerOperationId\" IS NOT NULL AND \"RestrictionExecutionResultingOwnerRevision\" >= 1 AND \"RestrictionExecutionResultingProjectionRevision\" >= 1 AND ((\"RestrictionExecutionDirective\" = 1 AND \"RestrictionTargetingContractVersion\" IS NULL AND \"RestrictionExecutionEffectiveRestricted\" = TRUE) OR (\"RestrictionExecutionDirective\" = 2 AND ((\"RestrictionTargetingContractVersion\" IS NULL AND \"RestrictionExecutionEffectiveRestricted\" = FALSE) OR (\"RestrictionTargetingContractVersion\" = 1 AND \"RestrictionExecutionOwnerOperationId\" = \"RestrictionTargetOwnerOperationId\" AND \"RestrictionExecutionResultingOwnerRevision\" = \"RestrictionTargetOwnerOperationVersion\" + 1)))) AND \"RestrictionExecutionReceiptSha256\" IS NOT NULL AND char_length(\"RestrictionExecutionReceiptSha256\") = 64 AND length(trim(\"RestrictionExecutionExecutedBy\")) > 0 AND \"RestrictionExecutionCompletedAtUtc\" >= \"DecidedAtUtc\" AND \"RestrictionExecutionCompletedAtUtc\" <= \"LastChangedAtUtc\") OR ((\"RequestedOperations\" <> 4 OR \"Status\" <> 9) AND \"RestrictionExecutionIdempotencyKey\" IS NULL AND \"RestrictionExecutionApprovalRevision\" IS NULL AND \"RestrictionExecutionDirective\" IS NULL AND \"RestrictionExecutionOwnerKey\" IS NULL AND \"RestrictionExecutionRecordType\" IS NULL AND \"RestrictionExecutionRecordId\" IS NULL AND \"RestrictionExecutionSelectedRecordVersion\" IS NULL AND \"RestrictionExecutionReceiptContractVersion\" IS NULL AND \"RestrictionExecutionReceiptId\" IS NULL AND \"RestrictionExecutionOwnerOperationId\" IS NULL AND \"RestrictionExecutionResultingOwnerRevision\" IS NULL AND \"RestrictionExecutionResultingProjectionRevision\" IS NULL AND \"RestrictionExecutionEffectiveRestricted\" IS NULL AND \"RestrictionExecutionReceiptSha256\" IS NULL AND \"RestrictionExecutionExecutedBy\" IS NULL AND \"RestrictionExecutionCompletedAtUtc\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_data_rights_cases_restriction_target", "(\"RestrictionTargetingContractVersion\" IS NULL AND \"RestrictionTargetOwnerKey\" IS NULL AND \"RestrictionTargetOwnerOperationId\" IS NULL AND \"RestrictionTargetOwnerOperationVersion\" IS NULL AND \"RestrictionTargetSelectedBy\" IS NULL AND \"RestrictionTargetSelectedAtUtc\" IS NULL) OR (\"RequestedOperations\" = 4 AND \"RestrictionDirective\" = 2 AND \"RestrictionTargetingContractVersion\" = 1 AND ((\"Status\" IN (1, 2, 11) AND \"RestrictionTargetOwnerKey\" IS NULL AND \"RestrictionTargetOwnerOperationId\" IS NULL AND \"RestrictionTargetOwnerOperationVersion\" IS NULL AND \"RestrictionTargetSelectedBy\" IS NULL AND \"RestrictionTargetSelectedAtUtc\" IS NULL) OR (length(trim(\"RestrictionTargetOwnerKey\")) > 0 AND \"RestrictionTargetOwnerOperationId\" IS NOT NULL AND \"RestrictionTargetOwnerOperationVersion\" BETWEEN 1 AND 9223372036854775806 AND length(trim(\"RestrictionTargetSelectedBy\")) > 0 AND \"RestrictionTargetSelectedAtUtc\" >= \"CreatedAtUtc\" AND \"RestrictionTargetSelectedAtUtc\" <= \"LastChangedAtUtc\")))");
 
                             t.HasCheckConstraint("CK_data_rights_cases_routing", "\"RoutingStatus\" IN (1, 2, 3)");
 
@@ -669,6 +675,9 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<Guid>("IdempotencyKey")
                         .HasColumnType("uuid");
 
+                    b.Property<long?>("LastRetryBaseVersion")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("PlaintextSha256")
                         .HasMaxLength(64)
                         .HasColumnType("character(64)")
@@ -729,6 +738,8 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
                             t.HasCheckConstraint("CK_data_rights_export_artifacts_generation_shape", "(\"GenerationActor\" IS NULL AND \"GenerationRunId\" IS NULL AND \"GenerationAttempt\" IS NULL AND \"GenerationStartedAtUtc\" IS NULL) OR (\"GenerationActor\" IS NOT NULL AND \"GenerationRunId\" IS NOT NULL AND \"GenerationAttempt\" > 0 AND \"GenerationStartedAtUtc\" IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_data_rights_export_artifacts_lifecycle_shape", "(\"State\" = 1 AND \"GenerationActor\" IS NULL AND \"StorageKey\" IS NULL AND \"FailureCode\" IS NULL AND \"DeletionRunId\" IS NULL AND \"DeletionStartedAtUtc\" IS NULL AND \"DeletedAtUtc\" IS NULL) OR (\"State\" = 2 AND \"GenerationActor\" IS NOT NULL AND \"GenerationRunId\" IS NOT NULL AND \"GenerationAttempt\" > 0 AND \"GenerationStartedAtUtc\" IS NOT NULL AND \"StorageKey\" IS NULL AND \"EncryptedByteLength\" IS NULL AND \"PlaintextSha256\" IS NULL AND \"EncryptionKeyVersion\" IS NULL AND \"FormatVersion\" IS NULL AND \"AvailableAtUtc\" IS NULL AND \"FailureCode\" IS NULL AND \"DeletionRunId\" IS NULL AND \"DeletionStartedAtUtc\" IS NULL AND \"DeletedAtUtc\" IS NULL) OR (\"State\" = 4 AND \"GenerationActor\" IS NOT NULL AND \"GenerationRunId\" IS NOT NULL AND \"GenerationAttempt\" > 0 AND \"GenerationStartedAtUtc\" IS NOT NULL AND \"StorageKey\" IS NULL AND \"FailureCode\" IS NOT NULL AND \"DeletionRunId\" IS NULL AND \"DeletionStartedAtUtc\" IS NULL AND \"DeletedAtUtc\" IS NULL) OR (\"State\" = 3 AND \"GenerationActor\" IS NOT NULL AND \"StorageKey\" IS NOT NULL AND \"EncryptedByteLength\" > 0 AND \"PlaintextSha256\" IS NOT NULL AND \"EncryptionKeyVersion\" > 0 AND \"FormatVersion\" > 0 AND \"AvailableAtUtc\" IS NOT NULL AND \"FailureCode\" IS NULL AND \"DeletionRunId\" IS NULL AND \"DeletionStartedAtUtc\" IS NULL AND \"DeletedAtUtc\" IS NULL) OR (\"State\" = 5 AND \"FailureCode\" IS NULL AND \"DeletionRunId\" IS NULL AND \"DeletionStartedAtUtc\" IS NULL AND \"DeletedAtUtc\" IS NULL) OR (\"State\" = 6 AND \"FailureCode\" IS NULL AND \"DeletionRunId\" IS NOT NULL AND \"DeletionStartedAtUtc\" IS NOT NULL AND \"DeletedAtUtc\" IS NULL) OR (\"State\" = 7 AND \"FailureCode\" IS NULL AND \"DeletionRunId\" IS NOT NULL AND \"DeletionStartedAtUtc\" IS NOT NULL AND \"DeletedAtUtc\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_rights_export_artifacts_retry_version", "\"LastRetryBaseVersion\" IS NULL OR (\"LastRetryBaseVersion\" >= 1 AND \"LastRetryBaseVersion\" < \"Version\")");
 
                             t.HasCheckConstraint("CK_data_rights_export_artifacts_revision", "\"DecisionRevision\" > 0");
 
@@ -1596,7 +1607,7 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_data_rights_export_audit_action", "\"Action\" BETWEEN 1 AND 8");
 
-                            t.HasCheckConstraint("CK_data_rights_export_audit_scope", "(\"CaseKind\" = 1 AND \"PropertyId\" IS NOT NULL) OR (\"CaseKind\" = 3 AND \"PropertyId\" IS NULL)");
+                            t.HasCheckConstraint("CK_data_rights_export_audit_scope", "(\"CaseKind\" = 1 AND \"PropertyId\" IS NOT NULL) OR (\"CaseKind\" IN (2, 3) AND \"PropertyId\" IS NULL)");
                         });
                 });
 
@@ -1973,9 +1984,19 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("property_projection", "data-rights", t =>
                         {
-                            t.HasCheckConstraint("CK_data_rights_property_projection_governance_policy", "(\"ProcessingStatus\" = 1 AND \"OperatingCountryCode\" IS NULL AND \"JurisdictionPolicyId\" IS NULL AND \"JurisdictionPolicyVersion\" IS NULL AND \"DataRegionId\" IS NULL AND \"TransferProfileId\" IS NULL AND \"RetentionPolicyId\" IS NULL AND \"RetentionPolicyVersion\" IS NULL AND \"PolicyContentSha256\" IS NULL AND \"PolicyEffectiveAtUtc\" IS NULL AND \"PolicyExpiresAtUtc\" IS NULL AND \"PolicyActivatedAtUtc\" IS NULL) OR (\"ProcessingStatus\" IN (2, 3) AND \"OperatingCountryCode\" IS NOT NULL AND \"JurisdictionPolicyId\" IS NOT NULL AND \"JurisdictionPolicyVersion\" IS NOT NULL AND \"DataRegionId\" IS NOT NULL AND \"TransferProfileId\" IS NOT NULL AND \"RetentionPolicyId\" IS NOT NULL AND \"RetentionPolicyVersion\" IS NOT NULL AND \"PolicyContentSha256\" IS NOT NULL AND \"PolicyEffectiveAtUtc\" IS NOT NULL AND \"PolicyExpiresAtUtc\" IS NOT NULL AND \"PolicyActivatedAtUtc\" IS NOT NULL AND \"JurisdictionPolicyVersion\" > 0 AND \"RetentionPolicyVersion\" > 0 AND char_length(\"OperatingCountryCode\") = 2 AND char_length(\"PolicyContentSha256\") = 64 AND \"PolicyEffectiveAtUtc\" < \"PolicyExpiresAtUtc\" AND \"PolicyActivatedAtUtc\" >= \"PolicyEffectiveAtUtc\" AND \"PolicyActivatedAtUtc\" < \"PolicyExpiresAtUtc\")");
+                            t.HasCheckConstraint("CK_data_rights_property_projection_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND char_length(\"ScopeId\") > 0 AND \"ScopeId\" = btrim(\"ScopeId\") AND \"ScopeId\" !~ '[[:space:][:cntrl:]]'");
+
+                            t.HasCheckConstraint("CK_data_rights_property_projection_governance_policy", "(\"ProcessingStatus\" = 1 AND \"OperatingCountryCode\" IS NULL AND \"JurisdictionPolicyId\" IS NULL AND \"JurisdictionPolicyVersion\" IS NULL AND \"DataRegionId\" IS NULL AND \"TransferProfileId\" IS NULL AND \"RetentionPolicyId\" IS NULL AND \"RetentionPolicyVersion\" IS NULL AND \"PolicyContentSha256\" IS NULL AND \"PolicyEffectiveAtUtc\" IS NULL AND \"PolicyExpiresAtUtc\" IS NULL AND \"PolicyActivatedAtUtc\" IS NULL) OR (\"ProcessingStatus\" IN (2, 3) AND \"OperatingCountryCode\" IS NOT NULL AND \"JurisdictionPolicyId\" IS NOT NULL AND \"JurisdictionPolicyVersion\" IS NOT NULL AND \"DataRegionId\" IS NOT NULL AND \"TransferProfileId\" IS NOT NULL AND \"RetentionPolicyId\" IS NOT NULL AND \"RetentionPolicyVersion\" IS NOT NULL AND \"PolicyContentSha256\" IS NOT NULL AND \"PolicyEffectiveAtUtc\" IS NOT NULL AND \"PolicyExpiresAtUtc\" IS NOT NULL AND \"PolicyActivatedAtUtc\" IS NOT NULL AND \"JurisdictionPolicyVersion\" > 0 AND \"RetentionPolicyVersion\" > 0 AND \"OperatingCountryCode\" ~ '^[A-Z]{2}$' AND \"JurisdictionPolicyId\" ~ '^[a-z][a-z0-9._-]*$' AND \"DataRegionId\" ~ '^[a-z][a-z0-9._-]*$' AND \"TransferProfileId\" ~ '^[a-z][a-z0-9._-]*$' AND \"RetentionPolicyId\" ~ '^[a-z][a-z0-9._-]*$' AND \"PolicyContentSha256\" ~ '^[0-9a-f]{64}$' AND \"PolicyEffectiveAtUtc\" < \"PolicyExpiresAtUtc\" AND \"PolicyActivatedAtUtc\" >= \"PolicyEffectiveAtUtc\" AND \"PolicyActivatedAtUtc\" < \"PolicyExpiresAtUtc\")");
+
+                            t.HasCheckConstraint("CK_data_rights_property_projection_known", "\"IsKnown\" = (\"TopologySourceVersion\" >= 1 OR \"PolicySourceVersion\" >= 1)");
+
+                            t.HasCheckConstraint("CK_data_rights_property_projection_policy_source", "(\"PolicySourceVersion\" = 0 AND \"ProcessingStatus\" = 1) OR \"PolicySourceVersion\" >= 1");
 
                             t.HasCheckConstraint("CK_data_rights_property_projection_processing_status", "\"ProcessingStatus\" BETWEEN 1 AND 3");
+
+                            t.HasCheckConstraint("CK_data_rights_property_projection_topology", "(\"TopologySourceVersion\" = 0 AND \"Status\" = 0 AND \"Name\" IS NULL AND \"TimeZoneId\" IS NULL) OR (\"TopologySourceVersion\" >= 1 AND \"Status\" IN (1, 2) AND (\"Status\" = 2 OR (\"Name\" IS NOT NULL AND \"TimeZoneId\" IS NOT NULL)))");
+
+                            t.HasCheckConstraint("CK_data_rights_property_projection_topology_text", "(\"Name\" IS NULL OR (char_length(\"Name\") > 0 AND \"Name\" = btrim(\"Name\") AND \"Name\" !~ '[[:cntrl:]]')) AND (\"TimeZoneId\" IS NULL OR (char_length(\"TimeZoneId\") > 0 AND \"TimeZoneId\" = btrim(\"TimeZoneId\") AND \"TimeZoneId\" !~ '[[:cntrl:]]'))");
 
                             t.HasCheckConstraint("CK_data_rights_property_projection_versions", "\"TopologySourceVersion\" >= 0 AND \"PolicySourceVersion\" >= 0");
                         });
@@ -2505,11 +2526,50 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
                                 .HasForeignKey("DataRightsCaseId");
                         });
 
+                    b.OwnsOne("BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget", "RestrictionReleaseTarget", b1 =>
+                        {
+                            b1.Property<Guid>("DataRightsCaseId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("OwnerKey")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("character varying(100)")
+                                .HasColumnName("RestrictionTargetOwnerKey");
+
+                            b1.Property<Guid>("OwnerOperationId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("RestrictionTargetOwnerOperationId");
+
+                            b1.Property<long>("OwnerOperationVersion")
+                                .HasColumnType("bigint")
+                                .HasColumnName("RestrictionTargetOwnerOperationVersion");
+
+                            b1.Property<DateTimeOffset>("SelectedAtUtc")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("RestrictionTargetSelectedAtUtc");
+
+                            b1.Property<string>("SelectedBy")
+                                .IsRequired()
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)")
+                                .HasColumnName("RestrictionTargetSelectedBy");
+
+                            b1.HasKey("DataRightsCaseId");
+
+                            b1.ToTable("cases", "data-rights");
+
+                            b1.WithOwner()
+                                .HasForeignKey("DataRightsCaseId");
+                        });
+
                     b.Navigation("ApprovalPolicyEvidence");
 
                     b.Navigation("ResponseDeadlinePolicyEvidence");
 
                     b.Navigation("RestrictionExecutionProof");
+
+                    b.Navigation("RestrictionReleaseTarget");
 
                     b.Navigation("SelectedSubjects");
                 });
@@ -2753,7 +2813,10 @@ namespace BunkFy.Modules.DataRights.Persistence.PostgreSqlMigrations.Migrations
 
                                     b2.HasKey("ScopeId", "PropertyId", "AcknowledgementId", "AcknowledgementVersion");
 
-                                    b2.ToTable("property_policy_acknowledgements", "data-rights");
+                                    b2.ToTable("property_policy_acknowledgements", "data-rights", t =>
+                                        {
+                                            t.HasCheckConstraint("CK_data_rights_property_policy_acknowledgements_contract", "\"AcknowledgementVersion\" >= 1 AND \"AcknowledgementId\" ~ '^[a-z][a-z0-9._-]*$'");
+                                        });
 
                                     b2.WithOwner()
                                         .HasForeignKey("ScopeId", "PropertyId");

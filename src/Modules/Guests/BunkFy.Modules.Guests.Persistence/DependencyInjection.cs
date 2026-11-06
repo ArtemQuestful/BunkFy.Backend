@@ -4,7 +4,6 @@ using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Guests.Persistence.Repositories;
-using BunkFy.Modules.Properties.Contracts;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Cqrs.Infrastructure;
 using Gma.Framework.Cqrs.UnitOfWork;
@@ -90,7 +89,9 @@ public static class DependencyInjection
             ServiceDescriptor.Scoped<
                 ITenantTerminationExportContributor,
                 GuestsTenantTerminationContributor>());
-        builder.Services.TryAddScoped<IProjectionRebuildWriter<PropertyTopologyProjectionExport>, GuestsPropertiesProjectionRebuildWriter>();
+        builder.Services.TryAddScoped<
+            IGuestsPropertiesProjectionRebuildWriter,
+            GuestsPropertiesProjectionRebuildWriter>();
         builder.Services.TryAddScoped<IProjectionRebuildWriter<ReservationGuestStayProjectionExport>, GuestStayHistoryProjectionRebuildWriter>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Scoped(
             typeof(ICommandPipelineBehavior<,>),

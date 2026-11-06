@@ -12,9 +12,12 @@ using Gma.Framework.Results;
 public sealed class GuestRetentionAnonymisationReceipt
     : ScopedAggregateRoot<Guid>
 {
-    public const int CurrentContractVersion = 1;
+    public const int MinimumSupportedContractVersion = 1;
+    public const int CurrentContractVersion = 2;
     public const int Sha256Length = 64;
+    public const int TimeZoneCatalogVersionMaxLength = 64;
     public const int MaximumAffectedProperties = 256;
+    public const string SystemActorId = "system:retention";
 
     private GuestRetentionAnonymisationReceipt() { }
 
@@ -31,6 +34,7 @@ public sealed class GuestRetentionAnonymisationReceipt
     public int AffectedPropertyCount { get; private set; }
     public DateTimeOffset RetentionDeadlineUtc { get; private set; }
     public string PolicySetSha256 { get; private set; } = string.Empty;
+    public string? TimeZoneCatalogVersion { get; private set; }
     public Guid EventId { get; private set; }
     public string ActorId { get; private set; } = string.Empty;
     public DateTimeOffset CompletedAtUtc { get; private set; }
@@ -46,11 +50,14 @@ public sealed class GuestRetentionAnonymisationReceipt
         int affectedPropertyCount,
         DateTimeOffset retentionDeadlineUtc,
         string policySetSha256,
+        string timeZoneCatalogVersion,
         Guid eventId,
         string actorId,
         DateTimeOffset completedAtUtc)
     {
         string policyDigest = NormalizeSha256(policySetSha256);
+        string catalogVersion =
+            timeZoneCatalogVersion?.Trim() ?? string.Empty;
         string actor = actorId?.Trim() ?? string.Empty;
         if (receiptId == Guid.Empty ||
             executionId == Guid.Empty ||
@@ -62,8 +69,9 @@ public sealed class GuestRetentionAnonymisationReceipt
                 MaximumAffectedProperties ||
             retentionDeadlineUtc == default ||
             completedAtUtc < retentionDeadlineUtc ||
-            actor.Length is 0 or > GuestProfile.ActorIdMaxLength ||
+            !string.Equals(actor, SystemActorId, StringComparison.Ordinal) ||
             !IsSha256(policyDigest) ||
+            !IsCatalogVersion(catalogVersion) ||
             !TenantIds.TryNormalize(tenantId, out string? scopeId))
         {
             return Invalid();
@@ -81,6 +89,7 @@ public sealed class GuestRetentionAnonymisationReceipt
                 RetentionDeadlineUtc =
                     retentionDeadlineUtc.ToUniversalTime(),
                 PolicySetSha256 = policyDigest,
+                TimeZoneCatalogVersion = catalogVersion,
                 EventId = eventId,
                 ActorId = actor,
                 CompletedAtUtc = completedAtUtc.ToUniversalTime()
@@ -93,7 +102,9 @@ public sealed class GuestRetentionAnonymisationReceipt
         Guid executionId,
         Guid guestId,
         long selectedGuestVersion) =>
-        this.ContractVersion == CurrentContractVersion &&
+        this.ContractVersion is >= MinimumSupportedContractVersion and
+            <= CurrentContractVersion &&
+        this.HasValidVersionShape() &&
         this.ExecutionId == executionId &&
         this.GuestId == guestId &&
         this.SelectedGuestVersion == selectedGuestVersion &&
@@ -128,6 +139,11 @@ public sealed class GuestRetentionAnonymisationReceipt
                 "O",
                 CultureInfo.InvariantCulture));
         Append(canonical, this.PolicySetSha256);
+        if (this.ContractVersion >= 2)
+        {
+            Append(canonical, this.TimeZoneCatalogVersion ?? string.Empty);
+        }
+
         Append(canonical, this.EventId.ToString("N"));
         Append(canonical, this.ActorId);
         Append(
@@ -157,6 +173,23 @@ public sealed class GuestRetentionAnonymisationReceipt
         value.All(character =>
             character is (>= '0' and <= '9') or
                 (>= 'a' and <= 'f'));
+
+    private static bool IsCatalogVersion(string? value) =>
+        value is not null &&
+        value.Length is > 0 and <= TimeZoneCatalogVersionMaxLength &&
+        value.All(character => !char.IsControl(character));
+
+    private bool HasValidVersionShape() =>
+        this.ContractVersion switch
+        {
+            1 => this.TimeZoneCatalogVersion is null,
+            2 => IsCatalogVersion(this.TimeZoneCatalogVersion) &&
+                 string.Equals(
+                     this.TimeZoneCatalogVersion,
+                     this.TimeZoneCatalogVersion!.Trim(),
+                     StringComparison.Ordinal),
+            _ => false
+        };
 
     private static Result<GuestRetentionAnonymisationReceipt> Invalid() =>
         Result.Failure<GuestRetentionAnonymisationReceipt>(

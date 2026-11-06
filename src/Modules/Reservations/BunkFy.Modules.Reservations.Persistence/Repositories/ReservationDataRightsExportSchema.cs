@@ -10,7 +10,7 @@ using BunkFy.Modules.DataRights.Contracts;
 internal static class ReservationDataRightsExportSchema
 {
     public const string ExportSchemaId = "reservations.subject-export";
-    public const int ExportSchemaVersion = 6;
+    public const int ExportSchemaVersion = 9;
 
     private const string CatalogResourceName =
         "BunkFy.Modules.Reservations.Persistence.DataGovernance.personal-data-catalog.v1.json";
@@ -50,6 +50,7 @@ internal static class ReservationDataRightsExportSchema
         typeof(ReservationAnonymisationReceiptDataRightsExport),
         typeof(ReservationExternalOperationDataRightsExport),
         typeof(ReservationManagementOperationDataRightsExport),
+        typeof(ReservationStayAmendmentOperationDataRightsExport),
         typeof(ReservationArrivalReminderDataRightsExport)
     ];
 
@@ -107,6 +108,17 @@ internal static class ReservationDataRightsExportSchema
                 .ManagementOperationRecordType,
             operation.OperationId,
             recordVersion: 3,
+            operation);
+
+    public static DataRightsExportRecord CreateStayAmendmentOperationRecord(
+        ReservationStayAmendmentOperationDataRightsExport operation) =>
+        CreateRecord(
+            ReservationDataRightsExportContributor
+                .StayAmendmentOperationRecordType,
+            DataRightsExportRecordIds.CreateDeterministicChild(
+                operation.ReservationId,
+                operation.OperationId.ToString("N")),
+            operation.OperationVersion,
             operation);
 
     public static DataRightsExportRecord CreateDataRightsCorrectionReceiptRecord(

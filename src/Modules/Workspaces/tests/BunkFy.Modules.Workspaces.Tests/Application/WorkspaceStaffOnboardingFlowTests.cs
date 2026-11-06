@@ -30,6 +30,61 @@ using Xunit;
 public sealed class WorkspaceStaffOnboardingFlowTests
 {
     [Fact]
+    public async Task Continuation_cannot_reopen_failed_access_without_receipted_owner_recovery()
+    {
+        WorkspaceStaffOnboarding application =
+            WorkspaceStaffOnboardingTests.CreateApplication();
+        Assert.True(application.ObserveClaimAccepted(
+            Guid.NewGuid(),
+            1,
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(1)).IsSuccess);
+        Guid staffMemberId = Guid.NewGuid();
+        Guid resolutionEventId = Guid.NewGuid();
+        Assert.True(application.MarkStaffReady(
+            staffMemberId,
+            resolutionEventId,
+            Guid.NewGuid(),
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(2)).IsSuccess);
+        Assert.True(application.Fail(
+            "Workspaces.AccessProvisioningFailed",
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(3)).IsSuccess);
+        long failedVersion = application.Version;
+        FakeAccessControl access = new();
+        StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader outcomes = new(
+            request => new StaffWorkspaceOnboardingIdentityAnchorOutcome(
+                request.ApplicationId,
+                StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Unresolved,
+                staffMemberId,
+                StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Active,
+                StaffWorkspaceOnboardingIdentityAnchorSubjectMatch.Exact,
+                WorkspaceApplicationVersion: null,
+                ResolutionDisposition: null,
+                resolutionEventId));
+        using ServiceProvider provider = CreateProvider(
+            new FakeRepository(application),
+            new FakeStaffProvisioner { StaffMemberId = staffMemberId },
+            access,
+            anchorOutcomes: outcomes);
+
+        Result result = await provider
+            .GetRequiredService<WorkspaceStaffOnboardingProcessor>()
+            .ProcessIdentityAnchorContinuationAsync(
+                application,
+                staffMemberId,
+                CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(WorkspaceStaffOnboardingApplicationErrors.RecoveryAttemptRequired,
+            result.Error);
+        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+        Assert.Equal(failedVersion, application.Version);
+        Assert.Equal("Workspaces.AccessProvisioningFailed", application.FailureCode);
+        Assert.Equal(0, access.AssignmentCallCount);
+        Assert.Equal(0, Assert.IsType<FakeStaffPropertyProvisioner>(provider
+            .GetRequiredService<IStaffPropertyAssignmentProvisioner>()).CallCount);
+    }
+
+    [Fact]
     public async Task Requested_claim_consumes_a_newer_durable_withdrawal_and_redacts_staging()
     {
         WorkspaceStaffOnboarding application =
@@ -246,7 +301,7 @@ public sealed class WorkspaceStaffOnboardingFlowTests
     }
 
     [Fact]
-    public async Task Access_failure_retries_without_duplicate_staff_and_then_redacts_application()
+    public async Task Cancelled_access_attempt_retries_without_duplicate_staff_and_then_redacts_application()
     {
         WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
         Guid claimId = Guid.NewGuid();
@@ -257,7 +312,7 @@ public sealed class WorkspaceStaffOnboardingFlowTests
         FakeRepository applications = new(application);
         Guid staffMemberId = Guid.NewGuid();
         FakeStaffProvisioner staff = new() { StaffMemberId = staffMemberId };
-        FakeAccessControl access = new() { FailAssignments = true };
+        FakeAccessControl access = new() { CancelAssignments = true };
         using ServiceProvider provider = CreateProvider(applications, staff, access);
         WorkspaceStaffAccessPlan retryPlan = (await provider
             .GetRequiredService<IWorkspaceStaffAccessPlanRepository>()
@@ -282,19 +337,19 @@ public sealed class WorkspaceStaffOnboardingFlowTests
             continuationHandler = provider.GetRequiredService<
                 WorkspaceStaffOnboardingIdentityAnchorContinuationHandler>();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
             continuationHandler.HandleAsync(
                 continuation,
                 CancellationToken.None));
 
-        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+        Assert.Equal(WorkspaceStaffOnboardingState.StaffReady, application.Status);
         WorkspaceStaffOnboarding rolledBack = CreateRolledBackStaffReady(
             application,
             claimId,
             staffMemberId);
         applications.Replace(rolledBack);
         application = rolledBack;
-        access.FailAssignments = false;
+        access.CancelAssignments = false;
 
         await continuationHandler.HandleAsync(
             continuation,
@@ -320,6 +375,196 @@ public sealed class WorkspaceStaffOnboardingFlowTests
         Assert.Null(application.DisplayName);
         Assert.Single(application.DomainEvents.OfType<
             WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent>());
+    }
+
+    [Fact]
+    public async Task Access_failure_retry_is_fail_closed_until_exact_owner_recovery()
+    {
+        WorkspaceStaffOnboarding application = WorkspaceStaffOnboardingTests.CreateApplication();
+        Assert.True(application.ObserveClaimAccepted(
+            Guid.NewGuid(),
+            1,
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(1)).IsSuccess);
+        FakeRepository applications = new(application);
+        Guid staffMemberId = Guid.NewGuid();
+        FakeStaffProvisioner staff = new() { StaffMemberId = staffMemberId };
+        FakeAccessControl access = new() { FailAssignments = true };
+        using ServiceProvider provider = CreateProvider(applications, staff, access);
+        WorkspaceStaffAccessPlan retryPlan = (await provider
+            .GetRequiredService<IWorkspaceStaffAccessPlanRepository>()
+            .GetAsync(application.SourceId, CancellationToken.None))!;
+        Assert.True(retryPlan.ObserveSourceExpired(
+            WorkspaceStaffOnboardingTests.Now,
+            WorkspaceStaffOnboardingTests.Now).IsSuccess);
+        ICommandHandler<RetryWorkspaceStaffOnboardingCommand, WorkspaceStaffOnboardingDto> handler =
+            provider.GetRequiredService<ICommandHandler<RetryWorkspaceStaffOnboardingCommand, WorkspaceStaffOnboardingDto>>();
+
+        Result<WorkspaceStaffOnboardingDto> first = await handler.HandleAsync(
+            new RetryWorkspaceStaffOnboardingCommand(application.Id),
+            CancellationToken.None);
+        Assert.True(first.IsSuccess, first.Error.Code);
+        Assert.Equal(WorkspaceStaffOnboardingState.StaffReady, application.Status);
+        WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent
+            continuation = CreateContinuationFact(application);
+        await provider.GetRequiredService<
+                WorkspaceStaffOnboardingIdentityAnchorContinuationHandler>()
+            .HandleAsync(continuation, CancellationToken.None);
+        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+        Assert.Equal(WorkspaceStaffAccessPlanState.Active, retryPlan.Status);
+        access.FailAssignments = false;
+        Result<WorkspaceStaffOnboardingDto> retried = await handler.HandleAsync(
+            new RetryWorkspaceStaffOnboardingCommand(application.Id),
+            CancellationToken.None);
+
+        Assert.True(retried.IsFailure);
+        Assert.Equal(
+            WorkspaceStaffOnboardingApplicationErrors.RecoveryAttemptRequired,
+            retried.Error);
+        Assert.Equal(1, staff.CallCount);
+        AssertProvisionerAssignment(Assert.Single(access.AssignmentCalls));
+        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+        Assert.Equal(
+            "Workspaces.AccessProvisioningFailed",
+            application.FailureCode);
+        Assert.Equal(WorkspaceStaffAccessPlanState.Active, retryPlan.Status);
+        Assert.Equal(staffMemberId, application.StaffMemberId);
+        Assert.Null(application.DisplayName);
+    }
+
+    [Fact]
+    public async Task Legacy_and_continuation_replays_cannot_bypass_receipted_partial_recovery()
+    {
+        WorkspaceStaffOnboarding application =
+            WorkspaceStaffOnboardingTests.CreateApplication();
+        Assert.True(application.ObserveClaimAccepted(
+            Guid.NewGuid(),
+            1,
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(1)).IsSuccess);
+        FakeRepository applications = new(application);
+        Guid staffMemberId = Guid.NewGuid();
+        FakeStaffProvisioner staff = new() { StaffMemberId = staffMemberId };
+        FakeAccessControl access = new() { FailAssignments = true };
+        FakeStaffStateVerifier staffState = new();
+        FakeMembershipReader memberships = new();
+        using ServiceProvider provider = CreateProvider(
+            applications,
+            staff,
+            access,
+            staffStateVerifiers: staffState,
+            memberships: memberships);
+        ICommandHandler<RetryWorkspaceStaffOnboardingCommand,
+            WorkspaceStaffOnboardingDto> handler = provider.GetRequiredService<
+                ICommandHandler<RetryWorkspaceStaffOnboardingCommand,
+                    WorkspaceStaffOnboardingDto>>();
+
+        Result<WorkspaceStaffOnboardingDto> failed = await handler.HandleAsync(
+            new RetryWorkspaceStaffOnboardingCommand(application.Id),
+            CancellationToken.None);
+        Assert.True(failed.IsSuccess, failed.Error.Code);
+        Assert.Equal(WorkspaceStaffOnboardingState.StaffReady, application.Status);
+        WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent
+            continuation = CreateContinuationFact(application);
+        await provider.GetRequiredService<
+                WorkspaceStaffOnboardingIdentityAnchorContinuationHandler>()
+            .HandleAsync(continuation, CancellationToken.None);
+        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+
+        access.FailAssignments = false;
+        FakeStaffPropertyProvisioner staffProperties =
+            Assert.IsType<FakeStaffPropertyProvisioner>(
+                provider.GetRequiredService<
+                    IStaffPropertyAssignmentProvisioner>());
+        int accessWritesBeforeRecovery = access.AssignmentCallCount;
+        int propertyWritesBeforeRecovery = staffProperties.CallCount;
+        int membershipReadsBeforeRecovery = memberships.CallCount;
+
+        Result<WorkspaceStaffOnboardingDto> blocked = await handler.HandleAsync(
+            new RetryWorkspaceStaffOnboardingCommand(application.Id),
+            CancellationToken.None);
+
+        await provider.GetRequiredService<
+                WorkspaceStaffOnboardingIdentityAnchorContinuationHandler>()
+            .HandleAsync(continuation, CancellationToken.None);
+
+        Assert.True(blocked.IsFailure);
+        Assert.Equal(
+            WorkspaceStaffOnboardingApplicationErrors.RecoveryAttemptRequired,
+            blocked.Error);
+        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+        Assert.Equal(staffMemberId, application.StaffMemberId);
+        Assert.Equal(1, staff.CallCount);
+        Assert.Equal(accessWritesBeforeRecovery, access.AssignmentCallCount);
+        Assert.Equal(propertyWritesBeforeRecovery, staffProperties.CallCount);
+        Assert.Equal(0, staffState.CallCount);
+        Assert.Equal(membershipReadsBeforeRecovery, memberships.CallCount);
+    }
+
+    [Fact]
+    public async Task Exact_access_recovery_stays_failed_when_membership_is_not_active()
+    {
+        WorkspaceStaffOnboarding application =
+            WorkspaceStaffOnboardingTests.CreateApplication();
+        Assert.True(application.ObserveClaimAccepted(
+            Guid.NewGuid(),
+            1,
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(1)).IsSuccess);
+        Guid staffMemberId = Guid.NewGuid();
+        Assert.True(application.MarkStaffReady(
+            staffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(2)).IsSuccess);
+        Assert.True(application.Fail(
+            "Workspaces.AccessProvisioningFailed",
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(3)).IsSuccess);
+        FakeRepository applications = new(application);
+        FakeStaffProvisioner staff = new() { StaffMemberId = staffMemberId };
+        FakeAccessControl access = new();
+        FakeStaffStateVerifier staffState = new();
+        FakeMembershipReader memberships = new()
+        {
+            Status = OrganizationMembershipStatus.Suspended
+        };
+        using ServiceProvider provider = CreateProvider(
+            applications,
+            staff,
+            access,
+            staffStateVerifiers: staffState,
+            memberships: memberships);
+        AccessScope workspaceScope = WorkspaceAccessScopes.Create(
+            WorkspaceStaffOnboardingTests.OrganizationId.ToString("D"));
+        AccessSubject subject = AccessSubject.User(application.SubjectId);
+        access.Add(
+            subject,
+            WorkspaceAccessRoles.MembershipMarker,
+            workspaceScope);
+        Assert.IsType<FakeAccessProfiles>(
+                provider.GetRequiredService<IScopedAccessProfileProvisioner>())
+            .Assign(subject, workspaceScope);
+        int accessWritesBeforeRetry = access.AssignmentCallCount;
+        FakeStaffPropertyProvisioner staffProperties =
+            Assert.IsType<FakeStaffPropertyProvisioner>(
+                provider.GetRequiredService<
+                    IStaffPropertyAssignmentProvisioner>());
+
+        Result<WorkspaceStaffOnboardingDto> result = await provider
+            .GetRequiredService<ICommandHandler<
+                RetryWorkspaceStaffOnboardingCommand,
+                WorkspaceStaffOnboardingDto>>()
+            .HandleAsync(
+                new RetryWorkspaceStaffOnboardingCommand(application.Id),
+                CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            WorkspaceStaffOnboardingApplicationErrors.RecoveryAttemptRequired,
+            result.Error);
+        Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
+        Assert.Equal(accessWritesBeforeRetry, access.AssignmentCallCount);
+        Assert.Equal(0, staffProperties.CallCount);
+        Assert.Equal(0, staff.CallCount);
+        Assert.Equal(0, staffState.CallCount);
+        Assert.Equal(0, memberships.CallCount);
     }
 
     [Fact]
@@ -742,10 +987,9 @@ public sealed class WorkspaceStaffOnboardingFlowTests
         WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent
             continuation = CreateContinuationFact(application);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => provider
-            .GetRequiredService<
+        await provider.GetRequiredService<
                 WorkspaceStaffOnboardingIdentityAnchorContinuationHandler>()
-            .HandleAsync(continuation, CancellationToken.None));
+            .HandleAsync(continuation, CancellationToken.None);
 
         Assert.Equal(1, properties.CallCount);
         Assert.Equal(WorkspaceStaffOnboardingState.Failed, application.Status);
@@ -1430,6 +1674,12 @@ public sealed class WorkspaceStaffOnboardingFlowTests
             claimId,
             1,
             WorkspaceStaffOnboardingTests.Now.AddMinutes(1)).IsSuccess);
+        Assert.True(source.AcceptedMembershipId.HasValue);
+        Assert.True(source.AcceptedMembershipVersion.HasValue);
+        Assert.True(restored.BindAcceptedMembership(
+            source.AcceptedMembershipId.Value,
+            source.AcceptedMembershipVersion.Value,
+            WorkspaceStaffOnboardingTests.Now.AddMinutes(1)).IsSuccess);
         Assert.True(restored.MarkStaffReady(
             staffMemberId,
             source.IdentityAnchorExpectedResolutionEventId!.Value,
@@ -1488,6 +1738,8 @@ public sealed class WorkspaceStaffOnboardingFlowTests
         FakeJoinTokenInspector? tokens = null,
         FakeAdmissionReader? admissions = null,
         WorkspaceTerminationFenceSnapshot? terminationFence = null,
+        FakeStaffStateVerifier? staffStateVerifiers = null,
+        FakeMembershipReader? memberships = null,
         FakeWorkspaceStaffDeferredClaimWithdrawalRepository?
             deferredWithdrawals = null,
         FakeOrganizationEnrollmentClaimInspector? claims = null,
@@ -1540,6 +1792,12 @@ public sealed class WorkspaceStaffOnboardingFlowTests
             deferredWithdrawals ??
                 new FakeWorkspaceStaffDeferredClaimWithdrawalRepository());
         services.AddSingleton<IStaffOnboardingProvisioner>(staff);
+        services.AddSingleton<IStaffOnboardingStateVerifier>(
+            staffStateVerifiers ?? new FakeStaffStateVerifier());
+        services.AddSingleton<IOrganizationMembershipReader>(
+            memberships ?? new FakeMembershipReader());
+        services.AddSingleton<IOrganizationScopeLifecycle>(
+            new FakeOrganizationScopeLifecycle());
         services.AddSingleton(
             anchorOutcomes ??
             new StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader(
@@ -1576,6 +1834,7 @@ public sealed class WorkspaceStaffOnboardingFlowTests
         services.AddSingleton<IAccessControlRoleProvisioner>(access);
         services.AddSingleton<IAccessProfileProvisioner>(profiles);
         services.AddSingleton<IScopedAccessProfileProvisioner>(profiles);
+        services.AddSingleton<IScopedAccessProfileManager>(profiles);
         services.AddSingleton<IAccessAuthorizationService>(new AllowAllAuthorizationService());
         services.AddSingleton<IWorkspacePropertyProjectionRepository>(new FakePropertyProjectionRepository());
         services.AddSingleton<IOrganizationJoinTokenInspector>(tokenInspector);
@@ -1710,10 +1969,10 @@ public sealed class WorkspaceStaffOnboardingFlowTests
             CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<WorkspaceStaffOnboarding>>(
                 this.applications.Where(item => item.SourceKind == sourceKind && item.SourceId == sourceId).ToArray());
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) => Task.FromResult(
-                new WorkspaceStaffOnboardingListResponse(
+                new WorkspaceStaffOnboardingSummaryListResponse(
                     [],
                     page.Page,
                     page.PageSize,
@@ -1837,13 +2096,39 @@ public sealed class WorkspaceStaffOnboardingFlowTests
     private sealed class FakeStaffAccessOperationLock
         : IWorkspaceStaffAccessOperationLock
     {
+        public Task AcquireSubjectAsync(
+            string subjectId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
         public Task AcquireStaffAsync(
             Guid staffMemberId,
             CancellationToken cancellationToken) => Task.CompletedTask;
 
+        public Task AcquireCoordinatesAsync(
+            Guid staffMemberId,
+            string subjectId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
         public Task<bool> TryAcquireProcessAsync(
             Guid processId,
             CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task<bool> TryAcquireStaffVersionAsync(
+            Guid staffMemberId,
+            long targetStaffVersion,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class SingleOpenAccessProcessRepository(
@@ -1945,9 +2230,90 @@ public sealed class WorkspaceStaffOnboardingFlowTests
         }
     }
 
+    private sealed class FakeStaffStateVerifier : IStaffOnboardingStateVerifier
+    {
+        public StaffOnboardingStateVerificationResult Result { get; set; } =
+            new(
+                StaffOnboardingStateVerificationStatus.Equivalent,
+                StaffOnboardingStateVerificationReason.Equivalent,
+                1,
+                1,
+                1,
+                1,
+                0,
+                new string('a', 64),
+                new string('b', 64),
+                WorkspaceStaffOnboardingTests.Now);
+        public int CallCount { get; private set; }
+        public StaffOnboardingStateVerificationRequest? LastRequest
+        {
+            get;
+            private set;
+        }
+
+        public Task<StaffOnboardingStateVerificationResult> VerifyAsync(
+            StaffOnboardingStateVerificationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            this.CallCount++;
+            this.LastRequest = request;
+            return Task.FromResult(this.Result);
+        }
+    }
+
+    private sealed class FakeMembershipReader : IOrganizationMembershipReader
+    {
+        private readonly Guid membershipId = Guid.NewGuid();
+        public OrganizationMembershipStatus Status { get; set; } =
+            OrganizationMembershipStatus.Active;
+        public int CallCount { get; private set; }
+
+        public Task<OrganizationMembershipSnapshotDto?> FindAsync(
+            Guid organizationId,
+            string subjectId,
+            CancellationToken cancellationToken = default)
+        {
+            this.CallCount++;
+            return Task.FromResult<OrganizationMembershipSnapshotDto?>(new(
+                organizationId,
+                OrganizationStatus.Active,
+                new OrganizationMembershipDto(
+                    this.membershipId,
+                    organizationId,
+                    subjectId,
+                    OrganizationMembershipRole.Member,
+                    this.Status,
+                    1,
+                    WorkspaceStaffOnboardingTests.Now,
+                    WorkspaceStaffOnboardingTests.Now)));
+        }
+    }
+
+    private sealed class FakeOrganizationScopeLifecycle
+        : IOrganizationScopeLifecycle
+    {
+        public Task<OrganizationScopeSnapshot> GetSnapshotAsync(
+            Guid organizationId,
+            CancellationToken cancellationToken) => Task.FromResult(
+            new OrganizationScopeSnapshot(OrganizationScopeStatus.Open, 1));
+
+        public Task<OrganizationScopeExportPage> ExportAsync(
+            OrganizationScopeExportRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<OrganizationScopeDestroyResult> DestroyBatchAsync(
+            OrganizationScopeDestroyRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     private sealed class FakeAccessControl : IAccessControlRoleProvisioner
     {
+        private readonly HashSet<(AccessSubject Subject, string RoleName,
+            AccessScope Scope)> assignments = [];
         public bool FailAssignments { get; set; }
+        public bool CancelAssignments { get; set; }
         public List<(AccessSubject Subject, string RoleName, AccessScope Scope)> AssignmentCalls { get; } = [];
         public int AssignmentCallCount => this.AssignmentCalls.Count;
 
@@ -1961,24 +2327,46 @@ public sealed class WorkspaceStaffOnboardingFlowTests
             CancellationToken cancellationToken = default)
         {
             this.AssignmentCalls.Add((subject, roleName, scope));
-            return this.FailAssignments
-                ? Task.FromException(new InvalidOperationException("Access unavailable."))
-                : Task.CompletedTask;
+            if (this.CancelAssignments)
+            {
+                return Task.FromException(
+                    new OperationCanceledException("Access attempt was cancelled."));
+            }
+
+            if (this.FailAssignments)
+            {
+                return Task.FromException(
+                    new InvalidOperationException("Access unavailable."));
+            }
+
+            this.assignments.Add((subject, roleName, scope));
+            return Task.CompletedTask;
         }
+
+        public void Add(
+            AccessSubject subject,
+            string roleName,
+            AccessScope scope) =>
+            this.assignments.Add((subject, roleName, scope));
 
         public Task<AccessControlAssignmentRemovalOutcome> RemoveAssignmentAsync(
             AccessSubject subject,
             string roleName,
             AccessScope scope,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(AccessControlAssignmentRemovalOutcome.NotFound);
+            CancellationToken cancellationToken = default)
+        {
+            bool removed = this.assignments.Remove((subject, roleName, scope));
+            return Task.FromResult(removed
+                ? AccessControlAssignmentRemovalOutcome.Removed
+                : AccessControlAssignmentRemovalOutcome.NotFound);
+        }
 
         public Task<bool> HasAssignmentAsync(
             AccessSubject subject,
             string roleName,
             AccessScope scope,
             CancellationToken cancellationToken = default) => Task.FromResult(
-                string.Equals(roleName, WorkspaceAccessRoles.Owner, StringComparison.Ordinal));
+                this.assignments.Contains((subject, roleName, scope)));
 
         public Task<AccessControlPage<AccessControlRoleAssignment>> ListAssignmentsAsync(
             string roleName,
@@ -1989,11 +2377,26 @@ public sealed class WorkspaceStaffOnboardingFlowTests
                 new AccessControlPage<AccessControlRoleAssignment>([], page, pageSize, false));
     }
 
-    private sealed class FakeAccessProfiles : IAccessProfileProvisioner, IScopedAccessProfileProvisioner
+    private sealed class FakeAccessProfiles :
+        IAccessProfileProvisioner,
+        IScopedAccessProfileProvisioner,
+        IScopedAccessProfileManager
     {
         private readonly Guid frontDeskId = Guid.NewGuid();
+        private readonly List<ScopedAccessProfileAssignment> assignments = [];
 
         public Guid ProfileId => this.frontDeskId;
+
+        public void Assign(AccessSubject subject, AccessScope scope)
+        {
+            ArgumentNullException.ThrowIfNull(subject);
+            this.assignments.RemoveAll(assignment =>
+                assignment.AssignmentScope == scope);
+            this.assignments.Add(new ScopedAccessProfileAssignment(
+                this.CreateProfile(WorkspaceAccessScopes.Create(
+                    WorkspaceStaffOnboardingTests.OrganizationId.ToString("D"))),
+                scope));
+        }
 
         public Task<AccessProfileDto> EnsureProfileAsync(
             AccessScope ownerScope,
@@ -2053,20 +2456,75 @@ public sealed class WorkspaceStaffOnboardingFlowTests
             AccessSubject subject,
             AccessScope ownerScope,
             CancellationToken cancellationToken = default) => Task.FromResult(
-            new ScopedAccessProfileAssignmentSet(subject, ownerScope, []));
+            new ScopedAccessProfileAssignmentSet(
+                subject,
+                ownerScope,
+                this.assignments.ToArray()));
 
         public Task<ScopedAccessProfileAssignmentReconciliation> ReconcileSubjectScopedAssignmentsAsync(
             AccessSubject subject,
             AccessScope ownerScope,
             IReadOnlyCollection<AccessProfileAssignmentTarget> targets,
             AccessSubject actor,
-            CancellationToken cancellationToken = default) => Task.FromResult(
-            new ScopedAccessProfileAssignmentReconciliation(
-                subject,
-                ownerScope,
-                targets.ToArray(),
-                targets.Count,
-                0));
+            CancellationToken cancellationToken = default)
+        {
+            int removed = this.assignments.Count;
+            this.assignments.Clear();
+            foreach (AccessProfileAssignmentTarget target in targets)
+            {
+                this.assignments.Add(new ScopedAccessProfileAssignment(
+                    this.CreateProfile(ownerScope),
+                    target.AssignmentScope));
+            }
+
+            return Task.FromResult(
+                new ScopedAccessProfileAssignmentReconciliation(
+                    subject,
+                    ownerScope,
+                    targets.ToArray(),
+                    targets.Count,
+                    removed));
+        }
+
+        async Task<Result<ScopedAccessProfileAssignmentSet>>
+            IScopedAccessProfileManager.GetSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                AccessSubject actor,
+                CancellationToken cancellationToken) =>
+            Result.Success(await this.GetSubjectScopedAssignmentsAsync(
+                    subject,
+                    ownerScope,
+                    cancellationToken)
+                .ConfigureAwait(false));
+
+        async Task<Result<ScopedAccessProfileAssignmentReconciliation>>
+            IScopedAccessProfileManager.ReconcileSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                IReadOnlyCollection<AccessProfileAssignmentTarget> targets,
+                AccessSubject actor,
+                CancellationToken cancellationToken) =>
+            Result.Success(await this.ReconcileSubjectScopedAssignmentsAsync(
+                    subject,
+                    ownerScope,
+                    targets,
+                    actor,
+                    cancellationToken)
+                .ConfigureAwait(false));
+
+        private AccessProfileDto CreateProfile(AccessScope ownerScope) => new(
+            this.frontDeskId,
+            ownerScope.Value,
+            WorkspaceAccessProfileSeeds.FrontDeskKey,
+            "Front desk",
+            "Front desk operations.",
+            AccessProfileStatus.Active,
+            1,
+            WorkspaceAccessProfileSeeds.FrontDesk.Permissions.ToArray(),
+            this.assignments.Count,
+            WorkspaceStaffOnboardingTests.Now,
+            WorkspaceStaffOnboardingTests.Now);
     }
 
     private sealed class FakeJoinTokenInspector(

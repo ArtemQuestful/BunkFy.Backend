@@ -29,6 +29,7 @@ internal sealed class ProtectedDataRightsExportArtifactGenerator(
                 request,
                 boundedPlaintext,
                 cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             await boundedPlaintext.FlushAsync(cancellationToken)
                 .ConfigureAwait(false);
         }

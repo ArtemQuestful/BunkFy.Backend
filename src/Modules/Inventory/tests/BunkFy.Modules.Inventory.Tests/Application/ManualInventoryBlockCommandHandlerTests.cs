@@ -27,6 +27,8 @@ public sealed class ManualInventoryBlockCommandHandlerTests
         0,
         0,
         TimeSpan.Zero);
+    private const string SelectionDigest =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     [Fact]
     public async Task Exact_replays_lock_then_return_without_domain_reads()
@@ -73,23 +75,33 @@ public sealed class ManualInventoryBlockCommandHandlerTests
             BuildingLabel: "Main",
             FloorLabel: "2");
         string groupCreateFingerprint =
-            InventoryManagementMutationFingerprint.ComputeManualBlockCreate(
+            InventoryManagementMutationFingerprint.ComputeManualBlockGroupCreateV2(
                 PropertyId,
                 groupTarget,
                 Arrival,
                 Departure,
                 "Deep clean",
-                group: true);
+                SelectionDigest,
+                3);
         ManualInventoryBlockGroupMutationReceiptDto groupCreateReceipt = new(
             BlockGroupId,
             PropertyId,
-            3);
-        operations.Seed(InventoryManagementOperationRecord.ForBlockGroup(
+            3,
+            ManualInventoryBlockGroupStatus.Active,
+            1,
+            ReleasedBlockCount: 0,
+            CreatedBlockCount: 3,
+            TotalBlockCount: 3,
+            ActiveBlockCount: 3,
+            AlreadyReleasedBlockCount: 0,
+            MembershipDigest: SelectionDigest);
+        operations.Seed(InventoryManagementOperationRecord.ForBlockGroupV2(
             groupCreateOperationId,
             TenantId,
             InventoryManagementResourceKind.Property,
             PropertyId,
-            InventoryManagementMutationKind.ManualBlockGroupCreate,
+            InventoryManagementMutationKind.ManualBlockGroupCreateV2,
+            0,
             groupCreateFingerprint,
             groupCreateReceipt,
             CompletedAtUtc));
@@ -116,17 +128,26 @@ public sealed class ManualInventoryBlockCommandHandlerTests
         Guid groupReleaseOperationId = Guid.NewGuid();
         string groupReleaseFingerprint =
             InventoryManagementMutationFingerprint
-                .ComputeManualBlockGroupRelease(PropertyId, BlockGroupId);
+                .ComputeManualBlockGroupReleaseV2(PropertyId, BlockGroupId, 1);
         ManualInventoryBlockGroupMutationReceiptDto groupReleaseReceipt = new(
             BlockGroupId,
             PropertyId,
-            3);
-        operations.Seed(InventoryManagementOperationRecord.ForBlockGroup(
+            3,
+            ManualInventoryBlockGroupStatus.Released,
+            2,
+            ReleasedBlockCount: 3,
+            CreatedBlockCount: 0,
+            TotalBlockCount: 3,
+            ActiveBlockCount: 0,
+            AlreadyReleasedBlockCount: 0,
+            MembershipDigest: SelectionDigest);
+        operations.Seed(InventoryManagementOperationRecord.ForBlockGroupV2(
             groupReleaseOperationId,
             TenantId,
             InventoryManagementResourceKind.BlockGroup,
             BlockGroupId,
-            InventoryManagementMutationKind.ManualBlockGroupRelease,
+            InventoryManagementMutationKind.ManualBlockGroupReleaseV2,
+            1,
             groupReleaseFingerprint,
             groupReleaseReceipt,
             CompletedAtUtc));
@@ -134,14 +155,17 @@ public sealed class ManualInventoryBlockCommandHandlerTests
         CreateManualInventoryBlockCommandHandler createHandler = new(
             mutations,
             journal,
+            null!,
             null!);
         CreateManualInventoryBlockGroupCommandHandler groupCreateHandler = new(
             mutations,
             journal,
+            null!,
             null!);
         ReleaseManualInventoryBlockCommandHandler releaseHandler = new(
             mutations,
             journal,
+            null!,
             null!,
             null!,
             null!,
@@ -151,6 +175,7 @@ public sealed class ManualInventoryBlockCommandHandlerTests
             new(
                 mutations,
                 journal,
+                null!,
                 null!,
                 null!,
                 null!,
@@ -179,7 +204,10 @@ public sealed class ManualInventoryBlockCommandHandlerTests
                         RoomId: Guid.NewGuid()),
                     Arrival,
                     Departure,
-                    " Deep clean "),
+                    " Deep clean ",
+                    SelectionDigest,
+                    3,
+                    true),
                 CancellationToken.None);
         Result<ManualInventoryBlockMutationReceiptDto> released =
             await releaseHandler.HandleAsync(
@@ -194,7 +222,9 @@ public sealed class ManualInventoryBlockCommandHandlerTests
                 new(
                     groupReleaseOperationId,
                     PropertyId,
-                    BlockGroupId),
+                    BlockGroupId,
+                    1,
+                    true),
                 CancellationToken.None);
 
         Assert.Equal(createReceipt, created.Value);
@@ -247,6 +277,7 @@ public sealed class ManualInventoryBlockCommandHandlerTests
                 operationLock,
                 new TestScopeContext()),
             new InventoryManagementOperationJournal(operations),
+            null!,
             null!);
 
         Result<ManualInventoryBlockMutationReceiptDto> result =

@@ -68,6 +68,7 @@ internal sealed class DataRightsAnonymisationApprovalPolicy(
         DataRightsPropertyPolicySnapshot? property = await properties.GetPolicyAsync(
             propertyId,
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (property is not
             {
                 IsKnown: true,
@@ -186,6 +187,7 @@ internal sealed class DataRightsAnonymisationApprovalPolicy(
                                 subject.RecordVersion)),
                         cancellationToken)
                     .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
             }
             catch (Exception exception)
                 when (exception is not OperationCanceledException)

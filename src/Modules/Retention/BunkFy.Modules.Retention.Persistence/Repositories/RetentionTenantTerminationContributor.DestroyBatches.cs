@@ -13,6 +13,13 @@ internal sealed partial class RetentionTenantTerminationContributor
         CancellationToken cancellationToken) =>
         operation.Stage switch
         {
+            RetentionTenantDestroyStage.OutboxMessages =>
+                this.RemoveGuidBatchAsync(
+                    operation,
+                    dbContext.OutboxMessages.Where(
+                        message => message.ScopeId == tenantId),
+                    message => message.Id,
+                    cancellationToken),
             RetentionTenantDestroyStage.InboxMessages =>
                 this.RemoveBatchAsync(
                     operation,
@@ -22,6 +29,13 @@ internal sealed partial class RetentionTenantTerminationContributor
                         .ThenBy(message => message.Handler),
                     message =>
                         $"{message.Id:N}|{LengthPrefixed(message.Handler)}",
+                    cancellationToken),
+            RetentionTenantDestroyStage.RunRetryRequests =>
+                this.RemoveGuidBatchAsync(
+                    operation,
+                    dbContext.RunRetryRequests.Where(
+                        request => request.ScopeId == tenantId),
+                    request => request.Id,
                     cancellationToken),
             RetentionTenantDestroyStage.ScheduleStates =>
                 this.RemoveBatchAsync(
@@ -111,8 +125,14 @@ internal sealed partial class RetentionTenantTerminationContributor
     private async Task<bool> HasRemainingOwnerRecordsAsync(
         string tenantId,
         CancellationToken cancellationToken) =>
+        await dbContext.OutboxMessages.AnyAsync(
+            message => message.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
         await dbContext.InboxMessages.AnyAsync(
             message => message.ScopeId == tenantId,
+            cancellationToken).ConfigureAwait(false) ||
+        await dbContext.RunRetryRequests.AnyAsync(
+            request => request.ScopeId == tenantId,
             cancellationToken).ConfigureAwait(false) ||
         await dbContext.ScheduleStates.AnyAsync(
             state => state.ScopeId == tenantId,

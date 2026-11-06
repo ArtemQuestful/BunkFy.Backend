@@ -17,7 +17,9 @@ internal sealed class DataRightsExportAuditEntryConfiguration
                 "CK_data_rights_export_audit_scope",
                 $"(\"CaseKind\" = {(int)DataRightsCaseKind.GuestRights} AND " +
                 "\"PropertyId\" IS NOT NULL) OR " +
-                $"(\"CaseKind\" = {(int)DataRightsCaseKind.StaffRights} AND " +
+                $"(\"CaseKind\" IN (" +
+                $"{(int)DataRightsCaseKind.TenantTermination}, " +
+                $"{(int)DataRightsCaseKind.StaffRights}) AND " +
                 "\"PropertyId\" IS NULL)");
             table.HasCheckConstraint(
                 "CK_data_rights_export_audit_action",

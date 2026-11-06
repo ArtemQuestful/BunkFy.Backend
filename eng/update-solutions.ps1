@@ -195,7 +195,7 @@ function Add-BackendGraph {
         }
 
         foreach ($file in Get-ChildItem -LiteralPath $absoluteRoot -Recurse -File |
-            Where-Object { $_.Extension -in @('.md', '.ps1', '.yml', '.yaml', '.http') }) {
+            Where-Object { $_.Extension -in @('.md', '.mjs', '.ps1', '.yml', '.yaml', '.http') }) {
             $relative = Get-WorkspaceRelativePath -BasePath $BasePath -Path $file.FullName
             $directory = Split-Path $relative -Parent
             Add-SolutionEntry $Folders "$FolderPrefix/$($directory.Replace('\', '/'))/" File "$PathPrefix$relative"
@@ -262,7 +262,7 @@ if ($IncludeRootWorkspace) {
             continue
         }
         foreach ($file in Get-ChildItem -LiteralPath $absoluteRoot -Recurse -File |
-            Where-Object { $_.Extension -in @('.md', '.ps1', '.yml', '.yaml') }) {
+            Where-Object { $_.Extension -in @('.md', '.mjs', '.ps1', '.yml', '.yaml') }) {
             $relative = Get-WorkspaceRelativePath -BasePath $workspaceRoot -Path $file.FullName
             $directory = Split-Path $relative -Parent
             Add-SolutionEntry $workspaceFolders "/$($directory.Replace('\', '/'))/" File $relative

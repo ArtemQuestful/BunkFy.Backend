@@ -19,6 +19,45 @@ using Xunit;
 public sealed class StaffModelTests
 {
     [Fact]
+    public void Authoritative_staff_tables_declare_database_invariants()
+    {
+        using StaffDbContext dbContext = CreateDbContext();
+        IModel designModel = dbContext.GetService<IDesignTimeModel>().Model;
+        IEntityType member = designModel.FindEntityType(typeof(StaffMember))!;
+        IEntityType assignment = designModel.FindEntityType(
+            typeof(StaffPropertyAssignment))!;
+
+        AssertConstraints(
+            member,
+            "CK_staff_members_coordinates",
+            "CK_staff_members_version",
+            "CK_staff_members_display_name",
+            "CK_staff_members_created_by",
+            "CK_staff_members_last_changed_by",
+            "CK_staff_members_search_shape",
+            "CK_staff_members_optional_text",
+            "CK_staff_members_lifecycle",
+            "CK_staff_members_timestamps",
+            "CK_staff_members_anonymised_profile");
+        AssertConstraints(
+            assignment,
+            "CK_staff_assignments_coordinates",
+            "CK_staff_assignments_actor_shape",
+            "CK_staff_assignments_versions",
+            "CK_staff_assignments_lifecycle",
+            "CK_staff_assignments_dates",
+            "CK_staff_assignments_timestamps");
+        AssertIndex(
+            assignment,
+            "UX_staff_assignments_current_property",
+            "\"IsCurrent\"");
+        AssertIndex(
+            assignment,
+            "UX_staff_assignments_current_primary",
+            "\"IsCurrent\" AND \"IsPrimary\"");
+    }
+
+    [Fact]
     public void Tenant_revision_is_scope_keyed_and_concurrency_guarded()
     {
         using StaffDbContext dbContext = CreateDbContext();
@@ -732,6 +771,31 @@ public sealed class StaffModelTests
     private static StaffDbContext CreateDbContext() => new(
         new DbContextOptionsBuilder<StaffDbContext>().UseInMemoryDatabase($"staff-{Guid.NewGuid():N}").Options,
         new TestScopeContext());
+
+    private static void AssertConstraints(
+        IEntityType entity,
+        params string[] expectedNames)
+    {
+        string[] actualNames = entity.GetCheckConstraints()
+            .Select(constraint => constraint.Name!)
+            .ToArray();
+        Assert.All(expectedNames, expected => Assert.Contains(expected, actualNames));
+    }
+
+    private static void AssertIndex(
+        IEntityType entity,
+        string databaseName,
+        string filter)
+    {
+        IIndex index = Assert.Single(
+            entity.GetIndexes(),
+            candidate => string.Equals(
+                candidate.GetDatabaseName(),
+                databaseName,
+                StringComparison.Ordinal));
+        Assert.True(index.IsUnique);
+        Assert.Equal(filter, index.GetFilter());
+    }
 
     private sealed class TestScopeContext : IScopeContext
     {

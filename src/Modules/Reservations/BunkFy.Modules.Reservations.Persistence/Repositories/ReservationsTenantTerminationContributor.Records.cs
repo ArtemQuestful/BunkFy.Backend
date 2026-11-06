@@ -82,6 +82,7 @@ internal sealed partial class ReservationsTenantTerminationContributor
                     reservation.ReleaseRequestId,
                     reservation.LastReleaseRejectionCode,
                     reservation.PendingAllocationAmendmentId,
+                    reservation.PendingInventoryAmendmentRequestId,
                     reservation.LastAllocationAmendmentRejectionCode,
                     reservation.PendingStayBusinessDate,
                     reservation.CheckedInBusinessDate,

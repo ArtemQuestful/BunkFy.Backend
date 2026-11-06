@@ -4,8 +4,12 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using BunkFy.Host.AdminApi;
+using BunkFy.Host.ServiceDefaults.Security.Stations;
+using BunkFy.Modules.Properties.Persistence;
+using BunkFy.Modules.Workspaces.Persistence;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Persistence.EntityFrameworkCore;
+using Gma.Framework.Runtime.Time;
 using Gma.Framework.Security;
 using Gma.Modules.AccessControl.Application.Commands;
 using Gma.Modules.AccessControl.Persistence;
@@ -19,12 +23,15 @@ using Gma.Modules.Auth.Domain.Services;
 using Gma.Modules.Auth.Domain.ValueObjects;
 using Gma.Modules.Auth.Persistence;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NATS.Client.Core;
 
@@ -34,16 +41,31 @@ internal sealed class AdminApiTestApplication(
     string natsConnectionString,
     bool disableOutboxPublisher = true,
     bool allowGeneratedPasswordResponses = false,
-    bool useActiveSessionAdmission = false)
+    ISystemClock? systemClock = null,
+    bool disableDatabaseBackgroundServices = false,
+    Action<IServiceCollection>? configureServices = null,
+    bool useActiveSessionAdmission = false,
+    bool? requireTenantClaimMatch = null)
     : WebApplicationFactory<AdminApiAssemblyReference>
 {
     private const string JwtIssuer = "BunkFy";
     private const string JwtAudience = "BunkFy";
     private const string JwtSigningKey = "integration-test-signing-key-change-me-000000000000000000";
+    private readonly StationK0AuthenticationObserver stationAuthenticationObserver = new();
+    private readonly StationK0EvidenceProbe stationEvidenceProbe = new();
+    private readonly StationK0LogCollector stationEvidenceLogs = new();
+
+    public IReadOnlyList<StationAuthenticationObservation> StationAuthenticationObservations =>
+        this.stationAuthenticationObserver.Observations;
+
+    public StationK0EvidenceProbe StationEvidenceProbe => this.stationEvidenceProbe;
+
+    public StationK0LogCollector StationEvidenceLogs => this.stationEvidenceLogs;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Integration");
+        builder.ConfigureLogging(logging => logging.AddProvider(this.stationEvidenceLogs));
         builder.UseSetting("Persistence:Provider", provider);
         builder.UseSetting("ConnectionStrings:SqlServer", provider == "SqlServer" ? providerConnectionString : string.Empty);
         builder.UseSetting("ConnectionStrings:PostgreSql", provider == "PostgreSql" ? providerConnectionString : string.Empty);
@@ -64,6 +86,11 @@ internal sealed class AdminApiTestApplication(
         builder.UseSetting(
             "Administration:Api:AllowGeneratedPasswordResponses",
             allowGeneratedPasswordResponses.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (requireTenantClaimMatch.HasValue)
+        {
+            builder.UseSetting("Administration:Api:RequireTenantClaimMatch",
+                requireTenantClaimMatch.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
         builder.UseSetting("Caching:Enabled", "false");
         builder.UseSetting("FileManagement:Enabled", "true");
         builder.UseSetting("FileManagement:Provider", "Minio");
@@ -78,6 +105,12 @@ internal sealed class AdminApiTestApplication(
         builder.UseSetting("FileManagement:Minio:CreateBucketIfMissing", "false");
         builder.UseSetting("Http:PrivateNetwork:Enabled", "false");
         builder.UseSetting("Http:RateLimiting:Enabled", "false");
+        builder.UseSetting("Http:HttpsRedirectionEnabled", "false");
+        if (disableDatabaseBackgroundServices)
+        {
+            builder.UseSetting("Notifications:Delivery:Enabled", "false");
+            builder.UseSetting("Notifications:DurableStreams:MonitorEnabled", "false");
+        }
 
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
@@ -114,14 +147,33 @@ internal sealed class AdminApiTestApplication(
                 ["FileManagement:Minio:UseSsl"] = "false",
                 ["FileManagement:Minio:CreateBucketIfMissing"] = "false",
                 ["Http:PrivateNetwork:Enabled"] = "false",
-                ["Http:RateLimiting:Enabled"] = "false"
+                ["Http:RateLimiting:Enabled"] = "false",
+                ["Http:HttpsRedirectionEnabled"] = "false"
             };
+
+            if (disableDatabaseBackgroundServices)
+            {
+                values["Notifications:Delivery:Enabled"] = "false";
+                values["Notifications:DurableStreams:MonitorEnabled"] = "false";
+            }
+
+            if (requireTenantClaimMatch.HasValue)
+            {
+                values["Administration:Api:RequireTenantClaimMatch"] =
+                    requireTenantClaimMatch.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
 
             configuration.AddInMemoryCollection(values);
         });
 
         builder.ConfigureServices(services =>
         {
+            if (systemClock is not null)
+            {
+                services.RemoveAll<ISystemClock>();
+                services.AddSingleton(systemClock);
+            }
+
             if (disableOutboxPublisher)
             {
                 ServiceDescriptor[] hostedServicesToRemove = services
@@ -136,12 +188,39 @@ internal sealed class AdminApiTestApplication(
                 }
             }
 
+            if (disableDatabaseBackgroundServices)
+            {
+                ServiceDescriptor[] databaseHostedServices = services
+                    .Where(descriptor =>
+                        descriptor.ServiceType == typeof(IHostedService) &&
+                        descriptor.ImplementationType?.Name == "TaskRuntimeRetentionService")
+                    .ToArray();
+
+                foreach (ServiceDescriptor hostedService in databaseHostedServices)
+                {
+                    services.Remove(hostedService);
+                }
+            }
+
             services.RemoveAll<INatsConnection>();
             services.AddSingleton<INatsConnection>(_ => new NatsConnection(new NatsOpts
             {
                 Url = natsConnectionString,
             }));
+            services.RemoveAll<IStationAuthenticationObserver>();
+            services.AddSingleton<IStationAuthenticationObserver>(this.stationAuthenticationObserver);
+            services.AddSingleton(this.stationEvidenceProbe);
+            services.AddSingleton<IStartupFilter, StationK0EvidenceStartupFilter>();
+            services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, StationK0EvidenceJwtBearerPostConfigure>();
+            configureServices?.Invoke(services);
         });
+    }
+
+    public void ResetStationAuthenticationObservations()
+    {
+        this.stationAuthenticationObserver.Reset();
+        this.stationEvidenceProbe.Reset();
+        this.stationEvidenceLogs.Reset();
     }
 
     public async Task MigrateAsync()
@@ -177,6 +256,15 @@ internal sealed class AdminApiTestApplication(
             AuthMigrations.HistoryTable);
         await using AuthDbContext authDbContext = new(authOptions.Options, DisabledTenantContext.Instance);
         await authDbContext.Database.MigrateAsync().ConfigureAwait(false);
+    }
+
+    public async Task MigratePropertiesAsync()
+    {
+        using IServiceScope scope = this.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<WorkspacesDbContext>()
+            .Database.MigrateAsync().ConfigureAwait(false);
+        await scope.ServiceProvider.GetRequiredService<PropertiesDbContext>()
+            .Database.MigrateAsync().ConfigureAwait(false);
     }
 
     public async Task SeedOwnerAsync(Guid actorId)

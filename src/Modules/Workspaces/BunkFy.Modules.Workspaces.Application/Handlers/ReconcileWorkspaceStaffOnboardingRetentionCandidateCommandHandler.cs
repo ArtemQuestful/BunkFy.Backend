@@ -12,6 +12,7 @@ using Microsoft.Extensions.Options;
 internal sealed class ReconcileWorkspaceStaffOnboardingRetentionCandidateCommandHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    WorkspaceStaffOnboardingRetentionExecutionCoordinator retentionExecutions,
     IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
     IOrganizationEnrollmentClaimInspector claims,
@@ -25,6 +26,41 @@ internal sealed class ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand
     public async Task<Result<WorkspaceStaffOnboardingRetentionReconciliation>> HandleAsync(
         ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand command,
         CancellationToken cancellationToken)
+    {
+        Result<WorkspaceStaffOnboardingRetentionExecution> execution =
+            await retentionExecutions.AcquireRunningAsync(
+                command.ExecutionId,
+                command.Attempt,
+                cancellationToken).ConfigureAwait(false);
+        if (execution.IsFailure)
+        {
+            return Result.Failure<
+                WorkspaceStaffOnboardingRetentionReconciliation>(
+                    execution.Error);
+        }
+
+        Result<WorkspaceStaffOnboardingRetentionReconciliation> reconciled =
+            await this.ReconcileAsync(command, cancellationToken)
+                .ConfigureAwait(false);
+        if (reconciled.IsFailure)
+        {
+            return reconciled;
+        }
+
+        Result recorded = execution.Value.RecordCandidate(
+            command.Attempt,
+            reconciled.Value.Affected);
+        return recorded.IsSuccess
+            ? reconciled
+            : Result.Failure<
+                WorkspaceStaffOnboardingRetentionReconciliation>(
+                    recorded.Error);
+    }
+
+    private async Task<Result<WorkspaceStaffOnboardingRetentionReconciliation>>
+        ReconcileAsync(
+            ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand command,
+            CancellationToken cancellationToken)
     {
         WorkspaceStaffOnboardingMutationLease lease =
             await mutations.AcquireExistingAsync(

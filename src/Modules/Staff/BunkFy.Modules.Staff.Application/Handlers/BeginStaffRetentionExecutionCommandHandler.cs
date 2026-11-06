@@ -94,9 +94,48 @@ internal sealed class BeginStaffRetentionExecutionCommandHandler(
                 StaffDomainErrors.RetentionExecutionCoordinateInvalid);
         }
         else if (
-            execution.State == StaffRetentionExecutionState.Running &&
+            (execution.State is
+                StaffRetentionExecutionState.Running or
+                StaffRetentionExecutionState.Failed) &&
             request.Attempt > execution.Attempt)
         {
+            Result retryable = execution.ValidateRetry(
+                request.Attempt,
+                request.StartedAtUtc,
+                request.DeadlineUtc);
+            if (retryable.IsFailure)
+            {
+                return Result.Failure<
+                    StaffRetentionExecutionStart>(
+                    retryable.Error);
+            }
+
+            if (execution.State ==
+                StaffRetentionExecutionState.Failed)
+            {
+                StaffRetentionSweepCheckpoint? checkpoint =
+                    await executions.GetCheckpointAsync(
+                        StaffRetentionCoordinates.DataClassKey,
+                        request.ExecutionPolicyVersion,
+                        cancellationToken).ConfigureAwait(false);
+                if (checkpoint is null)
+                {
+                    return Result.Failure<
+                        StaffRetentionExecutionStart>(
+                        StaffApplicationErrors.RetentionProofConflict);
+                }
+
+                Result prepared = checkpoint.PrepareRetry(
+                    execution,
+                    request.StartedAtUtc);
+                if (prepared.IsFailure)
+                {
+                    return Result.Failure<
+                        StaffRetentionExecutionStart>(
+                        prepared.Error);
+                }
+            }
+
             Result retried = execution.BeginRetry(
                 request.Attempt,
                 request.StartedAtUtc,
@@ -109,7 +148,9 @@ internal sealed class BeginStaffRetentionExecutionCommandHandler(
             }
         }
         else if (
-            execution.State == StaffRetentionExecutionState.Running &&
+            (execution.State is
+                StaffRetentionExecutionState.Running or
+                StaffRetentionExecutionState.Failed) &&
             request.Attempt != execution.Attempt)
         {
             return Result.Failure<StaffRetentionExecutionStart>(

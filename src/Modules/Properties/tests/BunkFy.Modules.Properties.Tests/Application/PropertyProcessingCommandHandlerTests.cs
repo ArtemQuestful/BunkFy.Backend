@@ -8,6 +8,8 @@ using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Properties.Domain.Aggregates;
+using BunkFy.Modules.Properties.Domain.Errors;
+using BunkFy.Modules.Properties.Domain.ValueObjects;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
@@ -102,13 +104,119 @@ public sealed class PropertyProcessingCommandHandlerTests
             revisions,
             CreateRegistry(CreateArtifact()),
             new TestClock(),
-            new TestIdGenerator());
+            new TestIdGenerator(),
+            runtimeTimeZones: Application
+                .PropertyTimeZoneHealthClassifierTests.CompatibleProbe());
 
         Result<PropertyMutationReceiptDto> corrected =
             await correctedHandler.HandleAsync(command, CancellationToken.None);
 
         Assert.True(corrected.IsSuccess);
         Assert.Single(operations.Added);
+    }
+
+    [Fact]
+    public async Task Activation_rejects_a_legacy_alias_before_domain_effects()
+    {
+        Property property = LegacyPropertyTestFactory.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            "Hostel One",
+            "hostel-one",
+            "UTC",
+            Now.AddDays(-10));
+        RecordingPropertyMutationOperationRepository operations = new();
+        RecordingRevisionWriter revisions = new();
+        ActivatePropertyProcessingCommandHandler handler = new(
+            PropertiesMutationTestSupport.Create(
+                properties: new FakePropertyRepository(property)),
+            CreateJournal(operations),
+            revisions,
+            CreateRegistry(CreateArtifact()),
+            new TestClock(),
+            new TestIdGenerator(),
+            runtimeTimeZones: Application
+                .PropertyTimeZoneHealthClassifierTests.CompatibleProbe());
+
+        Result<PropertyMutationReceiptDto> result = await handler.HandleAsync(
+            CreateActivationCommand(property, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.CountryPolicyDenied(
+                CountryPolicyDecisionReason.InvalidRequest),
+            result.Error);
+        Assert.Equal(PropertyProcessingState.Unconfigured, property.ProcessingState);
+        Assert.Null(property.GovernanceBinding);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(property.DomainEvents);
+        Assert.Empty(revisions.Items);
+        Assert.Empty(operations.Added);
+    }
+
+    [Fact]
+    public async Task Activation_rejects_a_runtime_rule_mismatch_before_domain_effects()
+    {
+        Property property = CreateProperty();
+        property.ClearDomainEvents();
+        RecordingPropertyMutationOperationRepository operations = new();
+        RecordingRevisionWriter revisions = new();
+        ActivatePropertyProcessingCommandHandler handler = new(
+            PropertiesMutationTestSupport.Create(
+                properties: new FakePropertyRepository(property)),
+            CreateJournal(operations),
+            revisions,
+            CreateRegistry(CreateArtifact()),
+            new TestClock(),
+            new TestIdGenerator(),
+            runtimeTimeZones: Application
+                .PropertyTimeZoneHealthClassifierTests.IncompatibleProbe());
+
+        Result<PropertyMutationReceiptDto> result = await handler.HandleAsync(
+            CreateActivationCommand(property, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.TimeZoneRuntimeUnavailable,
+            result.Error);
+        Assert.Equal(PropertyProcessingState.Unconfigured, property.ProcessingState);
+        Assert.Null(property.GovernanceBinding);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(property.DomainEvents);
+        Assert.Empty(revisions.Items);
+        Assert.Empty(operations.Added);
+    }
+
+    [Fact]
+    public async Task Activation_fails_closed_on_an_invalid_server_clock()
+    {
+        Property property = CreateProperty();
+        property.ClearDomainEvents();
+        RecordingPropertyMutationOperationRepository operations = new();
+        RecordingRevisionWriter revisions = new();
+        ActivatePropertyProcessingCommandHandler handler = new(
+            PropertiesMutationTestSupport.Create(
+                properties: new FakePropertyRepository(property)),
+            CreateJournal(operations),
+            revisions,
+            CreateRegistry(CreateArtifact()),
+            new TestClock(default(DateTimeOffset)),
+            new TestIdGenerator(),
+            runtimeTimeZones: Application
+                .PropertyTimeZoneHealthClassifierTests.CompatibleProbe());
+
+        Result<PropertyMutationReceiptDto> result = await handler.HandleAsync(
+            CreateActivationCommand(property, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.TimeSourceUnavailable,
+            result.Error);
+        Assert.Equal(PropertyProcessingState.Unconfigured, property.ProcessingState);
+        Assert.Equal(1, property.Version);
+        Assert.Empty(property.DomainEvents);
+        Assert.Empty(revisions.Items);
+        Assert.Empty(operations.Added);
     }
 
     [Fact]
@@ -404,6 +512,76 @@ public sealed class PropertyProcessingCommandHandlerTests
         Assert.Equal(GetPropertyProcessingStateQueryHandler.SuspendedReasonCode, suspended.ReasonCode);
     }
 
+    [Theory]
+    [InlineData(PropertyProcessingState.Unconfigured)]
+    [InlineData(PropertyProcessingState.Enabled)]
+    [InlineData(PropertyProcessingState.Suspended)]
+    public async Task Retirement_preserves_configuration_but_suspends_effective_processing_and_rejects_new_commands(
+        PropertyProcessingState configuredState)
+    {
+        Property property = CreateProperty();
+        FakePropertyRepository repository = new(property);
+        RecordingRevisionWriter revisions = new();
+        RecordingPropertyMutationOperationRepository operations = new();
+        PropertyMutationOperationJournal journal = CreateJournal(operations);
+        ActivatePropertyProcessingCommandHandler activate = new(
+            PropertiesMutationTestSupport.Create(properties: repository),
+            journal,
+            revisions,
+            CreateRegistry(CreateArtifact()),
+            new TestClock(),
+            new TestIdGenerator());
+        if (configuredState != PropertyProcessingState.Unconfigured)
+        {
+            Assert.True((await activate.HandleAsync(
+                CreateActivationCommand(property, Guid.NewGuid()),
+                CancellationToken.None)).IsSuccess);
+        }
+
+        if (configuredState == PropertyProcessingState.Suspended)
+        {
+            Assert.True(property.SuspendProcessing(
+                property.Version, Guid.NewGuid(), Now, "user:owner").IsSuccess);
+        }
+
+        PropertyGovernanceBinding? binding = property.GovernanceBinding;
+        Assert.True(property.Retire(
+            property.Version, Guid.NewGuid(), Now, "user:owner").IsSuccess);
+        long retiredVersion = property.Version;
+        int revisionCount = revisions.Items.Count;
+        int operationCount = operations.Added.Count;
+        property.ClearDomainEvents();
+
+        // No policies are registered: retirement must take precedence over
+        // Unconfigured/UnknownPolicy, not pretend the saved binding was erased.
+        PropertyProcessingStateDto state = (await new GetPropertyProcessingStateQueryHandler(
+            repository,
+            CountryPolicyRegistry.Create([], [], CountryPolicyRuntimeMode.Production),
+            new TestClock()).HandleAsync(
+                new GetPropertyProcessingStateQuery(property.Id),
+                CancellationToken.None)).Value;
+        Assert.Equal(PropertyProcessingEffectiveStatus.Suspended, state.EffectiveStatus);
+        Assert.Equal(GetPropertyProcessingStateQueryHandler.RetiredReasonCode, state.ReasonCode);
+        Assert.Equal(configuredState.ToString(), state.ConfiguredStatus.ToString());
+        Assert.Equal(retiredVersion, state.PropertyVersion);
+
+        Result<PropertyMutationReceiptDto> activation = await activate.HandleAsync(
+            CreateActivationCommand(property, Guid.NewGuid()), CancellationToken.None);
+        Result<PropertyMutationReceiptDto> suspension = await new SuspendPropertyProcessingCommandHandler(
+            PropertiesMutationTestSupport.Create(properties: repository), journal,
+            revisions, new TestClock(), new TestIdGenerator()).HandleAsync(
+                new SuspendPropertyProcessingCommand(property.Id, Guid.NewGuid(), true, retiredVersion, "user:owner"),
+                CancellationToken.None);
+        Assert.Equal(PropertiesDomainErrors.PropertyRetired, activation.Error);
+        Assert.Equal(PropertiesDomainErrors.PropertyRetired, suspension.Error);
+        Assert.Equal(configuredState, property.ProcessingState);
+        Assert.Same(binding, property.GovernanceBinding);
+        Assert.Equal(retiredVersion, property.Version);
+        Assert.Equal(revisionCount, revisions.Items.Count);
+        Assert.Equal(operationCount, operations.Added.Count);
+        Assert.Empty(property.DomainEvents);
+    }
+
     [Fact]
     public async Task Suspension_keeps_policy_coordinates_and_appends_a_revision()
     {
@@ -559,7 +737,8 @@ public sealed class PropertyProcessingCommandHandlerTests
         CountryPolicyRegistry.Create(
             [artifact],
             [new("GB", "gb-hostel", 1, artifact.ContentSha256, CountryLaunchStatus.Approved)],
-            CountryPolicyRuntimeMode.Production);
+            CountryPolicyRuntimeMode.Production,
+            EmbeddedTzdbCountryPolicyTimeZoneRules.Instance);
 
     private static PropertyMutationOperationJournal CreateJournal(
         RecordingPropertyMutationOperationRepository? operations = null) =>

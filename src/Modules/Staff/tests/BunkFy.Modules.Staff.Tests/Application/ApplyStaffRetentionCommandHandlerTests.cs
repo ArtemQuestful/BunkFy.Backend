@@ -27,6 +27,7 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
                 StaffRetentionAnonymisationPrerequisiteResult.Completed()));
         ApplyStaffRetentionCommand command = new(
             fixture.Execution.Id,
+            Attempt: 1,
             fixture.Member.Id,
             fixture.Member.Version);
 
@@ -81,6 +82,7 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    Attempt: 1,
                     fixture.Member.Id,
                     fixture.Member.Version),
                 CancellationToken.None);
@@ -108,6 +110,7 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    Attempt: 1,
                     fixture.Member.Id,
                     fixture.Member.Version),
                 CancellationToken.None);
@@ -124,6 +127,30 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
     }
 
     [Fact]
+    public async Task Stale_attempt_is_rejected_before_discovery()
+    {
+        Fixture fixture = CreateFixture(
+            new RecordingPrerequisite(
+                StaffRetentionAnonymisationPrerequisiteResult.Completed()));
+
+        Result<StaffRetentionMutationResult> result =
+            await fixture.Handler.HandleAsync(
+                new(
+                    fixture.Execution.Id,
+                    Attempt: 2,
+                    fixture.Member.Id,
+                    fixture.Member.Version),
+                CancellationToken.None);
+
+        Assert.Equal(
+            StaffApplicationErrors.RetentionExecutionNotFound,
+            result.Error);
+        Assert.Equal(0, fixture.Candidates.LoadCount);
+        Assert.Equal(0, fixture.Lock.AcquireCount);
+        Assert.Equal(StaffMemberState.Departed, fixture.Member.Status);
+    }
+
+    [Fact]
     public async Task Unresolved_workspace_anchor_blocks_retention_anonymisation()
     {
         Fixture fixture = CreateFixture(
@@ -135,6 +162,7 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    Attempt: 1,
                     fixture.Member.Id,
                     fixture.Member.Version),
                 CancellationToken.None);

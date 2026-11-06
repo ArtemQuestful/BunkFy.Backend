@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Reservations.Application.Ports;
 
 using BunkFy.Modules.Reservations.Domain.DataRights;
+using Gma.Framework.Pagination;
 
 public interface IReservationProcessingRestrictionRepository
 {
@@ -25,6 +26,12 @@ public interface IReservationProcessingRestrictionRepository
     Task<ReservationProcessingRestriction?> GetAsync(
         Guid propertyId,
         Guid restrictionId,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<ReservationProcessingRestriction>> ListActiveAsync(
+        Guid propertyId,
+        Guid reservationId,
+        PageRequest pageRequest,
         CancellationToken cancellationToken);
 
     Task AddAsync(

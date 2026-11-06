@@ -26,6 +26,11 @@ internal sealed partial class PropertiesTenantTerminationContributor
             sink,
             count,
             cancellationToken).ConfigureAwait(false);
+        count = await this.ExportPropertyTimeZoneOperationsAsync(
+            tenantId,
+            sink,
+            count,
+            cancellationToken).ConfigureAwait(false);
         count = await this.ExportAcknowledgementsAsync(
             tenantId,
             sink,
@@ -210,6 +215,53 @@ internal sealed partial class PropertiesTenantTerminationContributor
                     $"{row.AcknowledgementId}|" +
                     row.AcknowledgementVersion),
                 row.PropertyVersion,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        return count;
+    }
+
+    private async Task<long> ExportPropertyTimeZoneOperationsAsync(
+        string tenantId,
+        IDataRightsExportSink sink,
+        long count,
+        CancellationToken cancellationToken)
+    {
+        await foreach (PropertyTimeZoneOperation operation in
+            dbContext.PropertyTimeZoneOperations
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.PropertyId)
+                .ThenBy(item => item.OperationId)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            PropertiesPropertyTimeZoneOperationTenantExport record = new(
+                operation.ScopeId,
+                operation.PropertyId,
+                operation.OperationId,
+                new PropertiesPropertyTimeZoneOperationStateTenantExport(
+                    operation.RevisionId,
+                    operation.ChangeKind,
+                    operation.RequestedTimeZoneId,
+                    operation.PreviousTimeZoneId,
+                    operation.TimeZoneId,
+                    operation.CatalogVersion,
+                    operation.ExpectedVersion,
+                    operation.ResultVersion),
+                operation.ActorId,
+                operation.OccurredAtUtc);
+            await WriteAsync(
+                PropertiesTenantTerminationMetadata
+                    .PropertyTimeZoneOperationRecordType,
+                DataRightsExportRecordIds.CreateDeterministicChild(
+                    operation.PropertyId,
+                    $"time-zone:{operation.OperationId:N}"),
+                operation.ResultVersion,
                 record,
                 sink,
                 cancellationToken).ConfigureAwait(false);

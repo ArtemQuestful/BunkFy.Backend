@@ -26,7 +26,8 @@ internal sealed class GuestProfileCreationCapability(IRequestDispatcher dispatch
                 request.PreferredLanguageTag,
                 request.Notes,
                 request.ActorId,
-                request.CreationConfirmationId),
+                request.CreationConfirmationId,
+                request.LanguageTags),
             cancellationToken);
     }
 }

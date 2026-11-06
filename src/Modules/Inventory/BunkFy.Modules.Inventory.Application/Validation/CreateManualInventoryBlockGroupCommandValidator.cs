@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Inventory.Application.Validation;
 
 using BunkFy.Modules.Inventory.Application.Commands;
+using BunkFy.Modules.Inventory.Application.Handlers;
 using BunkFy.Modules.Inventory.Contracts;
 using BunkFy.Modules.Inventory.Domain.Aggregates;
 using Gma.Framework.Cqrs;
@@ -20,7 +21,9 @@ internal sealed class CreateManualInventoryBlockGroupCommandValidator
             yield return "PropertyId is required.";
         }
 
-        if (!IsValidTarget(command.Target))
+        if (!InventoryBlockTargetNormalizer.TryNormalize(
+                command.Target,
+                out _))
         {
             yield return "Target must identify a property, building, floor, room, or inventory unit.";
         }
@@ -30,20 +33,42 @@ internal sealed class CreateManualInventoryBlockGroupCommandValidator
             yield return "Arrival must be before Departure.";
         }
 
-        if (string.IsNullOrWhiteSpace(command.Reason) ||
-            command.Reason.Trim().Length > ManualInventoryBlock.ReasonMaxLength)
+        if (!IsValidReason(command.Reason))
         {
             yield return $"Reason is required and must be {ManualInventoryBlock.ReasonMaxLength} characters or fewer.";
         }
+
+        if (!IsSha256(command.ExpectedSelectionDigest))
+        {
+            yield return "ExpectedSelectionDigest must be a lowercase SHA-256 value.";
+        }
+
+        if (command.ExpectedAffectedBlockCount is < 1 or > InventoryContractLimits.MaximumManualInventoryBlockGroupMembers)
+        {
+            yield return $"ExpectedAffectedBlockCount must be between 1 and {InventoryContractLimits.MaximumManualInventoryBlockGroupMembers}.";
+        }
+
+        if (!IsValidActor(command.ActorId))
+        {
+            yield return $"ActorId is required and must be a control-free value of {ManualInventoryBlockGroup.ActorIdMaxLength} characters or fewer.";
+        }
     }
 
-    private static bool IsValidTarget(InventoryBlockTarget? target) => target?.Kind switch
+    internal static bool IsSha256(string? value) =>
+        value is { Length: 64 } &&
+        value.All(character => character is (>= '0' and <= '9') or (>= 'a' and <= 'f'));
+
+    internal static bool IsValidReason(string? value)
     {
-        InventoryBlockTargetKind.Property => true,
-        InventoryBlockTargetKind.Building => !string.IsNullOrWhiteSpace(target.BuildingLabel),
-        InventoryBlockTargetKind.Floor => !string.IsNullOrWhiteSpace(target.FloorLabel),
-        InventoryBlockTargetKind.Room => target.RoomId is { } roomId && roomId != Guid.Empty,
-        InventoryBlockTargetKind.Unit => target.InventoryUnitId is { } unitId && unitId != Guid.Empty,
-        _ => false
-    };
+        string normalized = value?.Trim() ?? string.Empty;
+        return normalized.Length is > 0 and <= ManualInventoryBlock.ReasonMaxLength &&
+            !normalized.Any(char.IsControl);
+    }
+
+    internal static bool IsValidActor(string? value)
+    {
+        string normalized = value?.Trim() ?? string.Empty;
+        return normalized.Length is > 0 and <= ManualInventoryBlockGroup.ActorIdMaxLength &&
+            !normalized.Any(char.IsControl);
+    }
 }

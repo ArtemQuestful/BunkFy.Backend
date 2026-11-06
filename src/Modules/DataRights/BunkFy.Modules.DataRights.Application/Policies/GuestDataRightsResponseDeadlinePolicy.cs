@@ -24,6 +24,7 @@ internal sealed class GuestDataRightsResponseDeadlinePolicy(
         DataRightsPropertyPolicySnapshot? property = await properties.GetPolicyAsync(
             propertyId,
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (property is null ||
             !property.IsKnown ||
             property.Status is not (PropertyStatus.Active or PropertyStatus.Retired) ||

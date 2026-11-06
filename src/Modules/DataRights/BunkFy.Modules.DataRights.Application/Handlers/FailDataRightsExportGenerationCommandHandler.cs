@@ -38,11 +38,18 @@ internal sealed class FailDataRightsExportGenerationCommandHandler(
         bool alreadyFailed =
             artifact.State == DataRightsExportArtifactState.Failed;
         DateTimeOffset failedAtUtc = clock.UtcNow;
-        Result transition = artifact.MarkFailed(
-            command.RunId,
-            command.Attempt,
-            command.FailureCode,
-            failedAtUtc);
+        Result transition = artifact.State == DataRightsExportArtifactState.Requested
+            ? artifact.RejectGeneration(
+                command.RunId,
+                command.Attempt,
+                "system:data-rights-export",
+                command.FailureCode,
+                failedAtUtc)
+            : artifact.MarkFailed(
+                command.RunId,
+                command.Attempt,
+                command.FailureCode,
+                failedAtUtc);
         if (transition.IsFailure)
         {
             return Result.Failure<Unit>(transition.Error);

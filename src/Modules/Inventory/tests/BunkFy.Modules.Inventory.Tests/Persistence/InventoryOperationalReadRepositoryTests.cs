@@ -65,12 +65,16 @@ public sealed class InventoryOperationalReadRepositoryTests
             propertyId,
             inventoryUnitId: null,
             includeReleased: false,
+            overlapsFrom: null,
+            overlapsTo: null,
             new PageRequest(1, 2),
             CancellationToken.None);
         ManualInventoryBlockListResponse last = await repository.ListAsync(
             propertyId,
             inventoryUnitId: null,
             includeReleased: false,
+            overlapsFrom: null,
+            overlapsTo: null,
             new PageRequest(2, 2),
             CancellationToken.None);
 
@@ -78,6 +82,49 @@ public sealed class InventoryOperationalReadRepositoryTests
         Assert.True(first.HasMore);
         Assert.Single(last.Blocks);
         Assert.False(last.HasMore);
+    }
+
+    [Fact]
+    public async Task Block_directory_can_be_bounded_to_the_visible_schedule()
+    {
+        await using InventoryDbContext dbContext = CreateDbContext();
+        Guid propertyId = SeedRooms(dbContext, "101");
+        Guid unitId = await dbContext.InventoryUnits.Select(unit => unit.Id).SingleAsync();
+        foreach ((DateOnly arrival, string reason) in new[]
+                 {
+                     (new DateOnly(2026, 7, 28), "Before"),
+                     (new DateOnly(2026, 7, 31), "Spanning"),
+                     (new DateOnly(2026, 8, 4), "Inside"),
+                     (new DateOnly(2026, 8, 12), "After")
+                 })
+        {
+            dbContext.ManualBlocks.Add(ManualInventoryBlock.Create(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "tenant-a",
+                propertyId,
+                unitId,
+                arrival,
+                arrival.AddDays(2),
+                reason,
+                Guid.NewGuid(),
+                Now).Value);
+        }
+
+        await dbContext.SaveChangesAsync();
+        ManualInventoryBlockRepository repository = new(dbContext);
+
+        ManualInventoryBlockListResponse result = await repository.ListAsync(
+            propertyId,
+            inventoryUnitId: null,
+            includeReleased: false,
+            overlapsFrom: new DateOnly(2026, 8, 1),
+            overlapsTo: new DateOnly(2026, 8, 10),
+            new PageRequest(1, 20),
+            CancellationToken.None);
+
+        Assert.Equal(["Spanning", "Inside"], result.Blocks.Select(block => block.Reason));
+        Assert.False(result.HasMore);
     }
 
     private static Guid SeedRooms(InventoryDbContext dbContext, params string[] names)

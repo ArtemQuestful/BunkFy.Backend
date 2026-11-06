@@ -94,6 +94,7 @@ public sealed partial class Reservation : ScopedAggregateRoot<Guid>
     public TimeOnly? ExpectedArrivalTime { get; private set; }
     public TimeOnly? ExpectedDepartureTime { get; private set; }
     public Guid? PendingAllocationAmendmentId { get; private set; }
+    public Guid? PendingInventoryAmendmentRequestId { get; private set; }
     public string? PendingAllocationAmendmentRequestFingerprint { get; private set; }
     public DateOnly? PendingArrival { get; private set; }
     public DateOnly? PendingDeparture { get; private set; }
@@ -177,6 +178,7 @@ public sealed partial class Reservation : ScopedAggregateRoot<Guid>
     private void ClearPendingAllocationAmendment()
     {
         this.PendingAllocationAmendmentId = null;
+        this.PendingInventoryAmendmentRequestId = null;
         this.PendingAllocationAmendmentRequestFingerprint = null;
         this.PendingArrival = null;
         this.PendingDeparture = null;

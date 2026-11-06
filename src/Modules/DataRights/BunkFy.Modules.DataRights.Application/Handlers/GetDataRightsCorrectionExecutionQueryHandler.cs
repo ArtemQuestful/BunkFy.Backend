@@ -32,6 +32,6 @@ internal sealed class GetDataRightsCorrectionExecutionQueryHandler(
             execution.PropertyId != query.Scope.PropertyId
             ? Result.Failure<DataRightsCorrectionExecutionDetailsDto>(
                 DataRightsApplicationErrors.CorrectionExecutionNotFound)
-            : Result.Success(execution.ToDto());
+            : Result.Success(execution.ToDto(query.ActorId));
     }
 }

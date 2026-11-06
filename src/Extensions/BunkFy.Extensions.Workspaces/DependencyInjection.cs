@@ -2,6 +2,7 @@ namespace BunkFy.Extensions.Workspaces;
 
 using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
+using Gma.Framework.AccessControl;
 using Gma.Framework.Messaging;
 using Gma.Framework.Observability;
 using Gma.Modules.AccessControl.Contracts;
@@ -67,8 +68,15 @@ public static class DependencyInjection
             IAccessRoleAssignmentPolicy,
             WorkspaceOperationalRoleAssignmentPolicy>());
         services.TryAddEnumerable(ServiceDescriptor.Scoped<
+            IAccessRoleAssignmentPolicy,
+            WorkspaceOwnerRoleAssignmentPolicy>());
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<
             IAccessProfileMutationAdmissionPolicy,
             WorkspaceAccessProfileMutationAdmissionPolicy>());
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<
+            IAccessDecisionProvider,
+            WorkspaceOwnerMembershipAccessDecisionProvider>());
+        services.TryAddScoped<IWorkspaceStaffStationAdmissionObserver, WorkspaceStaffStationAdmissionObserver>();
         services.TryAddEnumerable(ServiceDescriptor.Scoped<
             IOrganizationMutationAdmissionPolicy,
             WorkspaceOrganizationMutationAdmissionPolicy>());
@@ -77,11 +85,6 @@ public static class DependencyInjection
             OrganizationMembershipChangedIntegrationEvent,
             OrganizationOwnerStaffBootstrapHandler>(
             StaffModuleMetadata.Name,
-            OrganizationsModuleMetadata.Name);
-        services.AddIntegrationEventHandler<
-            OrganizationMembershipChangedIntegrationEvent,
-            OrganizationMembershipAccessHandler>(
-            AccessControlModuleMetadata.Name,
             OrganizationsModuleMetadata.Name);
         services.AddIntegrationEventHandler<
             WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent,

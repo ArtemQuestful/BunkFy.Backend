@@ -20,6 +20,7 @@ public sealed class CreateDataRightsCaseCommandValidatorTests
         bool expectedValid)
     {
         CreateDataRightsCaseCommand command = new(
+            Guid.NewGuid(),
             DataRightsCaseScope.Staff,
             operations,
             operations == DataRightsOperation.Restriction
@@ -58,6 +59,7 @@ public sealed class CreateDataRightsCaseCommandValidatorTests
         bool expectedValid)
     {
         CreateDataRightsCaseCommand command = new(
+            Guid.NewGuid(),
             DataRightsCaseScope.ForProperty(Guid.NewGuid()),
             operations,
             directive,
@@ -69,5 +71,22 @@ public sealed class CreateDataRightsCaseCommandValidatorTests
             .ToArray();
 
         Assert.Equal(expectedValid, errors.Length == 0);
+    }
+
+    [Fact]
+    public void Operation_id_is_required()
+    {
+        CreateDataRightsCaseCommand command = new(
+            Guid.Empty,
+            DataRightsCaseScope.Staff,
+            DataRightsOperation.AccessExport,
+            DataRightsRestrictionDirective.Unknown,
+            DataRightsRequesterRelationship.ControllerInitiated,
+            "user:operator");
+
+        Assert.Contains(
+            "OperationId is required.",
+            new CreateDataRightsCaseCommandValidator()
+                .Validate(command));
     }
 }

@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\BunkFy.Modules.Guests.Domain\BunkFy.Modules.Guests.Domain.csproj" />
     <ProjectReference Include="..\..\BunkFy.Modules.Guests.Persistence\BunkFy.Modules.Guests.Persistence.csproj" />
     <ProjectReference Include="..\..\..\..\Shared\BunkFy.DataGovernance\BunkFy.DataGovernance.csproj" />
+    <ProjectReference Include="..\..\..\..\Shared\BunkFy.TimeZones\BunkFy.TimeZones.csproj" />
     <ProjectReference Include="..\..\..\..\Extensions\BunkFy.Extensions.ReservationGuestRecords\BunkFy.Extensions.ReservationGuestRecords.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Administration\Gma.Framework.Administration.Api\Gma.Framework.Administration.Api.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Modules\Gma.Framework.ModuleComposition\Gma.Framework.ModuleComposition.csproj" />

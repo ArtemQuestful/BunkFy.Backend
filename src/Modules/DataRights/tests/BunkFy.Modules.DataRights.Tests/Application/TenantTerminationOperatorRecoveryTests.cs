@@ -77,6 +77,8 @@ public sealed class TenantTerminationOperatorRecoveryTests
         RetryTenantTerminationCommandHandler handler = new(
             repository,
             DataRightsMutationTestSupport.TenantTermination(repository),
+            new InMemoryTenantTerminationExportArtifactRepository(),
+            new InMemoryTenantTerminationExportFragmentRepository(),
             planner,
             signal,
             new FixedClock(Now.AddMinutes(4)));
@@ -194,11 +196,49 @@ public sealed class TenantTerminationOperatorRecoveryTests
         TenantTerminationOwnerWorkItem workItem = Assert.Single(
             new TenantTerminationPhasePlanner([contributor])
                 .PrepareWorkItems(process, Now.AddMinutes(1)).Value);
+        Assert.True(process.CompleteFreeze(
+            process.OperationRevision,
+            workspaceFenceRevision: 1,
+            Digest,
+            [new("workspaces", 1, 1, Digest)],
+            process.Version,
+            Executor,
+            Now.AddMinutes(2)).IsSuccess);
+        Assert.True(process.BeginPhase(
+            TenantTerminationProcessPhase.Export,
+            process.Version,
+            Executor,
+            Now.AddMinutes(3)).IsSuccess);
+        TenantTerminationExportArtifact artifact =
+            TenantTerminationExportArtifact.Request(
+                TenantTerminationExecutionIdentity.CreateExportArtifactId(
+                    process.Id,
+                    process.OperationRevision),
+                process.ScopeId,
+                process.Id,
+                process.CaseId,
+                process.ApprovalRevision,
+                process.FreezeOperationRevision!.Value,
+                process.OperationRevision,
+                process.TerminationEpoch,
+                TenantTerminationExecutionIdentity
+                    .CreateExportArtifactIdempotencyKey(
+                        process.Id,
+                        process.OperationRevision),
+                process.FrozenRevisionSha256!,
+                process.PolicyEvidenceSha256,
+                expectedFragmentCount: 1,
+                Digest,
+                Now.AddMinutes(4),
+                Now.AddHours(24)).Value;
+        InMemoryTenantTerminationExportArtifactRepository artifacts = new();
+        await artifacts.AddAsync(artifact, CancellationToken.None);
         StubCaseRepository cases = new(dataRightsCase);
         StubStatusRepository status = new(process, [workItem]);
         GetTenantTerminationOperatorStatusQueryHandler handler = new(
             cases,
-            status);
+            status,
+            artifacts);
 
         Result<TenantTerminationOperatorStatusDto> result =
             await handler.HandleAsync(
@@ -215,6 +255,10 @@ public sealed class TenantTerminationOperatorRecoveryTests
         Assert.Equal(
             TenantTerminationOwnerWorkStatus.Prepared,
             owner.Status);
+        Assert.Equal(
+            artifact.Id,
+            result.Value.ExportHandoff!.ArtifactId);
+        Assert.False(result.Value.ExportHandoff.Confirmed);
     }
 
     [Fact]
@@ -226,7 +270,8 @@ public sealed class TenantTerminationOperatorRecoveryTests
             exportRequested: false);
         GetTenantTerminationOperatorStatusQueryHandler handler = new(
             new StubCaseRepository(dataRightsCase),
-            new StubStatusRepository(process, []));
+            new StubStatusRepository(process, []),
+            new InMemoryTenantTerminationExportArtifactRepository());
 
         Result<TenantTerminationOperatorStatusDto> result =
             await handler.HandleAsync(
@@ -272,6 +317,7 @@ public sealed class TenantTerminationOperatorRecoveryTests
         Assert.Equal(TenantTerminationStatus.Pending, result.Value.Process.Status);
         Assert.Equal(intent.ExecutionStartedAtUtc,
             result.Value.Case.ExecutionStartedAtUtc);
+        Assert.Equal(Executor, processes.Process!.CreatedBy);
         Assert.Equal(1, processes.AddCount);
         Assert.Equal(1, signal.Count);
         Assert.Equal(0, scheduler.VerificationCount);
@@ -491,7 +537,7 @@ public sealed class TenantTerminationOperatorRecoveryTests
             RecoveryEvidence(),
             dataRightsCase.Version,
             expectedProcessVersion,
-            Executor);
+            "operator:successor");
 
     private static RecoveryState PrepareRecoveryState()
     {
@@ -694,6 +740,7 @@ public sealed class TenantTerminationOperatorRecoveryTests
         private TenantTerminationProcess? process = process;
 
         public int AddCount { get; private set; }
+        public TenantTerminationProcess? Process => this.process;
 
         public Task AddProcessAsync(
             TenantTerminationProcess candidate,
@@ -885,7 +932,7 @@ public sealed class TenantTerminationOperatorRecoveryTests
             ListOwnerWorkItemsAsync(
                 Guid processId,
                 CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TenantTerminationOwnerWorkItem>>(
+            Task.FromResult(
                 process.Id == processId ? workItems : []);
     }
 

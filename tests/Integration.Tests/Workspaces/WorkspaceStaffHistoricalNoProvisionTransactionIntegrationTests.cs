@@ -59,7 +59,7 @@ public sealed class
             DispatchFault.None,
             committedProbe))
         {
-            await EnsureSchemaAsync(committed).ConfigureAwait(false);
+            await MigrateActualSchemaAsync(committed).ConfigureAwait(false);
             SeedCoordinate seed = await SeedAsync(
                     committed,
                     committedApplicationId,
@@ -272,13 +272,13 @@ public sealed class
             .ConfigureAwait(false);
     }
 
-    private static async Task EnsureSchemaAsync(ServiceProvider services)
+    private static async Task MigrateActualSchemaAsync(ServiceProvider services)
     {
         await using AsyncServiceScope scope = services.CreateAsyncScope();
         scope.ServiceProvider.GetRequiredService<IScopeContextAccessor>()
             .SetScope(TenantId);
         await scope.ServiceProvider.GetRequiredService<WorkspacesDbContext>()
-            .Database.EnsureCreatedAsync()
+            .Database.MigrateAsync()
             .ConfigureAwait(false);
     }
 

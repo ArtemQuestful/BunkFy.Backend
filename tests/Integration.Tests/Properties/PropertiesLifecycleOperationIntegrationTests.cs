@@ -46,7 +46,8 @@ public sealed class PropertiesLifecycleOperationIntegrationTests
                 propertyId,
                 "Lifecycle House",
                 "lifecycle-house",
-                "UTC")).ConfigureAwait(false);
+                "UTC",
+                "system:integration-test")).ConfigureAwait(false);
         Assert.True(created.IsSuccess, created.Error.Code);
 
         Guid activationOperationId = Guid.NewGuid();
@@ -124,7 +125,8 @@ public sealed class PropertiesLifecycleOperationIntegrationTests
                 correctedPropertyId,
                 "Corrected House",
                 "corrected-house",
-                "UTC")).ConfigureAwait(false)).IsSuccess);
+                "UTC",
+                "system:integration-test")).ConfigureAwait(false)).IsSuccess);
         Guid correctedOperationId = Guid.NewGuid();
         ActivatePropertyProcessingCommand denied = Activation(
             correctedPropertyId,

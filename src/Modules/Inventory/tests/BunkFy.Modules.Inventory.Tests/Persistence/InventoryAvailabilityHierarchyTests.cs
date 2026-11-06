@@ -7,6 +7,9 @@ using BunkFy.Modules.Inventory.Persistence;
 using BunkFy.Modules.Inventory.Persistence.Repositories;
 using BunkFy.Modules.Properties.Contracts;
 using Gma.Framework.Scoping;
+using Gma.Framework.Messaging;
+using Gma.Framework.Runtime.Identity;
+using Gma.Framework.Runtime.Time;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -30,7 +33,7 @@ public sealed class InventoryAvailabilityHierarchyTests
             Now).Value;
         dbContext.Allocations.Add(allocation);
         await dbContext.SaveChangesAsync();
-        InventoryAvailabilityRepository availability = new(dbContext);
+        InventoryAvailabilityRepository availability = CreateAvailability(dbContext);
 
         Assert.True(await HasAllocationConflictAsync(availability, propertyId, roomId));
         Assert.True(await HasAllocationConflictAsync(availability, propertyId, bedA));
@@ -55,7 +58,7 @@ public sealed class InventoryAvailabilityHierarchyTests
             Now).Value;
         dbContext.ManualBlocks.Add(block);
         await dbContext.SaveChangesAsync();
-        InventoryAvailabilityRepository availability = new(dbContext);
+        InventoryAvailabilityRepository availability = CreateAvailability(dbContext);
 
         Assert.True(await HasManualBlockConflictAsync(availability, propertyId, bedA));
         Assert.True(await HasManualBlockConflictAsync(availability, propertyId, bedB));
@@ -76,7 +79,7 @@ public sealed class InventoryAvailabilityHierarchyTests
             Now).Value;
         dbContext.RoomRetirements.Add(process);
         await dbContext.SaveChangesAsync();
-        InventoryAvailabilityRepository availability = new(dbContext);
+        InventoryAvailabilityRepository availability = CreateAvailability(dbContext);
 
         InventoryAvailabilityContextSnapshot context = await availability.GetContextAsync(
             propertyId,
@@ -107,7 +110,7 @@ public sealed class InventoryAvailabilityHierarchyTests
         }
 
         await dbContext.SaveChangesAsync();
-        InventoryAvailabilityRepository availability = new(dbContext);
+        InventoryAvailabilityRepository availability = CreateAvailability(dbContext);
 
         RoomInventoryImpactSnapshot impact = Assert.IsType<RoomInventoryImpactSnapshot>(
             await availability.GetRoomImpactAsync(propertyId, roomId, CancellationToken.None));
@@ -115,6 +118,60 @@ public sealed class InventoryAvailabilityHierarchyTests
         Assert.Equal(InventoryImpactLimits.AffectedReservationSampleSize + 5, impact.ActiveAllocationCount);
         Assert.Equal(InventoryImpactLimits.AffectedReservationSampleSize, impact.AffectedReservationIds.Count);
         Assert.True(impact.AffectedReservationIdsTruncated);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Touch_publishes_exact_distinct_post_mutation_definitions_with_current_sellability(bool draining)
+    {
+        await using InventoryDbContext dbContext = CreateDbContext();
+        (Guid propertyId, Guid roomId, Guid bedA, Guid bedB) = SeedTopology(dbContext);
+        if (draining)
+        {
+            dbContext.RoomRetirements.Add(RoomRetirementProcess.Create(
+                Guid.NewGuid(), "tenant-a", propertyId, roomId, "Synthetic closure", "user:operator", Now).Value);
+        }
+        RecordingOutbox outbox = new();
+        InventoryAvailabilityRepository availability = new(
+            dbContext, new InventoryTopologyRepository(dbContext), outbox, new TestClock(), new TestIds());
+
+        await availability.TouchUnitsAsync(propertyId, [bedA, bedB, bedA], CancellationToken.None);
+
+        Assert.Equal(new[] { bedA, bedB }.Order(), outbox.Events.Select(item => item.InventoryUnitId));
+        Assert.All(outbox.Events, item =>
+        {
+            Assert.Equal(2, item.UnitVersion);
+            Assert.Equal(2, item.ConfigurationVersion);
+            Assert.True(item.IsTopologyActive);
+            Assert.Equal(!draining, item.IsSellable);
+        });
+        Assert.Equal(1, (await dbContext.InventoryUnits.SingleAsync(unit => unit.Id == roomId)).AvailabilityMutationVersion);
+        Assert.Equal(3, (await dbContext.RoomConfigurations.SingleAsync()).AvailabilityMutationVersion);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Missing_unit_or_configuration_publishes_nothing_and_does_not_touch_versions(bool missingConfiguration)
+    {
+        await using InventoryDbContext dbContext = CreateDbContext();
+        (Guid propertyId, _, Guid bedA, _) = SeedTopology(dbContext);
+        if (missingConfiguration)
+        {
+            dbContext.RoomConfigurations.Remove(await dbContext.RoomConfigurations.SingleAsync());
+            await dbContext.SaveChangesAsync();
+        }
+        RecordingOutbox outbox = new();
+        InventoryAvailabilityRepository availability = new(
+            dbContext, new InventoryTopologyRepository(dbContext), outbox, new TestClock(), new TestIds());
+        Guid[] ids = missingConfiguration ? [bedA] : [bedA, Guid.NewGuid()];
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            availability.TouchUnitsAsync(propertyId, ids, CancellationToken.None));
+
+        Assert.Empty(outbox.Events);
+        Assert.All(await dbContext.InventoryUnits.ToArrayAsync(), unit => Assert.Equal(1, unit.AvailabilityMutationVersion));
     }
 
     private static async Task<bool> HasAllocationConflictAsync(
@@ -183,6 +240,40 @@ public sealed class InventoryAvailabilityHierarchyTests
         dbContext.AddRange(property, room, roomUnit, bedUnitA, bedUnitB, configuration);
         dbContext.SaveChanges();
         return (propertyId, roomId, bedA, bedB);
+    }
+
+    private static InventoryAvailabilityRepository CreateAvailability(InventoryDbContext dbContext) =>
+        new(dbContext, new InventoryTopologyRepository(dbContext), new ReadOnlyOutboxRegistry(), new TestClock(), new TestIds());
+
+    private sealed class ReadOnlyOutboxRegistry : IOutboxWriterRegistry
+    {
+        public IOutboxWriter GetRequired(string moduleName) =>
+            throw new InvalidOperationException("Read-only availability queries must not publish.");
+    }
+
+    private sealed class RecordingOutbox : IOutboxWriter, IOutboxWriterRegistry
+    {
+        public string ModuleName => InventoryModuleMetadata.Name;
+        public List<InventoryUnitDefinitionChangedIntegrationEvent> Events { get; } = [];
+        public IOutboxWriter GetRequired(string moduleName) => this;
+
+        public Task EnqueueAsync<TEvent>(TEvent integrationEvent, CancellationToken cancellationToken)
+            where TEvent : IIntegrationEvent
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            this.Events.Add(Assert.IsType<InventoryUnitDefinitionChangedIntegrationEvent>(integrationEvent));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TestClock : ISystemClock
+    {
+        public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class TestIds : IIdGenerator
+    {
+        public Guid NewId() => Guid.NewGuid();
     }
 
     private static InventoryDbContext CreateDbContext()

@@ -127,7 +127,8 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
                         values.NationalityCountryCode,
                         values.PreferredLanguageTag,
                         values.Notes,
-                        ResolveActor(parse, global)),
+                        ResolveActor(parse, global),
+                        LanguageTags: values.LanguageTags),
                     token)
                 : Task.FromResult(Result.Failure<GuestMutationReceiptDto>(InvalidDateError)),
             cancellationToken));
@@ -218,7 +219,8 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
                         values.PreferredLanguageTag,
                         values.Notes,
                         parse.GetRequiredValue(options.ExpectedVersion),
-                        ResolveActor(parse, global)),
+                        ResolveActor(parse, global),
+                        values.LanguageTags),
                     token)
                 : Task.FromResult(Result.Failure<GuestMutationReceiptDto>(InvalidDateError)),
             cancellationToken));
@@ -353,7 +355,8 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
             dateOfBirth,
             parse.GetValue(options.Nationality),
             parse.GetValue(options.Language),
-            parse.GetValue(options.Notes));
+            parse.GetValue(options.Notes),
+            parse.GetResult(options.Languages) is null ? null : parse.GetValue(options.Languages) ?? []);
         return true;
     }
 
@@ -366,6 +369,7 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
                 ("DisplayName", profile => profile.DisplayName),
                 ("Email", profile => profile.Email ?? string.Empty),
                 ("Phone", profile => profile.Phone ?? string.Empty),
+                ("Languages", profile => string.Join(", ", profile.LanguageTags)),
                 ("Status", profile => profile.Status.ToString()),
                 ("LastChangedAtUtc", profile => profile.LastChangedAtUtc.ToString("O", CultureInfo.InvariantCulture))
             ]);
@@ -380,6 +384,7 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
                 ("DisplayName", profile => profile.DisplayName),
                 ("Email", profile => profile.Email ?? string.Empty),
                 ("Phone", profile => profile.Phone ?? string.Empty),
+                ("Languages", profile => string.Join(", ", profile.LanguageTags)),
                 ("Status", profile => profile.Status.ToString()),
                 ("Version", profile => profile.Version.ToString(CultureInfo.InvariantCulture))
             ]);
@@ -419,7 +424,8 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
         DateOnly? DateOfBirth,
         string? NationalityCountryCode,
         string? PreferredLanguageTag,
-        string? Notes);
+        string? Notes,
+        string[]? LanguageTags);
 
     private sealed class ProfileOptions
     {
@@ -430,6 +436,12 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
         public Option<string?> DateOfBirth { get; } = new("--date-of-birth");
         public Option<string?> Nationality { get; } = new("--nationality");
         public Option<string?> Language { get; } = new("--language");
+        public Option<string[]> Languages { get; } = new("--languages")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            AllowMultipleArgumentsPerToken = true,
+            Description = "Replace all languages; omit to preserve, or supply without values to clear."
+        };
         public Option<string?> Notes { get; } = new("--notes");
         public Option<long> ExpectedVersion { get; } = new("--expected-version") { Required = true };
 
@@ -442,6 +454,7 @@ public sealed class GuestsAdminCliModule : IAdminCliModule
             command.Options.Add(this.DateOfBirth);
             command.Options.Add(this.Nationality);
             command.Options.Add(this.Language);
+            command.Options.Add(this.Languages);
             command.Options.Add(this.Notes);
             if (includeVersion)
             {

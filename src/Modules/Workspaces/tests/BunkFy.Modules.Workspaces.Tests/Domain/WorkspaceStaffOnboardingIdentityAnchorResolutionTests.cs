@@ -16,6 +16,44 @@ using DomainResolutionDisposition =
 public sealed class WorkspaceStaffOnboardingIdentityAnchorResolutionTests
 {
     [Fact]
+    public void Exact_recovery_records_the_bound_resolution_once_at_the_receipted_version()
+    {
+        WorkspaceStaffOnboarding application = CreateProvisioningApplication();
+        Assert.True(application.BindAcceptedMembership(
+            Guid.NewGuid(),
+            membershipVersion: 1,
+            Now.AddMinutes(1)).IsSuccess);
+        AnchorCoordinates coordinates = BindStaffAnchor(application);
+        Assert.True(application.Fail(
+            "Workspaces.AccessProvisioningFailed",
+            Now.AddMinutes(3)).IsSuccess);
+        application.ClearDomainEvents();
+        long selectedVersion = application.Version;
+
+        Assert.True(application.RecoverCompletedExact(
+            Now.AddMinutes(4)).IsSuccess);
+
+        Assert.Equal(WorkspaceStaffOnboardingState.Completed, application.Status);
+        Assert.Null(application.FailureCode);
+        AssertApplicantDataRedacted(application);
+        Assert.Equal(selectedVersion + 1, application.Version);
+        Assert.Equal(coordinates.ResolutionEventId,
+            application.IdentityAnchorResolutionEventId);
+        Assert.Equal(application.Version,
+            application.IdentityAnchorResolutionApplicationVersion);
+        WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent resolution =
+            Assert.IsType<WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent>(
+                Assert.Single(application.DomainEvents));
+        Assert.Equal(coordinates.ResolutionEventId, resolution.EventId);
+        Assert.Equal(application.Version, resolution.WorkspaceApplicationVersion);
+
+        Assert.True(application.RecoverCompletedExact(
+            Now.AddMinutes(10)).IsSuccess);
+        Assert.Equal(selectedVersion + 1, application.Version);
+        Assert.Single(application.DomainEvents);
+    }
+
+    [Fact]
     public void Identity_anchor_uses_explicit_distinct_random_coordinates()
     {
         Guid applicationId =

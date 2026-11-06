@@ -26,6 +26,8 @@ internal sealed class ListManualInventoryBlocksQueryHandler(
             query.PropertyId,
             query.InventoryUnitId,
             query.IncludeReleased,
+            query.OverlapsFrom,
+            query.OverlapsTo,
             pageRequest,
             cancellationToken).ConfigureAwait(false));
     }

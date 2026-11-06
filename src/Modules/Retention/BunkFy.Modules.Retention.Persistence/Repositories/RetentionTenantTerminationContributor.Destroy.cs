@@ -191,6 +191,27 @@ internal sealed partial class RetentionTenantTerminationContributor
                     cancellationToken).ConfigureAwait(false);
             }
 
+            DateTimeOffset observedAtUtc = clock.UtcNow;
+            bool hasActiveOutboxLease = await dbContext.OutboxMessages
+                .AnyAsync(
+                    message =>
+                        message.ScopeId == tenantId &&
+                        message.ProcessedAtUtc == null &&
+                        message.LockedBy != null &&
+                        message.LockedUntilUtc > observedAtUtc,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (hasActiveOutboxLease)
+            {
+                return await FinishAsync(
+                    transaction,
+                    RetryRequired(
+                        "retention.termination.destroy-outbox-busy",
+                        operation.RemovedRecordCount,
+                        observedAtUtc),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             while (!operation.IsComplete)
             {
                 bool removed = await this.RemoveCurrentStageAsync(

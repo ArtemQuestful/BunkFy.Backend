@@ -377,6 +377,224 @@ public sealed class ReservationStayLifecycleTests
         Assert.Equal(0, projection.ApplyCount);
     }
 
+    [Fact]
+    public async Task Allocation_confirmation_rejects_mismatched_units_before_mutation()
+    {
+        Reservation reservation = CreatePendingReservation(Guid.NewGuid(), Guid.NewGuid());
+        RecordingInventoryProjection projection = new();
+        RecordingOutbox outbox = new();
+        CountingIdGenerator ids = new();
+        InventoryAllocationConfirmedHandler handler = new(
+            ReservationMutationTestSupport.Create(
+                new FakeReservationRepository(reservation)),
+            projection,
+            new RecordingOutboxRegistry(outbox),
+            new ReservationInboxDomainEventDispatcher(
+                new NoOpDomainEventDispatcher()),
+            new TestClock(),
+            ids);
+        long originalVersion = reservation.Version;
+
+        ReservationAllocationUnitMismatchException failure =
+            await Assert.ThrowsAsync<ReservationAllocationUnitMismatchException>(
+            () => handler.HandleAsync(
+                CreateConfirmation(
+                    reservation,
+                    [reservation.RequestedUnits.First().InventoryUnitId, Guid.NewGuid()]),
+                CancellationToken.None));
+
+        Assert.Equal(
+            ReservationsApplicationErrors.AllocationUnitMismatch.Code,
+            failure.Message);
+        Assert.Equal(ReservationState.PendingAllocation, reservation.Status);
+        Assert.Equal(originalVersion, reservation.Version);
+        Assert.Null(reservation.AllocationId);
+        Assert.Equal(0, projection.ApplyCount);
+        Assert.Empty(outbox.Events);
+        Assert.Equal(0, ids.Count);
+    }
+
+    [Fact]
+    public async Task Late_confirmation_rejects_mismatched_units_during_preallocation_cancellation()
+    {
+        Reservation reservation = CreatePendingReservation(Guid.NewGuid(), Guid.NewGuid());
+        Assert.True(reservation.RequestCancellation(
+            reservation.Version,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            TestClock.Now).IsSuccess);
+        reservation.ClearDomainEvents();
+        RecordingInventoryProjection projection = new();
+        RecordingOutbox outbox = new();
+        RecordingDomainEventDispatcher domainEvents = new();
+        CountingIdGenerator ids = new();
+        InventoryAllocationConfirmedHandler handler = new(
+            ReservationMutationTestSupport.Create(
+                new FakeReservationRepository(reservation)),
+            projection,
+            new RecordingOutboxRegistry(outbox),
+            new ReservationInboxDomainEventDispatcher(domainEvents),
+            new TestClock(),
+            ids);
+        long originalVersion = reservation.Version;
+
+        ReservationAllocationUnitMismatchException failure =
+            await Assert.ThrowsAsync<ReservationAllocationUnitMismatchException>(
+            () => handler.HandleAsync(
+                CreateConfirmation(
+                    reservation,
+                    [reservation.RequestedUnits.First().InventoryUnitId, Guid.NewGuid()]),
+                CancellationToken.None));
+
+        Assert.Equal(
+            ReservationsApplicationErrors.AllocationUnitMismatch.Code,
+            failure.Message);
+        Assert.Equal(ReservationState.CancellationPending, reservation.Status);
+        Assert.Equal(originalVersion, reservation.Version);
+        Assert.Null(reservation.AllocationId);
+        Assert.Empty(reservation.DomainEvents);
+        Assert.Equal(0, projection.ApplyCount);
+        Assert.Empty(outbox.Events);
+        Assert.Equal(0, domainEvents.DispatchCount);
+        Assert.Equal(0, ids.Count);
+    }
+
+    [Fact]
+    public async Task Reordered_exact_confirmation_converges_and_replays_idempotently()
+    {
+        Guid firstUnitId = Guid.NewGuid();
+        Guid secondUnitId = Guid.NewGuid();
+        Reservation reservation = CreatePendingReservation(firstUnitId, secondUnitId);
+        RecordingInventoryProjection projection = new();
+        RecordingOutbox outbox = new();
+        InventoryAllocationConfirmedHandler handler = new(
+            ReservationMutationTestSupport.Create(
+                new FakeReservationRepository(reservation)),
+            projection,
+            new RecordingOutboxRegistry(outbox),
+            new ReservationInboxDomainEventDispatcher(
+                new NoOpDomainEventDispatcher()),
+            new TestClock(),
+            new TestIdGenerator());
+        InventoryAllocationConfirmedIntegrationEvent confirmation = CreateConfirmation(
+            reservation,
+            [secondUnitId, firstUnitId]);
+
+        await handler.HandleAsync(confirmation, CancellationToken.None);
+        long confirmedVersion = reservation.Version;
+        await handler.HandleAsync(confirmation, CancellationToken.None);
+
+        Assert.Equal(ReservationState.Confirmed, reservation.Status);
+        Assert.Equal(confirmation.AllocationId, reservation.AllocationId);
+        Assert.Equal(confirmedVersion, reservation.Version);
+        Assert.Equal(2, projection.ApplyCount);
+        Assert.Single(outbox.Events);
+    }
+
+    [Fact]
+    public async Task Original_confirmation_replay_after_amendment_preserves_current_units()
+    {
+        Guid originalUnitId = Guid.NewGuid();
+        Guid amendedUnitId = Guid.NewGuid();
+        Reservation reservation = CreatePendingReservation(originalUnitId);
+        RecordingInventoryProjection projection = new();
+        RecordingOutbox outbox = new();
+        InventoryAllocationConfirmedHandler handler = new(
+            ReservationMutationTestSupport.Create(
+                new FakeReservationRepository(reservation)),
+            projection,
+            new RecordingOutboxRegistry(outbox),
+            new ReservationInboxDomainEventDispatcher(
+                new NoOpDomainEventDispatcher()),
+            new TestClock(),
+            new TestIdGenerator());
+        InventoryAllocationConfirmedIntegrationEvent originalConfirmation =
+            CreateConfirmation(reservation, [originalUnitId]);
+        await handler.HandleAsync(originalConfirmation, CancellationToken.None);
+        Guid amendmentInventoryRequestId = Guid.NewGuid();
+        Assert.True(reservation.BeginAllocationAmendment(
+            Guid.NewGuid(),
+            amendmentInventoryRequestId,
+            new string('a', Reservation.RequestFingerprintLength),
+            reservation.Arrival,
+            reservation.Departure,
+            [amendedUnitId],
+            reservation.PrimaryGuestName,
+            reservation.Email,
+            reservation.Phone,
+            reservation.GuestCount,
+            reservation.Notes,
+            reservation.DetailsRevision,
+            ReservationDetailsChangeOrigin.Staff,
+            "user:operator-a",
+            adapterConnectionId: null,
+            externalOperationId: null,
+            correlationId: Guid.NewGuid(),
+            eventId: Guid.NewGuid(),
+            nowUtc: TestClock.Now.AddMinutes(1)).IsSuccess);
+        Assert.True(reservation.CompleteAllocationAmendment(
+            amendmentInventoryRequestId,
+            originalConfirmation.AllocationId,
+            reservation.Arrival,
+            reservation.Departure,
+            [amendedUnitId],
+            allocationVersion: 2,
+            detailsEventId: Guid.NewGuid(),
+            nowUtc: TestClock.Now.AddMinutes(2)).IsSuccess);
+        long amendedVersion = reservation.Version;
+
+        await handler.HandleAsync(originalConfirmation, CancellationToken.None);
+
+        Assert.Equal(amendedVersion, reservation.Version);
+        Assert.Equal(
+            [amendedUnitId],
+            reservation.RequestedUnits.Select(unit => unit.InventoryUnitId));
+        Assert.Equal(2L, reservation.AllocationVersion);
+        Assert.Equal(2, projection.ApplyCount);
+        Assert.Single(outbox.Events);
+    }
+
+    private static InventoryAllocationConfirmedIntegrationEvent CreateConfirmation(
+        Reservation reservation,
+        IReadOnlyCollection<Guid> inventoryUnitIds) => new(
+        Guid.NewGuid(),
+        reservation.ScopeId,
+        TestClock.Now,
+        Guid.NewGuid(),
+        reservation.Id,
+        reservation.AllocationRequestId,
+        reservation.PropertyId,
+        reservation.Arrival,
+        reservation.Departure,
+        inventoryUnitIds,
+        allocationVersion: 1);
+
+    private static Reservation CreatePendingReservation(params Guid[] inventoryUnitIds) =>
+        Reservation.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 3),
+            inventoryUnitIds,
+            "Ada Guest",
+            "ada@example.test",
+            null,
+            1,
+            ReservationSource.Direct,
+            sourceSystem: null,
+            sourceReference: null,
+            notes: null,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            ReservationDetailsChangeOrigin.Staff,
+            initialDetailsActorId: null,
+            initialAdapterConnectionId: null,
+            initialExternalOperationId: null,
+            Guid.NewGuid(),
+            TestClock.Now).Value;
+
     private static Reservation CreateConfirmedReservation()
     {
         Reservation reservation = Reservation.Create(
@@ -547,6 +765,19 @@ public sealed class ReservationStayLifecycleTests
         public Task DispatchAsync(
             IReadOnlyCollection<Gma.Framework.Domain.IDomainEvent> domainEvents,
             CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingDomainEventDispatcher : IDomainEventDispatcher
+    {
+        public int DispatchCount { get; private set; }
+
+        public Task DispatchAsync(
+            IReadOnlyCollection<Gma.Framework.Domain.IDomainEvent> domainEvents,
+            CancellationToken cancellationToken)
+        {
+            this.DispatchCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TestClock : ISystemClock

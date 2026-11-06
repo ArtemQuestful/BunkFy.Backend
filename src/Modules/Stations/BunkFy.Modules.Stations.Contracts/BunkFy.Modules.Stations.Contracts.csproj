@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="$(GmaFrameworkRoot)Modules/Gma.Framework.Modules/Gma.Framework.Modules.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Security/Gma.Framework.Permissions/Gma.Framework.Permissions.csproj" />
+  </ItemGroup>
+</Project>

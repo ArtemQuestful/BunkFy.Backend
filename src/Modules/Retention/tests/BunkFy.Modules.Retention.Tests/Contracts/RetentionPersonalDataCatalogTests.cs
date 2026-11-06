@@ -64,12 +64,24 @@ public sealed class RetentionPersonalDataCatalogTests
                     typeof(RetentionExecution).FullName &&
                 binding.Member == nameof(RetentionExecution.PropertyId) &&
                 binding.Surface == PersonalDataSurface.Persistence);
+        Assert.Contains(
+            tenant.Bindings,
+            binding => binding.Type ==
+                    typeof(RetentionRunRetryRequest).FullName &&
+                binding.Member == nameof(RetentionRunRetryRequest.ScopeId) &&
+                binding.Surface == PersonalDataSurface.Persistence);
+        Assert.Contains(
+            property.Bindings,
+            binding => binding.Type ==
+                    typeof(RetentionRunRetryRequest).FullName &&
+                binding.Member == nameof(RetentionRunRetryRequest.PropertyId) &&
+                binding.Surface == PersonalDataSurface.Persistence);
         Assert.Equal(
-            2,
+            3,
             tenant.Bindings.Count(binding =>
                 binding.Surface == PersonalDataSurface.DataRightsExport));
         Assert.Equal(
-            2,
+            3,
             property.Bindings.Count(binding =>
                 binding.Surface == PersonalDataSurface.DataRightsExport));
     }

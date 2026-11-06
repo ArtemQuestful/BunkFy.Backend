@@ -151,8 +151,25 @@ public sealed class
                     SourceId,
                     SubjectId),
                 CancellationToken.None);
+        await using WorkspacesDbContext managerDb = CreateDbContext(connectionString);
+        MutableOutcomeReader managerOutcomes = new();
+        GetWorkspaceStaffOnboardingReviewQueryHandler manager = new(
+            new WorkspaceStaffOnboardingManagerReviewReader(
+                new WorkspaceStaffOnboardingMutationCoordinator(
+                    new WorkspaceStaffOnboardingOperationLock(managerDb),
+                    new WorkspaceStaffOnboardingRepository(managerDb)),
+                new WorkspaceStaffOnboardingSerializedReadBoundary(managerDb),
+                managerOutcomes,
+                new WorkspaceOperationalAdmissionEvaluator(
+                    new WorkspaceTerminationFenceRepository(managerDb), scope,
+                    NullLogger<WorkspaceOperationalAdmissionEvaluator>.Instance),
+                scope));
+        Task<Result<WorkspaceStaffOnboardingDto>> pendingManager = manager.HandleAsync(
+            new GetWorkspaceStaffOnboardingReviewQuery(ApplicationId),
+            CancellationToken.None);
         await Task.Delay(TimeSpan.FromMilliseconds(300)).ConfigureAwait(false);
         Assert.False(outcomes.ReadStarted.Task.IsCompleted);
+        Assert.False(managerOutcomes.ReadStarted.Task.IsCompleted);
 
         outcomes.Outcome = new StaffWorkspaceOnboardingIdentityAnchorOutcome(
             ApplicationId,
@@ -163,16 +180,31 @@ public sealed class
             WorkspaceApplicationVersion: null,
             ResolutionDisposition: null,
             Guid.Parse("ac000000-0000-0000-0000-000000000005"));
+        managerOutcomes.Outcome = outcomes.Outcome;
         await holderTransaction.RollbackAsync(CancellationToken.None)
             .ConfigureAwait(false);
 
         Result<WorkspaceStaffOnboardingDto> result = await pending.WaitAsync(
             TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-        Assert.Equal(
-            WorkspaceStaffOnboardingApplicationErrors
-                .ProfileMutationAuthorityUnavailable,
-            result.Error);
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal(ApplicationId, result.Value.ApplicationId);
+        Assert.Equal(WorkspaceStaffOnboardingStatus.Submitted, result.Value.Status);
+        Assert.All<string?>([
+            result.Value.VerifiedAccountEmail, result.Value.DisplayName,
+            result.Value.LegalName, result.Value.WorkEmail, result.Value.WorkPhone,
+            result.Value.EmployeeNumber, result.Value.JobTitle, result.Value.Department
+        ], value => Assert.Null(value));
+        Result<WorkspaceStaffOnboardingDto> managerResult = await pendingManager.WaitAsync(
+            TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+        Assert.True(managerResult.IsFailure);
+        Assert.Equal(WorkspaceStaffOnboardingApplicationErrors.ProfileReviewUnavailable,
+            managerResult.Error);
+        Assert.True(managerOutcomes.ReadStarted.Task.IsCompleted);
+        Assert.Null(managerDb.Database.CurrentTransaction);
         Assert.True(outcomes.ReadStarted.Task.IsCompleted);
+        await using WorkspacesDbContext verify = CreateDbContext(connectionString);
+        Assert.Equal("Applicant Profile", (await verify.StaffOnboardingApplications
+            .AsNoTracking().SingleAsync().ConfigureAwait(false)).DisplayName);
     }
 
     [DockerFact]
@@ -358,8 +390,7 @@ public sealed class
     {
         await using WorkspacesDbContext dbContext =
             CreateDbContext(connectionString);
-        Assert.True(await dbContext.Database.EnsureCreatedAsync()
-            .ConfigureAwait(false));
+        await dbContext.Database.MigrateAsync().ConfigureAwait(false);
         WorkspaceStaffOnboarding application = CreateApplication();
         dbContext.StaffOnboardingApplications.Add(application);
         dbContext.StaffOnboardingProcessingRestrictionProjections.Add(
@@ -376,7 +407,8 @@ public sealed class
         string connectionString) =>
         new(
             new DbContextOptionsBuilder<WorkspacesDbContext>()
-                .UseNpgsql(connectionString)
+                .UseNpgsql(connectionString, options => options.MigrationsAssembly(
+                    WorkspacesMigrations.PostgreSqlAssembly))
                 .Options,
             new TestScopeContext());
 

@@ -174,6 +174,7 @@ internal sealed class StaffRetentionContributor
                 await this.dispatcher.SendAsync(
                     new ApplyStaffRetentionCommand(
                         request.ExecutionId,
+                        request.Attempt,
                         candidate.StaffMemberId,
                         candidate.StaffVersion),
                     cancellationToken).ConfigureAwait(false);
@@ -270,6 +271,7 @@ internal sealed class StaffRetentionContributor
             await this.dispatcher.SendAsync(
                 new CompleteStaffRetentionExecutionCommand(
                     request.ExecutionId,
+                    request.Attempt,
                     state,
                     scannedCount,
                     remainingCount,

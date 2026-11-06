@@ -652,10 +652,10 @@ public sealed class OrganizationStaffOnboardingExpiryHandlerTests
                 .Where(item => item.SourceKind == sourceKind && item.SourceId == sourceId)
                 .ToArray());
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) =>
-            Task.FromResult(new WorkspaceStaffOnboardingListResponse(
+            Task.FromResult(new WorkspaceStaffOnboardingSummaryListResponse(
                 [],
                 page.Page,
                 page.PageSize,

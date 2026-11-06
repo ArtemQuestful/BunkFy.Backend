@@ -43,7 +43,65 @@ public sealed class DataRightsRestrictionExecutionTests
     }
 
     [Fact]
-    public void Proof_must_match_directive_effective_state()
+    public void Release_cannot_enter_review_without_an_owner_validated_target()
+    {
+        DataRightsCase dataRightsCase = CreateDiscoveryCase(
+            DataRightsRestrictionAction.Release);
+        Assert.True(dataRightsCase.SelectSubject(
+            "guests",
+            "guest-profile",
+            Guid.NewGuid(),
+            recordVersion: 3,
+            dataRightsCase.Version,
+            "user:privacy",
+            Now.AddMinutes(-4)).IsSuccess);
+
+        var result = dataRightsCase.RequireReview(
+            dataRightsCase.Version,
+            "user:privacy",
+            Now.AddMinutes(-3));
+
+        Assert.Equal(
+            "DataRights.RestrictionReleaseTargetRequired",
+            result.Error.Code);
+        Assert.Equal(DataRightsCaseState.Discovery, dataRightsCase.Status);
+    }
+
+    [Fact]
+    public void Changing_the_subject_clears_a_selected_release_target()
+    {
+        DataRightsCase dataRightsCase = CreateDiscoveryCase(
+            DataRightsRestrictionAction.Release);
+        Guid guestId = Guid.NewGuid();
+        Assert.True(dataRightsCase.SelectSubject(
+            "guests",
+            "guest-profile",
+            guestId,
+            recordVersion: 3,
+            dataRightsCase.Version,
+            "user:privacy",
+            Now.AddMinutes(-4)).IsSuccess);
+        Assert.True(dataRightsCase.SelectRestrictionReleaseTarget(
+            "guests",
+            Guid.NewGuid(),
+            ownerOperationVersion: 7,
+            dataRightsCase.Version,
+            "user:privacy",
+            Now.AddMinutes(-3)).IsSuccess);
+
+        Assert.True(dataRightsCase.UnselectSubject(
+            "guests",
+            "guest-profile",
+            guestId,
+            dataRightsCase.Version,
+            "user:privacy",
+            Now.AddMinutes(-2)).IsSuccess);
+
+        Assert.Null(dataRightsCase.RestrictionReleaseTarget);
+    }
+
+    [Fact]
+    public void Targeted_release_proof_must_match_selected_owner_operation()
     {
         DataRightsCase dataRightsCase = CreateApprovedCase(
             DataRightsRestrictionAction.Release);
@@ -60,11 +118,44 @@ public sealed class DataRightsRestrictionExecutionTests
             effectiveRestricted: true,
             new string('a', 64),
             "user:executor",
-            Now.AddSeconds(-5));
+            Now.AddSeconds(-5),
+            dataRightsCase.RestrictionReleaseTarget);
 
         Assert.Equal(
             "DataRights.RestrictionExecutionProofInvalid",
             proof.Error.Code);
+    }
+
+    [Fact]
+    public void Targeted_release_can_leave_another_restriction_effective()
+    {
+        DataRightsCase dataRightsCase = CreateApprovedCase(
+            DataRightsRestrictionAction.Release);
+        DataRightsRestrictionExecutionProof proof =
+            DataRightsRestrictionExecutionProof.Create(
+                Guid.NewGuid(),
+                dataRightsCase.DecisionRevision!.Value,
+                DataRightsRestrictionAction.Release,
+                dataRightsCase.SelectedSubjects.Single(),
+                receiptContractVersion: 1,
+                Guid.NewGuid(),
+                dataRightsCase.RestrictionReleaseTarget!.OwnerOperationId,
+                dataRightsCase.RestrictionReleaseTarget.OwnerOperationVersion + 1,
+                resultingProjectionRevision: 3,
+                effectiveRestricted: true,
+                new string('a', 64),
+                "user:executor",
+                Now.AddSeconds(-5),
+                dataRightsCase.RestrictionReleaseTarget).Value;
+
+        var completed = dataRightsCase.CompleteRestrictionExecution(
+            dataRightsCase.Version,
+            proof,
+            Now);
+
+        Assert.True(completed.IsSuccess, completed.Error.Code);
+        Assert.True(proof.EffectiveRestricted);
+        Assert.Equal(DataRightsCaseState.Completed, dataRightsCase.Status);
     }
 
     [Fact]
@@ -159,6 +250,16 @@ public sealed class DataRightsRestrictionExecutionTests
             dataRightsCase.Version,
             "user:privacy",
             Now.AddMinutes(-4)).IsSuccess);
+        if (action == DataRightsRestrictionAction.Release)
+        {
+            Assert.True(dataRightsCase.SelectRestrictionReleaseTarget(
+                "guests",
+                Guid.NewGuid(),
+                ownerOperationVersion: 7,
+                dataRightsCase.Version,
+                "user:privacy",
+                Now.AddMinutes(-3).AddSeconds(-30)).IsSuccess);
+        }
         Assert.True(dataRightsCase.RequireReview(
             dataRightsCase.Version,
             "user:privacy",

@@ -24,6 +24,7 @@ internal static class PropertiesTenantTerminationExportSchema
     [
         typeof(PropertiesPropertyTenantExport),
         typeof(PropertiesPropertyMutationOperationTenantExport),
+        typeof(PropertiesPropertyTimeZoneOperationTenantExport),
         typeof(PropertiesGovernanceAcknowledgementTenantExport),
         typeof(PropertiesRoomTenantExport),
         typeof(PropertiesBedTenantExport),
@@ -165,8 +166,17 @@ internal static class PropertiesTenantTerminationExportSchema
                 candidate.Id,
                 actor.RightsPolicy,
                 StringComparison.Ordinal));
-        string expectedType =
-            typeof(PropertiesGovernanceRevisionTenantExport).FullName!;
+        (string Type, string Member)[] expectedBindings =
+        [
+            (
+                typeof(PropertiesGovernanceRevisionTenantExport).FullName!,
+                nameof(PropertiesGovernanceRevisionTenantExport.ActorId)),
+            (
+                typeof(PropertiesPropertyTimeZoneOperationTenantExport)
+                    .FullName!,
+                nameof(PropertiesPropertyTimeZoneOperationTenantExport
+                    .ActorId))
+        ];
         bool valid = catalog.CatalogVersion ==
                 PropertiesTenantTerminationMetadata
                     .PersonalDataCatalogVersion &&
@@ -178,25 +188,25 @@ internal static class PropertiesTenantTerminationExportSchema
                 PersonalDataSurface.DataRightsExport) &&
             actor.AllowedBoundaries.Contains(
                 PersonalDataBoundary.CrossModule) &&
-            actor.Bindings.Any(binding =>
-                string.Equals(
-                    binding.Assembly,
-                    assembly.GetName().Name,
-                    StringComparison.Ordinal) &&
-                string.Equals(
-                    binding.Type,
-                    expectedType,
-                    StringComparison.Ordinal) &&
-                string.Equals(
-                    binding.Member,
-                    nameof(PropertiesGovernanceRevisionTenantExport.ActorId),
-                    StringComparison.Ordinal) &&
-                binding.Surface ==
-                    PersonalDataSurface.DataRightsExport &&
-                string.Equals(
-                    binding.RetentionPolicy,
-                    ExportRetentionPolicy,
-                    StringComparison.Ordinal));
+            expectedBindings.All(expected => actor.Bindings.Any(binding =>
+                    string.Equals(
+                        binding.Assembly,
+                        assembly.GetName().Name,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        binding.Type,
+                        expected.Type,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        binding.Member,
+                        expected.Member,
+                        StringComparison.Ordinal) &&
+                    binding.Surface ==
+                        PersonalDataSurface.DataRightsExport &&
+                    string.Equals(
+                        binding.RetentionPolicy,
+                        ExportRetentionPolicy,
+                        StringComparison.Ordinal)));
         if (!valid)
         {
             throw new InvalidDataException(

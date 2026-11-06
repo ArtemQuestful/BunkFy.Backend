@@ -42,7 +42,8 @@ public sealed class PropertiesCreationOperationIntegrationTests
             operationId,
             "Harbour House",
             "harbour-house",
-            "UTC");
+            "UTC",
+            "system:integration-test");
 
         Result<PropertyMutationReceiptDto>[] concurrent =
             await Task.WhenAll(

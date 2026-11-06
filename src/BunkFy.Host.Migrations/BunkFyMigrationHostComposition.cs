@@ -8,6 +8,7 @@ using BunkFy.Modules.Properties.Persistence;
 using BunkFy.Modules.Reservations.Persistence;
 using BunkFy.Modules.Retention.Persistence;
 using BunkFy.Modules.Staff.Persistence;
+using BunkFy.Modules.Stations.Persistence;
 using BunkFy.Modules.Workspaces.Persistence;
 using Gma.Framework.Persistence.EntityFrameworkCore;
 using Gma.Framework.Scoping;
@@ -21,6 +22,7 @@ using Gma.Modules.TaskRuntime.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
 
 public static class BunkFyMigrationHostComposition
 {
@@ -47,6 +49,10 @@ public static class BunkFyMigrationHostComposition
         builder.AddWorkspacesPersistence();
         builder.AddIngestionPersistence();
         builder.AddRetentionPersistence();
+        if (builder.Configuration.GetValue<bool>("Stations:Http:Enabled"))
+        {
+            builder.AddStationsPersistence();
+        }
         builder.Services.RemoveAll<IHostedService>();
         return builder;
     }

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <InternalsVisibleTo Include="BunkFy.Modules.Stations.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../BunkFy.Modules.Stations.Application/BunkFy.Modules.Stations.Application.csproj" />
+    <ProjectReference Include="../BunkFy.Modules.Stations.Contracts/BunkFy.Modules.Stations.Contracts.csproj" />
+    <ProjectReference Include="../BunkFy.Modules.Stations.Persistence/BunkFy.Modules.Stations.Persistence.csproj" />
+    <ProjectReference Include="../../Staff/BunkFy.Modules.Staff.Contracts/BunkFy.Modules.Staff.Contracts.csproj" />
+    <ProjectReference Include="../../Reservations/BunkFy.Modules.Reservations.Contracts/BunkFy.Modules.Reservations.Contracts.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Api/Gma.Framework.Api/Gma.Framework.Api.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Scoping/Gma.Framework.Scoping/Gma.Framework.Scoping.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Tenancy/Gma.Framework.Tenancy.AccessControl.AspNetCore/Gma.Framework.Tenancy.AccessControl.AspNetCore.csproj" />
+  </ItemGroup>
+</Project>

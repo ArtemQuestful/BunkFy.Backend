@@ -8,6 +8,7 @@ using BunkFy.Modules.Inventory.Persistence;
 using BunkFy.Modules.Inventory.Persistence.Repositories;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -93,6 +94,59 @@ public sealed class
             await dbContext.AllocationAmendmentDecisions
                 .AsNoTracking()
                 .ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task Removing_decisions_preserves_foreign_same_coordinates()
+    {
+        const string foreignScopeId = "tenant-b";
+        InMemoryDatabaseRoot root = new();
+        string databaseName = Guid.NewGuid().ToString("N");
+        Guid amendmentRequestId = Guid.NewGuid();
+        await using InventoryDbContext dbContext = CreateDbContext(
+            ScopeId,
+            databaseName,
+            root);
+        InventoryAllocation allocation = CreateRejected();
+        dbContext.Allocations.Add(allocation);
+        dbContext.AllocationAmendmentDecisions.Add(new(
+            CreateDecision(
+                ScopeId,
+                amendmentRequestId,
+                allocation,
+                'a')));
+        await dbContext.SaveChangesAsync();
+
+        await using (InventoryDbContext foreign = CreateDbContext(
+            foreignScopeId,
+            databaseName,
+            root))
+        {
+            foreign.AllocationAmendmentDecisions.Add(new(
+                CreateDecision(
+                    foreignScopeId,
+                    amendmentRequestId,
+                    allocation,
+                    'b')));
+            await foreign.SaveChangesAsync();
+            foreign.ChangeTracker.Clear();
+
+            InventoryAllocationAnonymisationRepository repository =
+                new(dbContext);
+            int removed = await repository.RemoveAmendmentDecisionsAsync(
+                allocation.PropertyId,
+                allocation.Id,
+                CancellationToken.None);
+            await dbContext.SaveChangesAsync();
+
+            Assert.Equal(1, removed);
+            Assert.Empty(await dbContext.AllocationAmendmentDecisions.ToArrayAsync());
+            InventoryAllocationAmendmentDecision preserved = await foreign
+                .AllocationAmendmentDecisions
+                .SingleAsync();
+            Assert.Equal(foreignScopeId, preserved.ScopeId);
+            Assert.Equal(new string('b', 64), preserved.RequestFingerprint);
+        }
     }
 
     [Fact]
@@ -201,17 +255,44 @@ public sealed class
 
     private static InventoryDbContext CreateDbContext()
     {
-        DbContextOptions<InventoryDbContext> options =
-            new DbContextOptionsBuilder<InventoryDbContext>()
-                .UseInMemoryDatabase(
-                    $"inventory-anonymisation-{Guid.NewGuid():N}")
-                .Options;
-        return new(options, new TestScopeContext());
+        return CreateDbContext(
+            ScopeId,
+            $"inventory-anonymisation-{Guid.NewGuid():N}",
+            new InMemoryDatabaseRoot());
     }
 
-    private sealed class TestScopeContext : IScopeContext
+    private static InventoryDbContext CreateDbContext(
+        string scopeId,
+        string databaseName,
+        InMemoryDatabaseRoot root)
+    {
+        DbContextOptions<InventoryDbContext> options =
+            new DbContextOptionsBuilder<InventoryDbContext>()
+                .UseInMemoryDatabase(databaseName, root)
+                .Options;
+        return new(options, new TestScopeContext(scopeId));
+    }
+
+    private static InventoryAllocationAmendmentDecisionRecord CreateDecision(
+        string scopeId,
+        Guid amendmentRequestId,
+        InventoryAllocation allocation,
+        char fingerprint) =>
+        new(
+            amendmentRequestId,
+            scopeId,
+            allocation.Id,
+            allocation.ReservationId,
+            allocation.PropertyId,
+            new string(fingerprint, 64),
+            Confirmed: false,
+            InventoryAllocationRejectionReason.AllocationConflict,
+            AllocationVersion: null,
+            Now.AddMinutes(-1));
+
+    private sealed class TestScopeContext(string scopeId) : IScopeContext
     {
         public bool IsEnabled => true;
-        public string ScopeId => InventoryAllocationAnonymisationRepositoryTests.ScopeId;
+        public string ScopeId { get; } = scopeId;
     }
 }

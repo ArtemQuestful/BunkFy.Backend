@@ -3,6 +3,7 @@ namespace BunkFy.Modules.Reservations.Tests;
 using System.Reflection;
 using BunkFy.Modules.Reservations.Application.Handlers;
 using BunkFy.Modules.Reservations.Application.Ports;
+using BunkFy.Modules.Reservations.Application.StayAmendments;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
 using Gma.Framework.Pagination;
@@ -109,7 +110,10 @@ public sealed class ReservationMutationCoordinatorTests
             typeof(ReservationMutationCoordinator)) ||
             HasConstructorDependency(
                 handlerType,
-                typeof(ReservationManagementLifecycleCoordinator));
+                typeof(ReservationManagementLifecycleCoordinator)) ||
+            HasConstructorDependency(
+                handlerType,
+                typeof(ReservationStayAmendmentCoordinator));
 
         Assert.True(
             hasCoordinator,
@@ -122,6 +126,14 @@ public sealed class ReservationMutationCoordinatorTests
     {
         Assert.True(HasConstructorDependency(
             typeof(ReservationManagementLifecycleCoordinator),
+            typeof(ReservationMutationCoordinator)));
+    }
+
+    [Fact]
+    public void Stay_amendment_coordinator_owns_the_mutation_boundary()
+    {
+        Assert.True(HasConstructorDependency(
+            typeof(ReservationStayAmendmentCoordinator),
             typeof(ReservationMutationCoordinator)));
     }
 

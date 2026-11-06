@@ -63,6 +63,12 @@ public static class ReservationsDomainErrors
     public static readonly Error RetentionReceiptInvalid = new("Reservations.RetentionReceiptInvalid", "The reservation retention receipt is invalid.");
     public static readonly Error AllocationAmendmentInProgress = new("Reservations.AllocationAmendmentInProgress", "An allocation-affecting reservation amendment is already in progress.");
     public static readonly Error AllocationAmendmentInvalid = new("Reservations.AllocationAmendmentInvalid", "The allocation-affecting reservation amendment is invalid.");
+    public static readonly Error StayAmendmentOperationIdentityInvalid = new("Reservations.StayAmendmentOperationIdentityInvalid", "The stay-amendment operation identity is invalid.");
+    public static readonly Error StayAmendmentOperationRequestInvalid = new("Reservations.StayAmendmentOperationRequestInvalid", "The stay-amendment operation request is invalid.");
+    public static readonly Error StayAmendmentOperationTransitionInvalid = new("Reservations.StayAmendmentOperationTransitionInvalid", "The stay-amendment operation cannot perform this transition.");
+    public static readonly Error StayAmendmentOperationVersionConflict = new("Reservations.StayAmendmentOperationVersionConflict", "The stay-amendment operation has changed.");
+    public static readonly Error StayAmendmentReconcileTooSoon = new("Reservations.StayAmendmentReconcileTooSoon", "The stay-amendment operation is not yet eligible for reconciliation.");
+    public static readonly Error StayAmendmentOutcomeMismatch = new("Reservations.StayAmendmentOutcomeMismatch", "The allocation outcome does not match the stay-amendment operation.");
     public static readonly Error StayBusinessDateInvalid = new("Reservations.StayBusinessDateInvalid", "The business date is not valid for this stay transition.");
     public static readonly Error StayProvenanceInvalid = new("Reservations.StayProvenanceInvalid", "Stay lifecycle actor provenance is invalid.");
     public static readonly Error ReservationGuestLinkInvalid = new("Reservations.ReservationGuestLinkInvalid", "The reservation guest link is invalid.");

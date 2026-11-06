@@ -1,19 +1,24 @@
 namespace BunkFy.Modules.Properties.Application.Handlers;
 
+using BunkFy.Modules.Properties.Application.Mapping;
 using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.TimeZones;
 using Gma.Framework.AccessControl;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Pagination;
 using Gma.Framework.Permissions;
 using Gma.Framework.Results;
+using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 
 internal sealed class ListVisiblePropertiesQueryHandler(
     IPropertiesReadRepository repository,
     IAccessGrantScopeReader grantScopeReader,
-    IScopeContext scopeContext)
+    IScopeContext scopeContext,
+    ISystemClock clock,
+    TimeZoneRuntimeCompatibilityProbe runtimeTimeZones)
     : IQueryHandler<ListVisiblePropertiesQuery, PropertyListResponse>
 {
     public async Task<Result<PropertyListResponse>> HandleAsync(
@@ -44,9 +49,20 @@ internal sealed class ListVisiblePropertiesQueryHandler(
         }
 
         PageRequest pageRequest = PageRequest.Normalize(query.Page, query.PageSize);
-        return Result.Success(await repository
+        PropertyReadPage page = await repository
             .ListVisiblePropertiesAsync(pageRequest, visibility, cancellationToken)
-            .ConfigureAwait(false));
+            .ConfigureAwait(false);
+        DateTimeOffset observedAtUtc = clock.UtcNow;
+        if (!PropertiesObservationTime.IsValid(observedAtUtc))
+        {
+            return Result.Failure<PropertyListResponse>(
+                PropertiesApplicationErrors.TimeSourceUnavailable);
+        }
+
+        return Result.Success(PropertiesMapper.ToListResponse(
+            page,
+            observedAtUtc,
+            runtimeTimeZones));
     }
 
     private static IEnumerable<Guid> GetGrantedPropertyIds(

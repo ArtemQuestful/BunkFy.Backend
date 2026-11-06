@@ -7,6 +7,7 @@ using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Properties.Domain.Aggregates;
 using BunkFy.Modules.Properties.Domain.Errors;
+using BunkFy.Modules.Properties.Domain.ValueObjects;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
@@ -26,13 +27,15 @@ public sealed class CreatePropertyCommandHandlerTests
         RecordingPropertyRepository properties = new(sequence: sequence);
         RecordingCreationOperationLock creationLock = new(sequence);
         RecordingUniqueCoordinateLock uniqueCoordinates = new(sequence);
+        RecordingTimeZoneRevisionStore revisions = new();
         Guid operationId = Guid.NewGuid();
         RecordingIdGenerator ids = new();
         CreatePropertyCommandHandler handler = CreateHandler(
             properties,
             creationLock,
             uniqueCoordinates,
-            ids);
+            ids,
+            revisions);
 
         Result<PropertyMutationReceiptDto> result = await handler.HandleAsync(
             CreateCommand(operationId),
@@ -47,8 +50,14 @@ public sealed class CreatePropertyCommandHandlerTests
             sequence);
         Assert.Equal((TestScopeContext.TenantId, operationId),
             Assert.Single(creationLock.Acquisitions));
-        Assert.Equal(1, ids.Calls);
+        Assert.Equal(2, ids.Calls);
         Assert.Single(properties.Added!.DomainEvents);
+        PropertyTimeZoneRevisionWriteModel revision =
+            Assert.Single(revisions.Revisions);
+        Assert.Equal(PropertyTimeZoneChangeKind.Created, revision.ChangeKind);
+        Assert.Equal("UTC", revision.RequestedTimeZoneId);
+        Assert.Equal("Etc/UTC", revision.TimeZoneId);
+        Assert.Equal("operator-1", revision.ActorId);
     }
 
     [Fact]
@@ -71,12 +80,14 @@ public sealed class CreatePropertyCommandHandlerTests
             properties,
             creationLock,
             uniqueCoordinates,
-            new ThrowingIdGenerator()).HandleAsync(
+            new ThrowingIdGenerator(),
+            RevisionStoreFor(existing, "UTC")).HandleAsync(
                 new CreatePropertyCommand(
                     operationId,
                     "  Harbour House  ",
                     " HARBOUR-HOUSE ",
-                    " UTC "),
+                    " UTC ",
+                    "operator-1"),
                 CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -85,6 +96,103 @@ public sealed class CreatePropertyCommandHandlerTests
         Assert.Equal(["creation-lock", "read"], sequence);
         Assert.Null(properties.Added);
         Assert.Empty(uniqueCoordinates.PropertyCodeAcquisitions);
+    }
+
+    [Fact]
+    public async Task Native_creation_retry_binds_the_normalized_raw_identifier()
+    {
+        Guid operationId = Guid.NewGuid();
+        Property existing = CreateProperty(operationId);
+        RecordingPropertyRepository properties = new(existing);
+        RecordingTimeZoneRevisionStore revisions = RevisionStoreFor(
+            existing,
+            "UTC");
+
+        Result<PropertyMutationReceiptDto> exact = await CreateHandler(
+            properties,
+            new RecordingCreationOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator(),
+            revisions).HandleAsync(
+                CreateCommand(operationId) with { TimeZoneId = " UTC " },
+                CancellationToken.None);
+        Result<PropertyMutationReceiptDto> differentAlias =
+            await CreateHandler(
+                properties,
+                new RecordingCreationOperationLock(),
+                new RecordingUniqueCoordinateLock(),
+                new ThrowingIdGenerator(),
+                revisions).HandleAsync(
+                    CreateCommand(operationId) with { TimeZoneId = "UCT" },
+                    CancellationToken.None);
+
+        Assert.True(exact.IsSuccess);
+        Assert.Equal(
+            PropertiesApplicationErrors.CreationOperationConflict,
+            differentAlias.Error);
+    }
+
+    [Fact]
+    public async Task Native_creation_retry_uses_its_versioned_ledger_resolution()
+    {
+        Guid operationId = Guid.NewGuid();
+        Property existing = CreateProperty(operationId);
+        RecordingTimeZoneRevisionStore revisions = new(new(
+            Guid.NewGuid(),
+            existing.ScopeId,
+            existing.Id,
+            operationId,
+            PropertyTimeZoneChangeKind.Created,
+            "Retired/LegacyAlias",
+            null,
+            "Etc/UTC",
+            "TZDB: historical-fixture",
+            ExpectedVersion: 0,
+            ResultVersion: 1,
+            "operator-1",
+            Now));
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            new RecordingPropertyRepository(existing),
+            new RecordingCreationOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator(),
+            revisions).HandleAsync(
+                CreateCommand(operationId) with
+                {
+                    TimeZoneId = " Retired/LegacyAlias "
+                },
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(existing.Id, result.Value.PropertyId);
+        Assert.Empty(revisions.Revisions);
+    }
+
+    [Fact]
+    public async Task Pre_upgrade_raw_alias_exact_retry_succeeds()
+    {
+        Guid operationId = Guid.NewGuid();
+        Property existing = LegacyPropertyTestFactory.Create(
+            operationId,
+            TestScopeContext.TenantId,
+            "Harbour House",
+            "harbour-house",
+            "UTC",
+            Now);
+        RecordingPropertyRepository properties = new(existing);
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            properties,
+            new RecordingCreationOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                CreateCommand(operationId),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("UTC", existing.TimeZoneId.Value);
+        Assert.Null(properties.Added);
     }
 
     [Fact]
@@ -102,6 +210,30 @@ public sealed class CreatePropertyCommandHandlerTests
                 CreateCommand(operationId) with
                 {
                     Name = "Different House"
+                },
+                CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.CreationOperationConflict,
+            result.Error);
+        Assert.Null(properties.Added);
+    }
+
+    [Fact]
+    public async Task Reusing_operation_for_materially_changed_zone_conflicts()
+    {
+        Guid operationId = Guid.NewGuid();
+        RecordingPropertyRepository properties = new(
+            CreateProperty(operationId));
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            properties,
+            new RecordingCreationOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator()).HandleAsync(
+                CreateCommand(operationId) with
+                {
+                    TimeZoneId = "Europe/London"
                 },
                 CancellationToken.None);
 
@@ -160,13 +292,78 @@ public sealed class CreatePropertyCommandHandlerTests
         Assert.Equal(operationId, properties.Added?.Id);
     }
 
+    [Fact]
+    public async Task Creation_observes_runtime_and_timestamps_after_code_lock()
+    {
+        DateTimeOffset beforeLock =
+            new(2026, 12, 31, 23, 59, 59, TimeSpan.Zero);
+        DateTimeOffset afterLock =
+            new(2027, 1, 1, 0, 0, 1, TimeSpan.Zero);
+        var clock = new MutableClock(beforeLock);
+        var coordinates = new RecordingUniqueCoordinateLock(
+            onPropertyCodeAcquired: () => clock.UtcNowValue = afterLock);
+        RecordingPropertyRepository properties = new();
+        RecordingTimeZoneRevisionStore revisions = new();
+        DateTimeOffset? observedRuntimeAt = null;
+        var runtime = BunkFy.TimeZones
+            .TimeZoneRuntimeCompatibilityProbe.CreateForTesting(identifier =>
+            {
+                observedRuntimeAt = clock.UtcNowValue;
+                return TimeZoneInfo.FindSystemTimeZoneById(identifier);
+            });
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            properties,
+            new RecordingCreationOperationLock(),
+            coordinates,
+            new RecordingIdGenerator(),
+            revisions,
+            clock,
+            runtime).HandleAsync(
+                CreateCommand(Guid.NewGuid()),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(afterLock, observedRuntimeAt);
+        Assert.Equal(afterLock, properties.Added!.CreatedAtUtc);
+        Assert.Equal(afterLock, Assert.Single(revisions.Revisions).OccurredAtUtc);
+    }
+
+    [Fact]
+    public async Task Creation_fails_closed_on_an_invalid_server_clock()
+    {
+        RecordingPropertyRepository properties = new();
+        RecordingTimeZoneRevisionStore revisions = new();
+
+        Result<PropertyMutationReceiptDto> result = await CreateHandler(
+            properties,
+            new RecordingCreationOperationLock(),
+            new RecordingUniqueCoordinateLock(),
+            new ThrowingIdGenerator(),
+            revisions,
+            new MutableClock(default)).HandleAsync(
+                CreateCommand(Guid.NewGuid()),
+                CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.TimeSourceUnavailable,
+            result.Error);
+        Assert.Null(properties.Added);
+        Assert.Empty(revisions.Revisions);
+    }
+
     private static CreatePropertyCommandHandler CreateHandler(
         RecordingPropertyRepository properties,
         IPropertiesCreationOperationLock creationLock,
         RecordingUniqueCoordinateLock uniqueCoordinates,
-        IIdGenerator ids)
+        IIdGenerator ids,
+        RecordingTimeZoneRevisionStore? revisions = null,
+        ISystemClock? clock = null,
+        BunkFy.TimeZones.TimeZoneRuntimeCompatibilityProbe?
+            runtimeTimeZones = null)
     {
         TestScopeContext scopeContext = new();
+        revisions ??= new RecordingTimeZoneRevisionStore();
         return new(
             properties,
             PropertiesMutationTestSupport.Create(
@@ -174,17 +371,39 @@ public sealed class CreatePropertyCommandHandlerTests
                 uniqueCoordinates: uniqueCoordinates,
                 scopeContext: scopeContext),
             creationLock,
+            revisions,
+            revisions,
             scopeContext,
-            new TestClock(),
-            ids);
+            clock ?? new TestClock(),
+            ids,
+            runtimeTimeZones ?? Application
+                .PropertyTimeZoneHealthClassifierTests.CompatibleProbe());
     }
+
+    private static RecordingTimeZoneRevisionStore RevisionStoreFor(
+        Property property,
+        string requestedTimeZoneId) => new(new(
+            Guid.NewGuid(),
+            property.ScopeId,
+            property.Id,
+            property.Id,
+            PropertyTimeZoneChangeKind.Created,
+            requestedTimeZoneId,
+            null,
+            property.TimeZoneId.Value,
+            BunkFy.TimeZones.TimeZoneCatalog.Default.CatalogVersion,
+            0,
+            1,
+            "operator-1",
+            Now));
 
     private static CreatePropertyCommand CreateCommand(Guid operationId) =>
         new(
             operationId,
             "Harbour House",
             "harbour-house",
-            "UTC");
+            "UTC",
+            "operator-1");
 
     private static Property CreateProperty(Guid propertyId) =>
         Property.Create(
@@ -256,7 +475,8 @@ public sealed class CreatePropertyCommandHandlerTests
     }
 
     private sealed class RecordingUniqueCoordinateLock(
-        List<string>? sequence = null)
+        List<string>? sequence = null,
+        Action? onPropertyCodeAcquired = null)
         : IPropertiesUniqueCoordinateLock
     {
         public List<(string TenantId, string Code)> PropertyCodeAcquisitions { get; } = [];
@@ -268,6 +488,7 @@ public sealed class CreatePropertyCommandHandlerTests
         {
             sequence?.Add("code-lock");
             this.PropertyCodeAcquisitions.Add((tenantId, propertyCode));
+            onPropertyCodeAcquired?.Invoke();
             return Task.CompletedTask;
         }
 
@@ -276,6 +497,33 @@ public sealed class CreatePropertyCommandHandlerTests
             Guid propertyId,
             string roomName,
             CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingTimeZoneRevisionStore(
+        PropertyTimeZoneRevisionReadModel? existing = null)
+        : IPropertyTimeZoneRevisionReader,
+          IPropertyTimeZoneRevisionWriter
+    {
+        public List<PropertyTimeZoneRevisionWriteModel> Revisions { get; } = [];
+
+        public Task AppendAsync(
+            PropertyTimeZoneRevisionWriteModel revision,
+            CancellationToken cancellationToken)
+        {
+            this.Revisions.Add(revision);
+            return Task.CompletedTask;
+        }
+
+        public Task<PropertyTimeZoneRevisionReadModel?> GetAsync(
+            Guid propertyId,
+            Guid operationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(
+                existing is not null &&
+                existing.PropertyId == propertyId &&
+                existing.OperationId == operationId
+                    ? existing
+                    : null);
     }
 
     private sealed class TestScopeContext : IScopeContext
@@ -288,6 +536,12 @@ public sealed class CreatePropertyCommandHandlerTests
     private sealed class TestClock : ISystemClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class MutableClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNowValue { get; set; } = utcNow;
+        public DateTimeOffset UtcNow => this.UtcNowValue;
     }
 
     private sealed class RecordingIdGenerator : IIdGenerator

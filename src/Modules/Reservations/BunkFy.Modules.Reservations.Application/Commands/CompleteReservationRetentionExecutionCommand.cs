@@ -6,6 +6,7 @@ using Gma.Framework.Cqrs;
 
 internal sealed record CompleteReservationRetentionExecutionCommand(
     Guid ExecutionId,
+    int Attempt,
     ReservationRetentionExecutionState State,
     int ScannedCount,
     int RemainingCount,

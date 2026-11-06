@@ -56,7 +56,8 @@ internal sealed class CreateGuestProfileCommandHandler(
             command.Notes,
             command.ActorId,
             nowUtc,
-            command.CreationConfirmationId);
+            command.CreationConfirmationId,
+            command.LanguageTags);
         if (creation.IsFailure)
         {
             return Result.Failure<GuestMutationReceiptDto>(creation.Error);
@@ -88,7 +89,8 @@ internal sealed class CreateGuestProfileCommandHandler(
             command.ActorId,
             ids.NewId(),
             nowUtc,
-            command.CreationConfirmationId);
+            command.CreationConfirmationId,
+            command.LanguageTags);
         if (created.IsFailure)
         {
             return Result.Failure<GuestMutationReceiptDto>(created.Error);
@@ -141,7 +143,8 @@ internal sealed class UpdateGuestProfileCommandHandler(
             command.PreferredLanguageTag,
             command.Notes,
             command.ActorId,
-            nowUtc);
+            nowUtc,
+            command.LanguageTags);
         if (values.IsFailure)
         {
             return Result.Failure<GuestMutationReceiptDto>(values.Error);
@@ -188,7 +191,8 @@ internal sealed class UpdateGuestProfileCommandHandler(
             command.ExpectedVersion,
             values.Value.ActorId,
             ids.NewId(),
-            nowUtc);
+            nowUtc,
+            values.Value.LanguageTags);
         if (updated.IsFailure)
         {
             return Result.Failure<GuestMutationReceiptDto>(updated.Error);

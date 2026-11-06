@@ -10,6 +10,7 @@ using BunkFy.Extensions.DataRights.Organizations;
 using BunkFy.Extensions.DataRights.TaskRuntime;
 using BunkFy.Extensions.DataRights.TenantTermination;
 using BunkFy.Extensions.Operations.Notifications;
+using BunkFy.Extensions.Retention.TaskRuntime;
 using BunkFy.Extensions.Workspaces;
 using BunkFy.Host.ServiceDefaults;
 using BunkFy.Host.ServiceDefaults.Production;
@@ -361,6 +362,10 @@ public static class WorkerHostBuilderExtensions
             if (workerOptions.TaskWorkerEnabled)
             {
                 builder.Services.AddRetentionTaskHandlers();
+            }
+            if (workerOptions.Modules.TaskRuntime)
+            {
+                builder.Services.AddBunkFyRetentionTaskRuntimeRecovery();
             }
             builder.AddRetentionPersistence();
         }

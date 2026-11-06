@@ -4,6 +4,7 @@ using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
 using BunkFy.Modules.Reservations.Domain.Models;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using DomainDataHoldAction =
     BunkFy.Modules.Reservations.Domain.Models.ReservationDataHoldAction;
 using DomainAnonymisationDisposition =
@@ -21,6 +22,7 @@ internal sealed record ReservationDataRightsExport(
     Guid? ReleaseRequestId,
     int? LastReleaseRejectionCode,
     int? LastAllocationAmendmentRejectionCode,
+    Guid? PendingInventoryAmendmentRequestId,
     DateOnly? PendingStayBusinessDate,
     DateOnly? CheckedInBusinessDate,
     DateTimeOffset? CheckedInAtUtc,
@@ -130,6 +132,31 @@ internal sealed record ReservationManagementOperationDataRightsExport(
     DateOnly? BusinessDate,
     string? RequestFingerprint,
     DateTimeOffset CreatedAtUtc);
+
+internal sealed record ReservationStayAmendmentOperationDataRightsExport(
+    Guid OperationId,
+    Guid PropertyId,
+    Guid ReservationId,
+    Guid? InventoryRequestId,
+    int RequestSchemaVersion,
+    string RequestFingerprint,
+    DateOnly? TargetArrival,
+    DateOnly? TargetDeparture,
+    TimeOnly? TargetExpectedArrivalTime,
+    TimeOnly? TargetExpectedDepartureTime,
+    IReadOnlyCollection<Guid>? TargetInventoryUnitIds,
+    long ExpectedDetailsRevision,
+    ReservationStayAmendmentOperationOutcome Outcome,
+    long OperationVersion,
+    DateTimeOffset RequestedAtUtc,
+    DateTimeOffset UpdatedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    long? ResultingDetailsRevision,
+    long? ResultingReservationVersion,
+    long? ResultingAllocationVersion,
+    int? RejectionCode,
+    int ReconciliationCount,
+    DateTimeOffset? LastReconciledAtUtc);
 
 internal sealed record ReservationArrivalReminderDataRightsExport(
     Guid ReminderId,

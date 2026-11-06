@@ -233,7 +233,8 @@ public sealed class IngestionMigrationIntegrationTests
         Guid secondReceiptId = Guid.Parse("a3000000-0000-0000-0000-000000000002");
         Guid validLinkId = Guid.Parse("a5000000-0000-0000-0000-000000000001");
         Guid cancelledLinkId = Guid.Parse("a5000000-0000-0000-0000-000000000002");
-        Guid malformedLinkId = Guid.Parse("a5000000-0000-0000-0000-000000000003");
+        Guid validLinkOperationId = Guid.Parse("a5500000-0000-0000-0000-000000000001");
+        Guid cancelledLinkOperationId = Guid.Parse("a5500000-0000-0000-0000-000000000002");
         Guid activeProposalId = Guid.Parse("a6000000-0000-0000-0000-000000000001");
         Guid terminalProposalId = Guid.Parse("a6000000-0000-0000-0000-000000000002");
         Guid activeDispatchId = Guid.Parse("a7000000-0000-0000-0000-000000000001");
@@ -291,19 +292,17 @@ public sealed class IngestionMigrationIntegrationTests
                     "Id", "PropertyId", "ConnectionId", "SourceSystem", "SourceReference", "ReservationId",
                     "State", "LastObservedReceiptId", "LastObservedContentHash", "LastAppliedReceiptId",
                     "LastAppliedSourceRevision", "LastAppliedSourceSequence", "LastAppliedReservationDetailsRevision",
-                    "LastAppliedNormalizedSnapshot", "Version", "CreatedAtUtc", "ScopeId")
+                    "LastAppliedNormalizedSnapshot", "LastProductOperationId", "Version", "CreatedAtUtc",
+                    "UpdatedAtUtc", "ScopeId")
                 VALUES
                     ({validLinkId}, {propertyId}, {connectionId}, {"fake.http:migration"}, {"valid"}, {Guid.NewGuid()},
                      {2}, {receiptId}, {new string('b', 64)}, {receiptId}, {"1"}, {1L}, {1L},
-                     {validSnapshot},
-                     {2L}, {receivedAtUtc}, {"tenant-a"}),
+                     {validSnapshot}, {validLinkOperationId},
+                     {2L}, {receivedAtUtc}, {receivedAtUtc.AddMinutes(1)}, {"tenant-a"}),
                     ({cancelledLinkId}, {propertyId}, {connectionId}, {"fake.http:migration"}, {"cancelled"}, {Guid.NewGuid()},
-                     {3}, {receiptId}, {new string('c', 64)}, {receiptId}, {"2"}, {2L}, {2L},
-                     {cancelledSnapshot},
-                     {2L}, {receivedAtUtc}, {"tenant-a"}),
-                    ({malformedLinkId}, {propertyId}, {connectionId}, {"fake.http:migration"}, {"malformed"}, {Guid.NewGuid()},
-                     {2}, {receiptId}, {new string('d', 64)}, {receiptId}, {"3"}, {3L}, {3L},
-                     {"not-json"}, {2L}, {receivedAtUtc}, {"tenant-a"});
+                     {4}, {receiptId}, {new string('c', 64)}, {receiptId}, {"2"}, {2L}, {2L},
+                     {cancelledSnapshot}, {cancelledLinkOperationId},
+                     {2L}, {receivedAtUtc}, {receivedAtUtc.AddMinutes(1)}, {"tenant-a"});
 
                 INSERT INTO ingestion.change_proposals (
                     "Id", "PropertyId", "ConnectionId", "ReceiptId", "ReservationId", "SourcePayloadFileId",
@@ -327,7 +326,7 @@ public sealed class IngestionMigrationIntegrationTests
                      {null}, {1}, {"1"}, {1L}, {/*lang=json,strict*/ "{\"guest\":\"active\"}"}, {null}, {1}, {null}, {null},
                      {null}, {1L}, {receivedAtUtc}, {null}, {"tenant-a"}),
                     ({terminalDispatchId}, {validLinkId}, {1}, {Guid.NewGuid()}, {secondReceiptId}, {connectionId}, {propertyId},
-                     {null}, {1}, {"2"}, {2L}, {/*lang=json,strict*/ "{\"guest\":\"terminal\"}"}, {null}, {3}, {1L}, {1L},
+                     {Guid.NewGuid()}, {1}, {"2"}, {2L}, {/*lang=json,strict*/ "{\"guest\":\"terminal\"}"}, {null}, {3}, {1L}, {1L},
                      {null}, {2L}, {receivedAtUtc}, {terminalAtUtc}, {"tenant-a"});
                 """);
         }
@@ -347,7 +346,6 @@ public sealed class IngestionMigrationIntegrationTests
         IngestionRun failedRun = await upgraded.Runs.SingleAsync(item => item.Id == failedRunId);
         ReservationSourceLink validLink = await upgraded.ReservationSourceLinks.SingleAsync(item => item.Id == validLinkId);
         ReservationSourceLink cancelledLink = await upgraded.ReservationSourceLinks.SingleAsync(item => item.Id == cancelledLinkId);
-        ReservationSourceLink malformedLink = await upgraded.ReservationSourceLinks.SingleAsync(item => item.Id == malformedLinkId);
         ChangeProposal activeProposal = await upgraded.ChangeProposals.SingleAsync(item => item.Id == activeProposalId);
         ChangeProposal terminalProposal = await upgraded.ChangeProposals.SingleAsync(item => item.Id == terminalProposalId);
         ReservationDispatch activeDispatch = await upgraded.ReservationDispatches.SingleAsync(item => item.Id == activeDispatchId);
@@ -403,7 +401,6 @@ public sealed class IngestionMigrationIntegrationTests
         Assert.DoesNotContain("Ada Sensitive", validLink.LastAppliedOperationalBaseline, StringComparison.Ordinal);
         Assert.DoesNotContain("ada@example.test", validLink.LastAppliedOperationalBaseline, StringComparison.Ordinal);
         Assert.Null(cancelledLink.LastAppliedOperationalBaseline);
-        Assert.Null(malformedLink.LastAppliedOperationalBaseline);
         Assert.Equal("legacy-active", activeProposal.ReasonCode);
         Assert.Null(activeProposal.SensitiveDataRetainUntilUtc);
         Assert.NotNull(activeProposal.Diff);

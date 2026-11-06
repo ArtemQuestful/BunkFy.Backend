@@ -28,7 +28,7 @@ public interface IWorkspaceStaffOnboardingRepository
         WorkspaceStaffOnboardingSource sourceKind,
         Guid sourceId,
         CancellationToken cancellationToken);
-    Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+    Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
         PageRequest page,
         CancellationToken cancellationToken);
     Task ReloadAsync(

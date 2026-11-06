@@ -4,11 +4,16 @@ using BunkFy.Modules.Properties.Application;
 using BunkFy.Modules.Properties.Application.Commands;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Properties.Domain.Errors;
 using BunkFy.Modules.Properties.Persistence;
+using BunkFy.DataGovernance;
+using Gma.Framework.Runtime.Time;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -32,8 +37,24 @@ public sealed class PropertiesModule : IModule
 
     public void AddServices(IHostApplicationBuilder builder)
     {
+        bool previewDefaults = builder.Configuration.GetValue<bool>(PreviewCountryPolicyDefaults.EnabledConfigurationKey);
+        bool autoActivate = builder.Configuration.GetValue<bool>(PreviewCountryPolicyDefaults.AutoActivateConfigurationKey);
+        if ((previewDefaults || autoActivate) && !builder.Environment.IsEnvironment("Preview"))
+        {
+            throw new InvalidOperationException("Automatic test country policies are available only in the Preview environment.");
+        }
+
+        if (autoActivate && !previewDefaults)
+        {
+            throw new InvalidOperationException("Automatic property activation requires Preview test country policies.");
+        }
+
+        builder.Services.TryAddSingleton(services => new PreviewNewPropertyProcessing(
+            autoActivate, services.GetRequiredService<CountryPolicyRegistry>()));
         builder.SelectModuleProfile(PropertiesProfiles.Default, "BunkFy.Modules.Properties.Api");
         builder.Services.AddOptions<PropertiesApiSecurityOptions>();
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IStartupFilter, PropertiesNoStoreStartupFilter>());
         builder.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IAccessHttpScopeResolver, PropertyAccessScopeResolver>());
         builder.Services.AddPropertiesApplication();
@@ -45,6 +66,13 @@ public sealed class PropertiesModule : IModule
         PropertiesApiSecurityOptions security = endpoints.ServiceProvider
             .GetRequiredService<IOptions<PropertiesApiSecurityOptions>>()
             .Value;
+        PreviewNewPropertyProcessing? previewDefaults = endpoints.ServiceProvider.GetService<PreviewNewPropertyProcessing>();
+        if (endpoints.ServiceProvider.GetService<IConfiguration>()?
+                .GetValue<bool>(PreviewCountryPolicyDefaults.AutoActivateConfigurationKey) == true &&
+            previewDefaults?.Enabled != true)
+        {
+            throw new InvalidOperationException("Preview activation was configured without its module services.");
+        }
         RouteGroupBuilder properties = endpoints.MapGroup("/api/properties")
             .WithModuleName(this.Name)
             .WithTags("Properties")
@@ -75,7 +103,65 @@ public sealed class PropertiesModule : IModule
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
             .Produces<PropertyListResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant();
+
+        properties.MapGet("/time-zones/catalog", async (
+            string? search,
+            string? countryCode,
+            string? cursor,
+            int? pageSize,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            (await dispatcher.QueryAsync(
+                new ListPropertyTimeZoneCatalogQuery(
+                    search,
+                    countryCode,
+                    cursor,
+                    pageSize ?? 50),
+                cancellationToken).ConfigureAwait(false))
+            .ToHttpResult(PublicErrorStatusCodes))
+            .Produces<PropertyTimeZoneCatalogPageDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireTenant()
+            .RequireTenantPermission(PropertiesAdminPermissionCodes.Read);
+
+        properties.MapGet("/{propertyId:guid}/time-zones/catalog", async (
+            Guid propertyId,
+            string? search,
+            string? countryCode,
+            string? cursor,
+            int? pageSize,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            (await dispatcher.QueryAsync(
+                new ListPropertyTimeZoneCatalogQuery(
+                    search,
+                    countryCode,
+                    cursor,
+                    pageSize ?? 50),
+                cancellationToken).ConfigureAwait(false))
+            .ToHttpResult(PublicErrorStatusCodes))
+            .Produces<PropertyTimeZoneCatalogPageDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                PropertiesAdminPermissionCodes.Read,
+                PropertyAccessScopeResolver.ResolverName);
+
+        properties.MapGet("/time-zones/compliance", async (
+            string? cursor,
+            int? pageSize,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            (await dispatcher.QueryAsync(
+                new ListPropertyTimeZoneComplianceQuery(cursor, pageSize ?? 50),
+                cancellationToken).ConfigureAwait(false))
+            .ToHttpResult(PublicErrorStatusCodes))
+            .Produces<PropertyTimeZoneCompliancePageDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireTenant()
+            .RequireTenantPermission(PropertiesAdminPermissionCodes.TimeZonesManage);
 
         properties.MapGet("/{propertyId:guid}/country-policies", async (
             Guid propertyId,
@@ -94,8 +180,60 @@ public sealed class PropertiesModule : IModule
             (await dispatcher.QueryAsync(new GetPropertyQuery(propertyId), cancellationToken).ConfigureAwait(false))
             .ToHttpResult(PublicErrorStatusCodes))
             .Produces<PropertyDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant()
             .RequireResolvedScopePermission(PropertiesAdminPermissionCodes.Read, PropertyAccessScopeResolver.ResolverName);
+
+        properties.MapGet("/{propertyId:guid}/time-zone/operations/{operationId:guid}", async (
+            Guid propertyId,
+            Guid operationId,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            (await dispatcher.QueryAsync(
+                new GetPropertyTimeZoneRecoveryQuery(propertyId, operationId),
+                cancellationToken).ConfigureAwait(false))
+            .ToHttpResult(PublicErrorStatusCodes))
+            .Produces<PropertyTimeZoneRecoveryDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                PropertiesAdminPermissionCodes.TimeZonesManage,
+                PropertyAccessScopeResolver.ResolverName);
+
+        RouteHandlerBuilder setPropertyTimeZone = properties.MapPut("/{propertyId:guid}/time-zone", async (
+            Guid propertyId,
+            SetPropertyTimeZoneRequest request,
+            HttpContext httpContext,
+            IAccessHttpSubjectResolver subjectResolver,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            string? actorId = ResolveActor(httpContext, subjectResolver);
+            if (actorId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            Result<SetPropertyTimeZoneReceiptDto> result = await dispatcher.SendAsync(
+                new SetPropertyTimeZoneCommand(
+                    propertyId,
+                    request.OperationId,
+                    request.TimeZoneId,
+                    request.Confirmed,
+                    request.ExpectedVersion,
+                    actorId),
+                cancellationToken).ConfigureAwait(false);
+            return result.ToHttpResult(PublicErrorStatusCodes);
+        })
+            .Produces<SetPropertyTimeZoneReceiptDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                PropertiesAdminPermissionCodes.TimeZonesManage,
+                PropertyAccessScopeResolver.ResolverName);
+        RequireAssuranceWhenConfigured(
+            setPropertyTimeZone,
+            security.TimeZoneManagementAssurance);
 
         properties.MapGet("/{propertyId:guid}/processing", async (
             Guid propertyId,
@@ -106,23 +244,49 @@ public sealed class PropertiesModule : IModule
                 cancellationToken).ConfigureAwait(false))
             .ToHttpResult(PublicErrorStatusCodes))
             .Produces<PropertyProcessingStateDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant()
             .RequireResolvedScopePermission(PropertiesAdminPermissionCodes.Read, PropertyAccessScopeResolver.ResolverName);
 
-        properties.MapPost("/", async (
+        RouteHandlerBuilder createProperty = properties.MapPost("/", async (
             PropertyCreateRequest request,
+            HttpContext httpContext,
+            IAccessHttpSubjectResolver subjectResolver,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
-            (await dispatcher.SendAsync(
+        {
+            string? actorId = ResolveActor(httpContext, subjectResolver);
+            if (actorId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            Result<PropertyMutationReceiptDto> creation = await dispatcher.SendAsync(
                 new CreatePropertyCommand(
                     request.OperationId,
                     request.Name,
                     request.Code,
-                    request.TimeZoneId),
-                cancellationToken).ConfigureAwait(false)).ToHttpResult(PublicErrorStatusCodes))
+                    request.TimeZoneId,
+                    actorId),
+                cancellationToken).ConfigureAwait(false);
+            if (previewDefaults?.Enabled != true)
+            {
+                return creation.ToHttpResult(PublicErrorStatusCodes);
+            }
+
+            return (await previewDefaults.ApplyAsync(
+                creation, request.TimeZoneId, actorId, dispatcher,
+                httpContext.RequestServices.GetRequiredService<ISystemClock>().UtcNow,
+                cancellationToken).ConfigureAwait(false)).ToHttpResult(PublicErrorStatusCodes);
+        })
             .Produces<PropertyMutationReceiptDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant()
             .RequireTenantPermission(PropertiesAdminPermissionCodes.PropertiesManage);
+        if (previewDefaults?.Enabled == true)
+        {
+            RequireAssuranceWhenConfigured(createProperty, security.ProcessingActivationAssurance);
+        }
 
         properties.MapPut("/{propertyId:guid}", async (
             Guid propertyId,
@@ -139,6 +303,7 @@ public sealed class PropertiesModule : IModule
                     request.ExpectedVersion),
                 cancellationToken).ConfigureAwait(false)).ToHttpResult(PublicErrorStatusCodes))
             .Produces<PropertyMutationReceiptDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant()
             .RequireResolvedScopePermission(PropertiesAdminPermissionCodes.PropertiesManage, PropertyAccessScopeResolver.ResolverName);
 
@@ -168,6 +333,7 @@ public sealed class PropertiesModule : IModule
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
             .Produces<PropertyMutationReceiptDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant()
             .RequireResolvedScopePermission(PropertiesAdminPermissionCodes.PropertiesManage, PropertyAccessScopeResolver.ResolverName);
         RequireAssuranceWhenConfigured(
@@ -207,6 +373,7 @@ public sealed class PropertiesModule : IModule
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
             .Produces<PropertyMutationReceiptDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireTenant()
             .RequireResolvedScopePermission(PropertiesAdminPermissionCodes.PropertiesManage, PropertyAccessScopeResolver.ResolverName);
         RequireAssuranceWhenConfigured(
@@ -423,7 +590,12 @@ public sealed class PropertiesModule : IModule
         Guid OperationId,
         string Name,
         string Code,
+        string? TimeZoneId,
+        long ExpectedVersion);
+    public sealed record SetPropertyTimeZoneRequest(
+        Guid OperationId,
         string TimeZoneId,
+        bool Confirmed,
         long ExpectedVersion);
     public sealed record RetirePropertyRequest(
         Guid OperationId,
@@ -500,17 +672,24 @@ public sealed class PropertiesModule : IModule
 
     private static readonly ApiErrorStatusCodeMap PublicErrorStatusCodes = CreateErrorStatusCodes(
         new(PropertiesApplicationErrors.AccessDenied.Code, StatusCodes.Status403Forbidden),
+        new(PropertiesDomainErrors.ActorIdInvalid.Code, StatusCodes.Status400BadRequest),
+        new(PropertiesDomainErrors.TimeZoneRequired.Code, StatusCodes.Status400BadRequest),
+        new(PropertiesDomainErrors.TimeZoneTooLong.Code, StatusCodes.Status400BadRequest),
+        new(PropertiesDomainErrors.TimeZoneInvalid.Code, StatusCodes.Status400BadRequest),
         new(PropertiesApplicationErrors.ConfirmationRequired.Code, StatusCodes.Status400BadRequest),
+        new(PropertiesApplicationErrors.TimeZoneQueryInvalid.Code, StatusCodes.Status400BadRequest),
         new(PropertiesApplicationErrors.CreationOperationInvalid.Code, StatusCodes.Status400BadRequest),
         new(PropertiesApplicationErrors.ManagementOperationInvalid.Code, StatusCodes.Status400BadRequest),
         new(PropertiesApplicationErrors.BedBatchRequired.Code, StatusCodes.Status400BadRequest),
         new(PropertiesApplicationErrors.BedBatchTooLarge.Code, StatusCodes.Status400BadRequest),
         new(PropertiesApplicationErrors.PropertyNotFound.Code, StatusCodes.Status404NotFound),
+        new(PropertiesApplicationErrors.TimeZoneOperationNotFound.Code, StatusCodes.Status404NotFound),
         new(PropertiesApplicationErrors.RoomNotFound.Code, StatusCodes.Status404NotFound),
         new(PropertiesApplicationErrors.BedNotFound.Code, StatusCodes.Status404NotFound),
         new(PropertiesApplicationErrors.PropertyCodeAlreadyExists.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.CreationOperationConflict.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.ManagementOperationConflict.Code, StatusCodes.Status409Conflict),
+        new(PropertiesApplicationErrors.TimeZoneDedicatedOperationRequired.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.RoomAlreadyExists.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.BedAlreadyExists.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.PropertyStatusUnknown.Code, StatusCodes.Status409Conflict),
@@ -521,6 +700,8 @@ public sealed class PropertiesModule : IModule
         new(PropertiesApplicationErrors.ProcessingLifecycleAdmissionUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
         new(PropertiesApplicationErrors.WorkspaceProcessingRestricted.Code, StatusCodes.Status423Locked),
         new(PropertiesApplicationErrors.WorkspaceProcessingAdmissionUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
+        new(PropertiesApplicationErrors.TimeSourceUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
+        new(PropertiesApplicationErrors.TimeZoneRuntimeUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
         new(PropertiesApplicationErrors.PropertyHasActiveRooms.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.VersionConflict.Code, StatusCodes.Status409Conflict),
         new(PropertiesApplicationErrors.RoomStatusUnknown.Code, StatusCodes.Status409Conflict),

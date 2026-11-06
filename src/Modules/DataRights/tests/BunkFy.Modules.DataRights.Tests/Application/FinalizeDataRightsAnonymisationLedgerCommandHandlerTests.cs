@@ -81,6 +81,44 @@ public sealed class FinalizeDataRightsAnonymisationLedgerCommandHandlerTests
     }
 
     [Fact]
+    public async Task Late_cancellation_after_external_ack_retries_the_exact_delta()
+    {
+        ExecutionFixture fixture = CreateFixture();
+        RecordingLedgerRepository ledgers = new();
+        RecordingOutbox outbox = new();
+        using CancellationTokenSource source = new();
+        RecordingDeltaStore durable = new(
+            throwBeforeAck: false,
+            afterAck: source.Cancel);
+        FinalizeDataRightsAnonymisationLedgerCommandHandler handler =
+            CreateHandler(fixture, ledgers, durable, outbox);
+        FinalizeDataRightsAnonymisationLedgerCommand command =
+            Command(fixture);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            handler.HandleAsync(command, source.Token));
+
+        Assert.Null(ledgers.Entry);
+        Assert.Equal(
+            DataRightsExecutionWorkItemState.OwnerProofRecorded,
+            fixture.WorkItem.State);
+        Assert.Empty(outbox.Events);
+
+        Result<Unit> retried = await handler.HandleAsync(
+            command,
+            CancellationToken.None);
+
+        Assert.True(retried.IsSuccess);
+        Assert.Equal(1, ledgers.AddCount);
+        Assert.Equal(2, durable.AppendCount);
+        Assert.Equal(durable.Deltas[0], durable.Deltas[1]);
+        Assert.Equal(
+            DataRightsExecutionWorkItemState.Completed,
+            fixture.WorkItem.State);
+        Assert.Single(outbox.Events);
+    }
+
+    [Fact]
     public async Task Invalid_durability_receipt_does_not_append_database_ledger()
     {
         ExecutionFixture fixture = CreateFixture();
@@ -388,7 +426,8 @@ public sealed class FinalizeDataRightsAnonymisationLedgerCommandHandlerTests
 
     private sealed class RecordingDeltaStore(
         bool throwBeforeAck,
-        bool returnInvalidReceipt = false)
+        bool returnInvalidReceipt = false,
+        Action? afterAck = null)
         : IDataRightsLedgerDeltaStore
     {
         public List<DataRightsLedgerDelta> Deltas { get; } = [];
@@ -410,6 +449,7 @@ public sealed class FinalizeDataRightsAnonymisationLedgerCommandHandlerTests
             }
 
             this.Deltas.Add(delta);
+            afterAck?.Invoke();
             return Task.FromResult(new DataRightsLedgerDeltaAppendReceipt(
                 DataRightsLedgerDeltaAppendReceipt.CurrentContractVersion,
                 delta.Ledger.EntryId,

@@ -21,6 +21,7 @@ internal sealed class DispatchNormalizedReservationObservationCommandHandler(
     IReservationSourceLinkRepository sourceLinks,
     IReservationDispatchRepository dispatches,
     IChangeProposalRepository proposals,
+    PendingChangeProposalSuperseder proposalSuperseder,
     IIngestionCountryPolicyAdmission countryPolicy,
     ReservationExternalRequestPublisher requestPublisher,
     ISystemClock clock,
@@ -267,6 +268,12 @@ internal sealed class DispatchNormalizedReservationObservationCommandHandler(
         ChangeProposal? existing = await proposals.FindByReceiptAsync(receipt.Id, cancellationToken).ConfigureAwait(false);
         if (existing is null)
         {
+            await proposalSuperseder.SupersedeAsync(
+                receipt.ConnectionId,
+                receipt.ExternalId,
+                link.ReservationId.Value,
+                receipt.Id,
+                cancellationToken).ConfigureAwait(false);
             string diff = JsonSerializer.Serialize(new ReservationProposalDiff(
                 link.LastAppliedOperationalBaseline,
                 normalizedSnapshot));

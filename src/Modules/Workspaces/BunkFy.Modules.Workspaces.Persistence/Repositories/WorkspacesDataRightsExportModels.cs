@@ -61,6 +61,52 @@ internal sealed record
         DateTimeOffset CompletedAtUtc);
 
 internal sealed record
+    WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport(
+        Guid ReceiptId,
+        string ScopeId,
+        int ContractVersion,
+        Guid OperationId,
+        Guid ApplicationId,
+        Guid SourceId,
+        Guid StaffMemberId,
+        WorkspaceStaffOnboardingRecoveryTriggerKind TriggerKind,
+        Guid TriggerId,
+        string? ApplicantSubjectId,
+        string? PlanCreatorActorId,
+        string? RecoveryActorId,
+        string? EffectiveSystemActorId,
+        string RequestSha256,
+        long ExpectedApplicationVersion,
+        long SelectedApplicationVersion,
+        WorkspaceStaffOnboardingState SelectedApplicationStatus,
+        long ResultingApplicationVersion,
+        WorkspaceStaffOnboardingState ResultingApplicationStatus,
+        Guid CurrentProfileId,
+        long CurrentProfileVersion,
+        int PropertyCount,
+        string TargetSetSha256,
+        long? OrganizationRevision,
+        Guid? MembershipId,
+        long? MembershipVersion,
+        int? MembershipStatus,
+        long? StaffTenantRevision,
+        long? StaffMemberVersion,
+        string? StaffStateProofSha256,
+        string? StaffPropertySetSha256,
+        long? AccessManagementRevision,
+        string? AccessFactsSha256,
+        WorkspaceRecoveryVerification OrganizationVerification,
+        WorkspaceRecoveryVerification StaffVerification,
+        WorkspaceRecoveryVerification AccessVerification,
+        WorkspaceStaffOnboardingRecoveryOutcome Outcome,
+        WorkspaceStaffOnboardingRecoveryReason Reason,
+        bool AccessMutationPerformed,
+        DateTimeOffset? OrganizationObservedAtUtc,
+        DateTimeOffset? StaffObservedAtUtc,
+        DateTimeOffset? AccessObservedAtUtc,
+        DateTimeOffset RecordedAtUtc);
+
+internal sealed record
     WorkspaceStaffOnboardingProcessingRestrictionDataRightsExport(
         Guid RestrictionId,
         Guid ApplicationId,
@@ -145,6 +191,28 @@ internal sealed record WorkspaceStaffRetentionCorrelationProofDataRightsExport(
     int AccessPlanRecordsScrubbed,
     DateTimeOffset CompletedAtUtc,
     string CanonicalSha256);
+
+internal sealed record
+    WorkspaceStaffOnboardingRetentionExecutionDataRightsExport(
+        string ScopeId,
+        Guid ExecutionId,
+        WorkspaceStaffOnboardingRetentionExecutionStateDataRightsExport
+            RetentionExecution);
+
+internal sealed record
+    WorkspaceStaffOnboardingRetentionExecutionStateDataRightsExport(
+        string DataClassKey,
+        int ExecutionPolicyVersion,
+        int Attempt,
+        WorkspaceStaffOnboardingRetentionExecutionState State,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset DeadlineUtc,
+        DateTimeOffset? CompletedAtUtc,
+        int AffectedCount,
+        int ScannedCount,
+        int? RemainingCount,
+        string? OutcomeCode,
+        long Version);
 
 internal sealed record
     WorkspaceStaffIdentityAnchorSweepCheckpointDataRightsExport(

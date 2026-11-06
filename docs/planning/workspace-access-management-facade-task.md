@@ -1,7 +1,9 @@
 # Workspace Access Management Facade Task
 
-Status: backend and capability-driven UX implemented; multi-account proof pending
+Status: backend and capability-driven UX implemented; default/custom-profile
+multi-account browser and Preview seed-estate proofs complete
 Date: 2026-07-22
+Updated: 2026-08-12
 
 ## Goal
 
@@ -63,11 +65,24 @@ module administration APIs or leaking BunkFy policy into reusable modules.
 - Focused Workspaces tests cover permission metadata, deny-before-inspect behavior, owner protection, exact assignment reconciliation, batched plan reads, replacement ordering, retry behavior, and one-time token semantics.
 - Generated contracts and the owner-facing Workspace settings UX now cover protected/custom roles, member assignments, recipient-aware invitations, reusable team QR sources, lifecycle review, revoke, and deny-first replacement.
 - Desktop and 390px mobile preview checks pass. Legacy Organizations invitations without a BunkFy access plan render as lifecycle-only records instead of failing the page.
-- Seed version `2` protects and reconciles built-ins, exposes drift in bootstrap
-  status, and grants profile read/manage/assign to the Manager seed. Deployed
-  workspaces require fresh version 2 activation evidence.
+- Current seed version `4` protects and reconciles built-ins, exposes drift in
+  bootstrap status, and includes profile read/manage/assign in the Manager seed.
+  Preview now has fresh version 4 activation evidence for every active
+  workspace; other deployment classes require their own estate evidence.
 - The Workspace settings UX is permission-driven: Members remains owner-only,
   Roles supports read-only and management modes, and Invites requires both
   `staff.manage` and profile visibility.
-- Remaining work in this task is the real owner/applicant multi-account browser
-  proof and deployment-by-deployment activation evidence.
+- The trusted-HTTPS Preview browser rehearsal now proves separate owner and
+  applicant accounts, Front desk assignment, property-scoped allow/deny,
+  permission-filtered management denial, replay stability, and Worker-restart
+  convergence. Exact release `preview-workspace-access-0257a44` additionally
+  proves custom-profile create/edit/assignment, live permission convergence,
+  exact reassignment, archive, and exclusion from active assignment controls.
+- Exact release `preview-workspace-access-estate-651107f` then enumerated the
+  authorized Preview catalog, bootstrapped all 3 active workspaces, and proved
+  each one converged on seed version 4 without retaining raw tenant identity.
+  Hosted or future deployment estates remain separately admitted.
+- Final production admission now requires a distinct private Workspace Access
+  estate reference bound to the exact hosted candidate. The public bundle
+  validates and retains only the non-secret reference; hosted execution,
+  authenticity, and approval remain deployment-owned.

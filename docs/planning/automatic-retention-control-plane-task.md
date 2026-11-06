@@ -84,8 +84,10 @@ key.
 - One execution claims bounded owner batches. Continued backlog is handled by
   the next deterministic occurrence or a privileged retry, not an unbounded
   loop.
-- Retention attempts are append-only and receive their own bounded retention
-  policy after operational evidence requirements are approved.
+- Retention keeps one PII-minimized current execution per deterministic run and
+  fences retries by monotonic attempt. GMA task history retains generic attempt
+  evidence; Retention execution rows receive their own bounded retention policy
+  after operational evidence requirements are approved.
 - Health queries use tenant-first indexes on schedule identity, occurrence,
   status, and next due time.
 - GMA task history remains generic execution evidence. Retention receipts add

@@ -17,7 +17,8 @@ public sealed record GuestDataRightsCorrectionAppliedDomainEvent : ScopedDomainE
         Guid guestId,
         long selectedRecordVersion,
         long currentRecordVersion,
-        IReadOnlyCollection<GuestProfileField> changedFields)
+        IReadOnlyCollection<GuestProfileField> changedFields,
+        int receiptContractVersion = 1)
         : base(eventId, occurredAtUtc, scopeId)
     {
         if (executionId == Guid.Empty ||
@@ -37,8 +38,9 @@ public sealed record GuestDataRightsCorrectionAppliedDomainEvent : ScopedDomainE
             .Distinct()
             .Order()
             .ToArray();
-        if (fields.Length == 0 || fields.Any(field =>
-                field is GuestProfileField.Unknown || !Enum.IsDefined(field)))
+        if (receiptContractVersion is not (1 or 2) || fields.Length == 0 || fields.Any(field =>
+                field is GuestProfileField.Unknown || !Enum.IsDefined(field) ||
+                (receiptContractVersion == 1 && field == GuestProfileField.LanguageTags)))
         {
             throw new ArgumentException(
                 "At least one correctable Guest field is required.",
@@ -54,6 +56,7 @@ public sealed record GuestDataRightsCorrectionAppliedDomainEvent : ScopedDomainE
         this.SelectedRecordVersion = selectedRecordVersion;
         this.CurrentRecordVersion = currentRecordVersion;
         this.ChangedFields = Array.AsReadOnly(fields);
+        this.ReceiptContractVersion = receiptContractVersion;
     }
 
     public Guid ExecutionId { get; }
@@ -65,4 +68,5 @@ public sealed record GuestDataRightsCorrectionAppliedDomainEvent : ScopedDomainE
     public long SelectedRecordVersion { get; }
     public long CurrentRecordVersion { get; }
     public IReadOnlyCollection<GuestProfileField> ChangedFields { get; }
+    public int ReceiptContractVersion { get; }
 }

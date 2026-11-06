@@ -22,7 +22,17 @@ internal sealed class UpdatePropertyCommandValidator : ICommandValidator<UpdateP
             yield return error;
         }
 
-        foreach (string error in PropertiesValidation.ValidatePropertyWrite(command.Name, command.Code, command.TimeZoneId))
+        foreach (string error in PropertiesValidation.ValidatePropertyWrite(
+                     command.Name,
+                     command.Code,
+                     "Etc/UTC"))
+        {
+            yield return error;
+        }
+
+        foreach (string error in
+                 PropertiesValidation.ValidateOptionalPropertyTimeZone(
+                     command.TimeZoneId))
         {
             yield return error;
         }

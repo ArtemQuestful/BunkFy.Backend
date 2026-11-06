@@ -14,4 +14,6 @@ public static class PropertiesContractLimits
     public const int PhysicalLabelMaxLength = 128;
     public const int BedLabelMaxLength = 128;
     public const int MaximumBedsPerBatch = 100;
+    public const int PropertyTimeZonePageSizeMax = 100;
+    public const int TimeZoneCatalogVersionMaxLength = 64;
 }

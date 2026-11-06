@@ -7,25 +7,28 @@ public static class RetentionTenantTerminationMetadata
 {
     public const string OwnerKey = RetentionModuleMetadata.Name;
     public const string DependencyOwnerKey = "ingestion";
-    public const int CatalogVersion = 2;
-    public const int PersonalDataCatalogVersion = 3;
+    public const int CatalogVersion = 3;
+    public const int PersonalDataCatalogVersion = 4;
     public const string ExportCatalogId = "retention.tenant-portability";
     public const int ExportCatalogSchemaVersion = 1;
     public const string ExportSchemaId =
         "retention.tenant-termination-export";
-    public const int ExportSchemaVersion = 1;
+    public const int ExportSchemaVersion = 2;
     public const string ScheduleStateRecordNamespaceId =
         "6b61f812-2d23-4d0c-9929-45211d45f285";
 
     public const string ExecutionRecordType = "retention-execution";
     public const string ScheduleStateRecordType =
         "retention-schedule-state";
+    public const string RunRetryRequestRecordType =
+        "retention-run-retry-request";
 
     public static IReadOnlyList<string> RecordTypes { get; } =
         Array.AsReadOnly(
         [
             ExecutionRecordType,
-            ScheduleStateRecordType
+            ScheduleStateRecordType,
+            RunRetryRequestRecordType
         ]);
 
     public static IReadOnlyList<string> ExportFieldIds { get; } =
@@ -34,7 +37,8 @@ public static class RetentionTenantTerminationMetadata
             "retention.tenant-scope-reference",
             "retention.property-reference",
             "retention.execution-record",
-            "retention.schedule-state"
+            "retention.schedule-state",
+            "retention.run-retry-request"
         ]);
 
     public static string CatalogManifest { get; } = string.Join(

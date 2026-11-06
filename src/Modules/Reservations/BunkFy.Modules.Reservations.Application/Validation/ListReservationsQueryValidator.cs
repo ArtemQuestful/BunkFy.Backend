@@ -32,5 +32,41 @@ internal sealed class ListReservationsQueryValidator : IQueryValidator<ListReser
         {
             yield return "Order is invalid.";
         }
+
+        if (query.View.HasValue &&
+            (query.View == ReservationListView.Unknown || !Enum.IsDefined(query.View.Value)))
+        {
+            yield return "View is invalid.";
+        }
+
+        if (query.View.HasValue != query.OperatingDate.HasValue)
+        {
+            yield return "View and OperatingDate must be supplied together.";
+        }
+
+        if (query.View.HasValue && query.Statuses is { Count: > 0 })
+        {
+            yield return "View cannot be combined with explicit reservation statuses.";
+        }
+
+        if (query.View.HasValue && query.OverlapsFrom.HasValue)
+        {
+            yield return "View cannot be combined with an overlap window.";
+        }
+
+        if (query.OverlapsFrom.HasValue != query.OverlapsTo.HasValue)
+        {
+            yield return "OverlapsFrom and OverlapsTo must be supplied together.";
+        }
+        else if (query.OverlapsFrom.HasValue && query.OverlapsFrom >= query.OverlapsTo)
+        {
+            yield return "The reservation overlap window is invalid.";
+        }
+        else if (query.OverlapsFrom.HasValue &&
+                 query.OverlapsTo!.Value.DayNumber - query.OverlapsFrom.Value.DayNumber >
+                 ReservationsContractLimits.MaximumScheduleWindowDays)
+        {
+            yield return $"The reservation overlap window cannot exceed {ReservationsContractLimits.MaximumScheduleWindowDays} days.";
+        }
     }
 }

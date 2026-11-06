@@ -241,6 +241,63 @@ public sealed class DataRightsAnonymisationApprovalPolicyTests
     }
 
     [Fact]
+    public async Task Normal_policy_owner_return_after_cancellation_stops_later_owners()
+    {
+        SelectedSubject staff = SelectedSubject.Create(
+            "staff",
+            "staff-member",
+            Guid.NewGuid(),
+            12,
+            "user:selector",
+            Now.AddMinutes(-2)).Value;
+        SelectedSubject workspace = SelectedSubject.Create(
+            "workspaces",
+            "staff-access-process",
+            Guid.NewGuid(),
+            4,
+            "user:selector",
+            Now.AddMinutes(-1)).Value;
+        using CancellationTokenSource source = new();
+        StubPolicyContributor authority = new(
+            ApprovedStaffContribution(),
+            afterEvaluate: _ => source.Cancel());
+        StubPolicyContributor companion = new(
+            DataRightsAnonymisationPolicyContributionResult.ApprovedCompanion(
+                new(
+                    staff.OwnerKey,
+                    staff.RecordType,
+                    staff.RecordId,
+                    staff.RecordVersion),
+                [
+                    new(
+                        "workspaces.staff-correlation",
+                        workspace.RecordVersion,
+                        new string('d', 64))
+                ]),
+            workspace.OwnerKey,
+            workspace.RecordType);
+        DataRightsAnonymisationApprovalPolicy policy = new(
+            new StubPropertyRepository(property: null),
+            [companion, authority],
+            CountryPolicyRegistry.Create(
+                [],
+                [],
+                CountryPolicyRuntimeMode.Engineering),
+            new TestClock());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            policy.EvaluateAsync(
+                "tenant-a",
+                DataRightsCaseScope.Staff,
+                Guid.NewGuid(),
+                [workspace, staff],
+                source.Token));
+
+        Assert.Equal(1, authority.EvaluationCount);
+        Assert.Equal(0, companion.EvaluationCount);
+    }
+
+    [Fact]
     public async Task Companion_for_unselected_authority_fails_closed()
     {
         SelectedSubject staff = SelectedSubject.Create(
@@ -575,7 +632,8 @@ public sealed class DataRightsAnonymisationApprovalPolicyTests
         DataRightsAnonymisationPolicyContributionResult result,
         string ownerKey = "staff",
         string recordType = "staff-member",
-        Exception? exception = null)
+        Exception? exception = null,
+        Action<CancellationToken>? afterEvaluate = null)
         : IDataRightsAnonymisationPolicyContributor
     {
         public int ContractVersion =>
@@ -601,6 +659,7 @@ public sealed class DataRightsAnonymisationApprovalPolicyTests
                 throw exception;
             }
 
+            afterEvaluate?.Invoke(cancellationToken);
             return Task.FromResult(result);
         }
     }

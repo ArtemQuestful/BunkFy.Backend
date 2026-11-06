@@ -17,6 +17,11 @@ internal sealed class WorkspaceStaffOnboardingConfiguration
             table.HasCheckConstraint("CK_staff_onboarding_claim",
                 "(\"ClaimId\" IS NULL AND \"ClaimVersion\" IS NULL) OR " +
                 "(\"ClaimId\" IS NOT NULL AND \"ClaimVersion\" > 0)");
+            table.HasCheckConstraint("CK_staff_onboarding_membership_binding",
+                "(\"AcceptedMembershipId\" IS NULL AND " +
+                "\"AcceptedMembershipVersion\" IS NULL) OR " +
+                "(\"AcceptedMembershipId\" IS NOT NULL AND " +
+                "\"AcceptedMembershipVersion\" > 0)");
             table.HasCheckConstraint("CK_staff_onboarding_staff",
                 "(\"StaffMemberId\" IS NULL OR \"StaffMemberId\" <> " +
                 "'00000000-0000-0000-0000-000000000000'::uuid) AND " +
@@ -116,6 +121,7 @@ internal sealed class WorkspaceStaffOnboardingConfiguration
         builder.Property(application => application.Department)
             .HasMaxLength(WorkspaceStaffOnboardingRules.DepartmentMaxLength);
         builder.Property(application => application.Status).HasConversion<int>().IsRequired();
+        builder.Property(application => application.AcceptedMembershipVersion);
         builder.Property(application => application.IdentityAnchorSweepOrdinal)
             .UseIdentityAlwaysColumn()
             .ValueGeneratedOnAdd()

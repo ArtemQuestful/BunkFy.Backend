@@ -10,7 +10,9 @@ public sealed class PropertiesOperationalSurfaceContractTests
     public void Directory_contracts_are_minimal_and_publish_continuation_metadata()
     {
         AssertProperties<PropertyListItemDto>(
-            "Code", "Name", "ProcessingStatus", "PropertyId", "Status", "TimeZoneId", "Version");
+            "CanonicalTimeZoneId", "Code", "Name", "ProcessingStatus", "PropertyId", "Status",
+            "TimeZoneCatalogVersion", "TimeZoneCorrectionAllowed", "TimeZoneId", "TimeZoneObservedAtUtc",
+            "TimeZoneStatus", "Version");
         AssertProperties<PropertyListResponse>("HasMore", "Page", "PageSize", "Properties");
         AssertProperties<RoomListItemDto>(
             "BuildingLabel", "FloorLabel", "Name", "PropertyId", "RoomId", "Status", "Version");
@@ -18,6 +20,18 @@ public sealed class PropertiesOperationalSurfaceContractTests
         AssertProperties<BedListItemDto>(
             "BedId", "Label", "PropertyId", "RoomId", "RoomVersion", "Status", "Version");
         AssertProperties<BedListResponse>("Beds", "HasMore", "Page", "PageSize");
+    }
+
+    [Fact]
+    public void Time_zone_runtime_evidence_contracts_publish_observation_timestamps()
+    {
+        AssertProperties<PropertyTimeZoneCatalogPageDto>(
+            "CatalogVersion", "HasMore", "NextCursor", "ObservedAtUtc", "TimeZones");
+        AssertProperties<PropertyTimeZoneCompliancePageDto>(
+            "CatalogVersion", "HasMore", "NextCursor", "ObservedAtUtc", "Properties");
+        AssertProperties<PropertyTimeZoneRecoveryDto>(
+            "CurrentCanonicalTimeZoneId", "CurrentTimeZoneId", "CurrentTimeZoneObservedAtUtc",
+            "CurrentTimeZoneStatus", "CurrentVersion", "Receipt");
     }
 
     [Fact]

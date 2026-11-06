@@ -4,6 +4,7 @@ using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Workspaces.Application;
 using BunkFy.Modules.Workspaces.Application.Contributors;
 using BunkFy.Modules.Workspaces.Contracts;
+using Gma.Framework.AccessControl;
 using Gma.Framework.Messaging;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Permissions;
@@ -94,5 +95,40 @@ public sealed class WorkspacesModuleMetadataTests
                 WorkspaceStaffOnboardingDataRightsRestrictionContributor),
             registration.ImplementationType);
         Assert.Equal(ServiceLifetime.Scoped, registration.Lifetime);
+    }
+
+    [Fact]
+    public void Application_registers_staff_onboarding_as_workspace_descendant_only()
+    {
+        ServiceCollection services = new();
+        IConfiguration configuration = new ConfigurationBuilder().Build();
+        services.AddWorkspacesApplication(configuration, "global");
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IAccessScopeMatchOptionsResolver resolver = provider
+            .GetRequiredService<IAccessScopeMatchOptionsResolver>();
+
+        AccessScopeMatchOptions options = resolver.Resolve(
+            PermissionCode.Create(
+                WorkspacesPermissionCodes.StaffOnboardingManage));
+        AccessScope workspace = AccessScope.Parse("workspace:workspace-a");
+        AccessScope property = AccessScope.Parse(
+            "workspace:workspace-a/property:property-a");
+        AccessScope otherProperty = AccessScope.Parse(
+            "workspace:workspace-b/property:property-a");
+
+        Assert.True(options.AllowAncestorScopeGrants);
+        Assert.False(options.AllowGlobalScopeGrant);
+        Assert.True(AccessScopeMatcher.GrantSatisfiesRequest(
+            workspace,
+            property,
+            options));
+        Assert.False(AccessScopeMatcher.GrantSatisfiesRequest(
+            workspace,
+            otherProperty,
+            options));
+        Assert.False(AccessScopeMatcher.GrantSatisfiesRequest(
+            AccessScope.Global,
+            property,
+            options));
     }
 }

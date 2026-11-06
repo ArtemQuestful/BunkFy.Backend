@@ -106,6 +106,20 @@ public sealed partial class DataRightsCase
                     : DataRightsDomainErrors.CorrectionExecutionInvalid);
         }
 
+        if (this.RequestedOperations == DataRightsCaseOperation.Restriction &&
+            this.RestrictionAction == DataRightsRestrictionAction.Release &&
+            this.RestrictionTargetingContractVersion ==
+                DataRightsRestrictionReleaseTarget.CurrentBindingVersion &&
+            (this.RestrictionReleaseTarget is null ||
+             !string.Equals(
+                 this.RestrictionReleaseTarget.OwnerKey,
+                 this.selectedSubjects.Concat(additions).Single().OwnerKey,
+                 StringComparison.Ordinal)))
+        {
+            return Result.Failure(
+                DataRightsDomainErrors.RestrictionReleaseTargetRequired);
+        }
+
         this.selectedSubjects.AddRange(additions);
         this.Status = DataRightsCaseState.ReviewRequired;
         this.CompleteChange(actorId, nowUtc);
@@ -157,6 +171,7 @@ public sealed partial class DataRightsCase
         }
 
         this.selectedSubjects.Add(coordinate.Value);
+        this.ClearRestrictionReleaseTarget();
         this.CompleteChange(actorId, nowUtc);
         return Result.Success();
     }
@@ -198,6 +213,7 @@ public sealed partial class DataRightsCase
         }
 
         this.selectedSubjects.Remove(selected);
+        this.ClearRestrictionReleaseTarget();
         this.CompleteChange(actorId, nowUtc);
         return Result.Success();
     }

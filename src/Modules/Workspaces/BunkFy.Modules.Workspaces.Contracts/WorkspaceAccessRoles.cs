@@ -8,6 +8,7 @@ using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Stations.Contracts;
 using Gma.Modules.AccessControl.Contracts;
 
 public static class WorkspaceAccessRoles
@@ -44,17 +45,20 @@ public static class WorkspaceAccessRoles
 
     public static IReadOnlyList<string> DelegablePermissions { get; } =
     [
+        StationsPermissionCodes.Manage,
         AccessControlProfilePermissionCodes.Read,
         AccessControlProfilePermissionCodes.Manage,
         AccessControlProfilePermissionCodes.Assign,
         WorkspacesPermissionCodes.StaffOnboardingManage,
         PropertiesAdminPermissionCodes.Read,
         PropertiesAdminPermissionCodes.PropertiesManage,
+        PropertiesAdminPermissionCodes.TimeZonesManage,
         PropertiesAdminPermissionCodes.RoomsManage,
         PropertiesAdminPermissionCodes.BedsManage,
         InventoryAdminPermissionCodes.Read,
         InventoryAdminPermissionCodes.Configure,
         InventoryAdminPermissionCodes.BlocksManage,
+        InventoryAdminPermissionCodes.BlockGroupsManage,
         InventoryAdminPermissionCodes.Retire,
         ReservationsAdminPermissionCodes.Read,
         ReservationsAdminPermissionCodes.Create,
@@ -104,6 +108,8 @@ public static class WorkspaceAccessRoles
         DataRightsAdminPermissionCodes.TenantTerminationRequest,
         DataRightsAdminPermissionCodes.TenantTerminationApprove,
         DataRightsAdminPermissionCodes.TenantTerminationExecute,
+        DataRightsAdminPermissionCodes.TenantTerminationExportDownload,
+        DataRightsAdminPermissionCodes.TenantTerminationExportConfirm,
         DataRightsAdminPermissionCodes.TenantTerminationRetry,
         DataRightsAdminPermissionCodes.TenantTerminationCancel,
         DataRightsAdminPermissionCodes.TenantTerminationRecover,
@@ -117,9 +123,11 @@ public static class WorkspaceAccessRoles
         DelegablePermissions
             .Except(
             [
+                StationsPermissionCodes.Manage,
                 AccessControlProfilePermissionCodes.Manage,
                 AccessControlProfilePermissionCodes.Assign,
                 WorkspacesPermissionCodes.StaffOnboardingManage,
+                PropertiesAdminPermissionCodes.TimeZonesManage,
                 GuestsAdminPermissionCodes.Archive,
                 GuestsAdminPermissionCodes.DataHoldsManage,
                 StaffAdminPermissionCodes.SensitiveProfileRead,
@@ -127,6 +135,7 @@ public static class WorkspaceAccessRoles
                 StaffAdminPermissionCodes.EmploymentGovernanceManage,
                 StaffAdminPermissionCodes.DataHoldsManage,
                 IngestionAdminPermissionCodes.CredentialsManage,
+                InventoryAdminPermissionCodes.BlockGroupsManage,
                 InventoryAdminPermissionCodes.Retire,
                 IngestionAdminPermissionCodes.RawPayloadsRead,
                 IngestionAdminPermissionCodes.SensitiveHistoryRead,
@@ -147,6 +156,8 @@ public static class WorkspaceAccessRoles
                 DataRightsAdminPermissionCodes.TenantTerminationRequest,
                 DataRightsAdminPermissionCodes.TenantTerminationApprove,
                 DataRightsAdminPermissionCodes.TenantTerminationExecute,
+                DataRightsAdminPermissionCodes.TenantTerminationExportDownload,
+                DataRightsAdminPermissionCodes.TenantTerminationExportConfirm,
                 DataRightsAdminPermissionCodes.TenantTerminationRetry,
                 DataRightsAdminPermissionCodes.TenantTerminationCancel,
                 DataRightsAdminPermissionCodes.TenantTerminationRecover,

@@ -1,8 +1,9 @@
 namespace BunkFy.Modules.Guests.Persistence;
 
 using BunkFy.Modules.Guests.Contracts;
+using Gma.Framework.Domain;
 
-public sealed class GuestStayHistoryEntry
+public sealed class GuestStayHistoryEntry : IScopedEntity
 {
     private GuestStayHistoryEntry() { }
 

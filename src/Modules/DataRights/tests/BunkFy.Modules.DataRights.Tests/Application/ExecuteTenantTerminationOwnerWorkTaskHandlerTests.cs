@@ -61,6 +61,127 @@ public sealed class ExecuteTenantTerminationOwnerWorkTaskHandlerTests
     }
 
     [Fact]
+    public async Task Late_cancellation_after_result_append_replays_without_reinvoking_owner()
+    {
+        List<string> order = [];
+        using CancellationTokenSource source = new();
+        TenantTerminationOwnerWorkStart start = Start();
+        FakeDispatcher dispatcher = new(start, order);
+        FakeReplayStore replayStore = new(order)
+        {
+            AfterAppend = entry =>
+            {
+                if (entry.Kind == TenantTerminationReplayEntryKind.Result)
+                {
+                    source.Cancel();
+                }
+            }
+        };
+        RecordingContributor contributor = new(Contribution(), order);
+        ExecuteTenantTerminationOwnerWorkTaskHandler handler = new(
+            dispatcher,
+            replayStore,
+            [contributor],
+            new FixedClock(Now.AddSeconds(10)),
+            new FixedScopeContext("tenant-a"),
+            new RecordingScheduler());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            handler.HandleAsync(Payload(), Context(), source.Token));
+
+        Assert.Equal(
+            ["begin", "append-dispatch", "owner", "append-result"],
+            order);
+        Assert.NotNull(replayStore.Attempt?.Result);
+        Assert.Null(dispatcher.Recorded);
+
+        await handler.HandleAsync(
+            Payload(),
+            Context(),
+            CancellationToken.None);
+
+        Assert.Equal(
+            [
+                "begin",
+                "append-dispatch",
+                "owner",
+                "append-result",
+                "begin",
+                "record"
+            ],
+            order);
+        Assert.NotNull(dispatcher.Recorded);
+    }
+
+    [Fact]
+    public async Task Invalid_dispatch_durability_receipt_stops_before_owner()
+    {
+        List<string> order = [];
+        TenantTerminationOwnerWorkStart start = Start();
+        FakeDispatcher dispatcher = new(start, order);
+        FakeReplayStore replayStore = new(order)
+        {
+            ReturnInvalidReceipt = true
+        };
+        RecordingContributor contributor = new(Contribution(), order);
+        ExecuteTenantTerminationOwnerWorkTaskHandler handler = new(
+            dispatcher,
+            replayStore,
+            [contributor],
+            new FixedClock(Now.AddSeconds(10)),
+            new FixedScopeContext("tenant-a"),
+            new RecordingScheduler());
+
+        InvalidOperationException failure =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                handler.HandleAsync(
+                    Payload(),
+                    Context(),
+                    CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.TenantTerminationReplayProofInvalid",
+            failure.Message);
+        Assert.Equal(["begin", "append-dispatch"], order);
+        Assert.Null(contributor.Request);
+        Assert.Null(dispatcher.Recorded);
+    }
+
+    [Fact]
+    public async Task Normal_return_at_deadline_is_not_journaled_or_recorded()
+    {
+        List<string> order = [];
+        TenantTerminationOwnerWorkStart start = Start();
+        MutableClock clock = new(Now.AddSeconds(10));
+        FakeDispatcher dispatcher = new(start, order);
+        FakeReplayStore replayStore = new(order);
+        RecordingContributor contributor = new(
+            Contribution(),
+            order,
+            onExecute: request => clock.UtcNow = request.DeadlineUtc);
+        ExecuteTenantTerminationOwnerWorkTaskHandler handler = new(
+            dispatcher,
+            replayStore,
+            [contributor],
+            clock,
+            new FixedScopeContext("tenant-a"),
+            new RecordingScheduler());
+
+        TimeoutException failure = await Assert.ThrowsAsync<TimeoutException>(
+            () => handler.HandleAsync(
+                Payload(),
+                Context(),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.TenantTerminationOwnerDeadlineExceeded",
+            failure.Message);
+        Assert.Equal(["begin", "append-dispatch", "owner"], order);
+        Assert.Null(replayStore.Attempt?.Result);
+        Assert.Null(dispatcher.Recorded);
+    }
+
+    [Fact]
     public async Task Authenticated_result_replay_skips_the_owner()
     {
         List<string> order = [];
@@ -407,6 +528,12 @@ public sealed class ExecuteTenantTerminationOwnerWorkTaskHandlerTests
         : ITenantTerminationReplayStore
     {
         public TenantTerminationReplayAttempt? Attempt { get; set; }
+        public Action<TenantTerminationReplayJournalEntry>? AfterAppend
+        {
+            get;
+            init;
+        }
+        public bool ReturnInvalidReceipt { get; init; }
 
         public Task<TenantTerminationReplayStoreReadiness> CheckReadinessAsync(
             CancellationToken cancellationToken) =>
@@ -427,9 +554,12 @@ public sealed class ExecuteTenantTerminationOwnerWorkTaskHandlerTests
                     new(entry.Dispatch!, entry.Result),
                 _ => throw new InvalidOperationException()
             };
+            this.AfterAppend?.Invoke(entry);
             return Task.FromResult(new TenantTerminationReplayAppendReceipt(
                 TenantTerminationReplayAppendReceipt.CurrentContractVersion,
-                entry.LogicalEntryId,
+                this.ReturnInvalidReceipt
+                    ? new string('f', 64)
+                    : entry.LogicalEntryId,
                 entry.Kind,
                 new(1, new string('c', 64)),
                 Now.AddSeconds(10),
@@ -470,7 +600,8 @@ public sealed class ExecuteTenantTerminationOwnerWorkTaskHandlerTests
         TenantTerminationContributionResult result,
         List<string> order,
         TenantTerminationExecutionBoundary boundary =
-            TenantTerminationExecutionBoundary.TenantScopedTask)
+            TenantTerminationExecutionBoundary.TenantScopedTask,
+        Action<TenantTerminationContributionRequest>? onExecute = null)
         : ITenantTerminationContributor
     {
         public TenantTerminationContributionRequest? Request
@@ -500,6 +631,7 @@ public sealed class ExecuteTenantTerminationOwnerWorkTaskHandlerTests
         {
             order.Add("owner");
             this.Request = request;
+            onExecute?.Invoke(request);
             return Task.FromResult(result);
         }
     }
@@ -507,6 +639,11 @@ public sealed class ExecuteTenantTerminationOwnerWorkTaskHandlerTests
     private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock
     {
         public DateTimeOffset UtcNow { get; } = utcNow;
+    }
+
+    private sealed class MutableClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
     }
 
     private sealed class FixedScopeContext(string scopeId) : IScopeContext

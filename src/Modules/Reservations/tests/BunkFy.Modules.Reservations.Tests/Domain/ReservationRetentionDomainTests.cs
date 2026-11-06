@@ -23,6 +23,7 @@ public sealed class ReservationRetentionDomainTests
             "Reservations.RetentionExecutionResultInvalid",
             execution.Complete(
                 ReservationRetentionExecutionState.Completed,
+                attempt: 1,
                 scannedCount: 1,
                 remainingCount: 0,
                 "reservations.reservation-operational.completed",
@@ -30,6 +31,7 @@ public sealed class ReservationRetentionDomainTests
                 holdReviewDueAtUtc: null).Error.Code);
         Assert.True(execution.Complete(
             ReservationRetentionExecutionState.Completed,
+            attempt: 1,
             scannedCount: 2,
             remainingCount: 0,
             "reservations.reservation-operational.completed",
@@ -52,6 +54,71 @@ public sealed class ReservationRetentionDomainTests
             attempt: 2,
             Now.AddMinutes(1),
             Now.AddMinutes(11)).IsSuccess);
+    }
+
+    [Fact]
+    public void Failed_execution_retries_without_losing_affected_count()
+    {
+        ReservationRetentionExecution execution = Start();
+        Assert.True(execution.RecordAffected().IsSuccess);
+        Assert.True(execution.RecordAffected().IsSuccess);
+        Assert.True(execution.Complete(
+            ReservationRetentionExecutionState.Failed,
+            attempt: 1,
+            scannedCount: 2,
+            remainingCount: 1,
+            "reservations.reservation-operational.mutation-failed",
+            Now.AddMinutes(1),
+            holdReviewDueAtUtc: null).IsSuccess);
+
+        Assert.True(execution.BeginRetry(
+            attempt: 2,
+            Now.AddMinutes(2),
+            Now.AddMinutes(12)).IsSuccess);
+
+        Assert.Equal(2, execution.Attempt);
+        Assert.Equal(
+            ReservationRetentionExecutionState.Running,
+            execution.State);
+        Assert.Equal(0, execution.StartingProjectionOrdinal);
+        Assert.Equal(2, execution.AffectedCount);
+        Assert.Null(execution.CompletedAtUtc);
+        Assert.Null(execution.ScannedCount);
+        Assert.Null(execution.RemainingCount);
+        Assert.Null(execution.OutcomeCode);
+        Assert.Null(execution.HoldReviewDueAtUtc);
+    }
+
+    [Fact]
+    public void Completion_is_fenced_to_the_active_attempt()
+    {
+        ReservationRetentionExecution execution = Start();
+        Assert.True(execution.BeginRetry(
+            attempt: 2,
+            Now.AddMinutes(1),
+            Now.AddMinutes(11)).IsSuccess);
+
+        Assert.Equal(
+            "Reservations.RetentionExecutionResultInvalid",
+            execution.Complete(
+                ReservationRetentionExecutionState.Completed,
+                attempt: 1,
+                scannedCount: 0,
+                remainingCount: 0,
+                "reservations.reservation-operational.completed",
+                Now.AddMinutes(2),
+                holdReviewDueAtUtc: null).Error.Code);
+        Assert.Equal(
+            ReservationRetentionExecutionState.Running,
+            execution.State);
+        Assert.True(execution.Complete(
+            ReservationRetentionExecutionState.Completed,
+            attempt: 2,
+            scannedCount: 0,
+            remainingCount: 0,
+            "reservations.reservation-operational.completed",
+            Now.AddMinutes(2),
+            holdReviewDueAtUtc: null).IsSuccess);
     }
 
     [Fact]
@@ -84,6 +151,124 @@ public sealed class ReservationRetentionDomainTests
                 nextAfterProjectionOrdinal: 43,
                 executionId,
                 Now.AddMinutes(1)).Error.Code);
+    }
+
+    [Fact]
+    public void Legacy_failed_checkpoint_rewinds_only_its_execution()
+    {
+        ReservationRetentionExecution execution = Start();
+        DateTimeOffset completedAtUtc = Now.AddMinutes(1);
+        Assert.True(execution.Complete(
+            ReservationRetentionExecutionState.Failed,
+            attempt: 1,
+            scannedCount: 0,
+            remainingCount: 1,
+            "reservations.reservation-operational.mutation-failed",
+            completedAtUtc,
+            holdReviewDueAtUtc: null).IsSuccess);
+        ReservationRetentionSweepCheckpoint checkpoint =
+            CreateCheckpoint();
+        Assert.True(checkpoint.Advance(
+            expectedAfterProjectionOrdinal: 0,
+            nextAfterProjectionOrdinal: 42,
+            execution.Id,
+            completedAtUtc).IsSuccess);
+        DateTimeOffset retryStartedAtUtc = Now.AddMinutes(2);
+
+        Assert.True(checkpoint.PrepareRetry(
+            execution,
+            retryStartedAtUtc).IsSuccess);
+
+        Assert.Equal(
+            execution.StartingProjectionOrdinal,
+            checkpoint.AfterProjectionOrdinal);
+        Assert.Null(checkpoint.LastExecutionId);
+        Assert.Equal(retryStartedAtUtc, checkpoint.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public void Post_fix_failed_checkpoint_is_already_retry_safe()
+    {
+        ReservationRetentionExecution execution = Start();
+        Assert.True(execution.Complete(
+            ReservationRetentionExecutionState.Failed,
+            attempt: 1,
+            scannedCount: 0,
+            remainingCount: 1,
+            "reservations.reservation-operational.mutation-failed",
+            Now.AddMinutes(1),
+            holdReviewDueAtUtc: null).IsSuccess);
+        ReservationRetentionSweepCheckpoint checkpoint =
+            CreateCheckpoint();
+        long checkpointVersion = checkpoint.Version;
+
+        Assert.True(checkpoint.PrepareRetry(
+            execution,
+            Now.AddMinutes(2)).IsSuccess);
+
+        Assert.Equal(0, checkpoint.AfterProjectionOrdinal);
+        Assert.Null(checkpoint.LastExecutionId);
+        Assert.Equal(Now, checkpoint.UpdatedAtUtc);
+        Assert.Equal(checkpointVersion, checkpoint.Version);
+    }
+
+    [Fact]
+    public void Retry_rejects_checkpoint_advanced_by_another_execution()
+    {
+        ReservationRetentionExecution execution = Start();
+        Assert.True(execution.Complete(
+            ReservationRetentionExecutionState.Failed,
+            attempt: 1,
+            scannedCount: 0,
+            remainingCount: 1,
+            "reservations.reservation-operational.mutation-failed",
+            Now.AddMinutes(1),
+            holdReviewDueAtUtc: null).IsSuccess);
+        ReservationRetentionSweepCheckpoint checkpoint =
+            CreateCheckpoint();
+        Guid otherExecutionId = Guid.NewGuid();
+        Assert.True(checkpoint.Advance(
+            expectedAfterProjectionOrdinal: 0,
+            nextAfterProjectionOrdinal: 0,
+            otherExecutionId,
+            Now.AddMinutes(2)).IsSuccess);
+
+        Assert.Equal(
+            "Reservations.RetentionCheckpointConflict",
+            checkpoint.PrepareRetry(
+                execution,
+                Now.AddMinutes(3)).Error.Code);
+        Assert.Equal(otherExecutionId, checkpoint.LastExecutionId);
+    }
+
+    [Fact]
+    public void Legacy_retry_requires_the_atomic_completion_timestamp()
+    {
+        ReservationRetentionExecution execution = Start();
+        DateTimeOffset completedAtUtc = Now.AddMinutes(1);
+        Assert.True(execution.Complete(
+            ReservationRetentionExecutionState.Failed,
+            attempt: 1,
+            scannedCount: 0,
+            remainingCount: 1,
+            "reservations.reservation-operational.mutation-failed",
+            completedAtUtc,
+            holdReviewDueAtUtc: null).IsSuccess);
+        ReservationRetentionSweepCheckpoint checkpoint =
+            CreateCheckpoint();
+        Assert.True(checkpoint.Advance(
+            expectedAfterProjectionOrdinal: 0,
+            nextAfterProjectionOrdinal: 42,
+            execution.Id,
+            completedAtUtc.AddTicks(10)).IsSuccess);
+
+        Assert.Equal(
+            "Reservations.RetentionCheckpointConflict",
+            checkpoint.PrepareRetry(
+                execution,
+                Now.AddMinutes(2)).Error.Code);
+        Assert.Equal(42, checkpoint.AfterProjectionOrdinal);
+        Assert.Equal(execution.Id, checkpoint.LastExecutionId);
     }
 
     [Fact]
@@ -178,4 +363,13 @@ public sealed class ReservationRetentionDomainTests
             startingProjectionOrdinal: 0,
             Now,
             Now.AddMinutes(15)).Value;
+
+    private static ReservationRetentionSweepCheckpoint
+        CreateCheckpoint() =>
+        ReservationRetentionSweepCheckpoint.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            "reservation-operational",
+            executionPolicyVersion: 1,
+            Now).Value;
 }

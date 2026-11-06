@@ -407,6 +407,154 @@ public sealed class WorkspaceAccessProvisionerTests
         Assert.Equal([profile.Id], profiles.AssignedProfileIds(member, PropertyScope));
     }
 
+    [Fact]
+    public async Task Recovery_inspection_accepts_only_exact_current_two_property_access()
+    {
+        Guid firstPropertyId = Guid.NewGuid();
+        Guid secondPropertyId = Guid.NewGuid();
+        AccessScope firstProperty = WorkspaceAccessScopes.CreateProperty(
+            WorkspaceId,
+            firstPropertyId);
+        AccessScope secondProperty = WorkspaceAccessScopes.CreateProperty(
+            WorkspaceId,
+            secondPropertyId);
+        FakeRoles roles = new([]);
+        FakeProfiles profiles = new([]);
+        AccessSubject member = AccessSubject.User("member-a");
+        AccessProfileDto manager = profiles.AddProfile(
+            WorkspaceScope,
+            WorkspaceAccessProfileSeeds.Manager);
+        roles.Add(
+            member,
+            WorkspaceAccessRoles.MembershipMarker,
+            WorkspaceScope);
+        profiles.Assign(member, firstProperty, manager.Id);
+        profiles.Assign(member, secondProperty, manager.Id);
+
+        WorkspaceMemberAccessEquivalence result = await new
+            WorkspaceAccessProvisioner(roles, profiles)
+            .InspectMemberEquivalenceAsync(
+                WorkspaceId,
+                member.Id,
+                manager,
+                [secondPropertyId, firstPropertyId],
+                CancellationToken.None);
+
+        Assert.Equal(WorkspaceMemberAccessEquivalence.Equivalent, result);
+    }
+
+    [Theory]
+    [InlineData("missing-marker")]
+    [InlineData("legacy")]
+    [InlineData("owner")]
+    [InlineData("extra-profile")]
+    [InlineData("extra-scope")]
+    [InlineData("version-drift")]
+    public async Task Recovery_inspection_rejects_non_exact_or_broadened_access(
+        string hazard)
+    {
+        Guid firstPropertyId = Guid.NewGuid();
+        Guid secondPropertyId = Guid.NewGuid();
+        AccessScope firstProperty = WorkspaceAccessScopes.CreateProperty(
+            WorkspaceId,
+            firstPropertyId);
+        AccessScope secondProperty = WorkspaceAccessScopes.CreateProperty(
+            WorkspaceId,
+            secondPropertyId);
+        FakeRoles roles = new([]);
+        FakeProfiles profiles = new([]);
+        AccessSubject member = AccessSubject.User("member-a");
+        AccessProfileDto manager = profiles.AddProfile(
+            WorkspaceScope,
+            WorkspaceAccessProfileSeeds.Manager);
+        if (!string.Equals(hazard, "missing-marker", StringComparison.Ordinal))
+        {
+            roles.Add(
+                member,
+                WorkspaceAccessRoles.MembershipMarker,
+                WorkspaceScope);
+        }
+
+        profiles.Assign(member, firstProperty, manager.Id);
+        profiles.Assign(member, secondProperty, manager.Id);
+        switch (hazard)
+        {
+            case "missing-marker":
+                break;
+            case "legacy":
+                roles.Add(member, WorkspaceAccessRoles.LegacyMember, WorkspaceScope);
+                break;
+            case "owner":
+                roles.Add(member, WorkspaceAccessRoles.Owner, WorkspaceScope);
+                break;
+            case "extra-profile":
+                AccessProfileDto extra = profiles.AddProfile(
+                    WorkspaceScope,
+                    "extra",
+                    ["properties.read"]);
+                profiles.Assign(member, firstProperty, extra.Id);
+                break;
+            case "extra-scope":
+                profiles.Assign(member, WorkspaceScope, manager.Id);
+                break;
+            case "version-drift":
+                manager = manager with { Version = manager.Version + 1 };
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown recovery hazard '{hazard}'.");
+        }
+
+        WorkspaceMemberAccessEquivalence result = await new
+            WorkspaceAccessProvisioner(roles, profiles)
+            .InspectMemberEquivalenceAsync(
+                WorkspaceId,
+                member.Id,
+                manager,
+                [firstPropertyId, secondPropertyId],
+                CancellationToken.None);
+
+        Assert.Equal(WorkspaceMemberAccessEquivalence.Conflict, result);
+    }
+
+    [Fact]
+    public async Task Member_provisioning_preserves_stable_manager_failure_and_legacy_access()
+    {
+        FakeRoles roles = new([]);
+        FakeProfiles profiles = new([]);
+        AccessSubject member = AccessSubject.User("member-a");
+        AccessProfileDto manager = profiles.AddProfile(
+            WorkspaceScope,
+            WorkspaceAccessProfileSeeds.Manager);
+        roles.Add(member, WorkspaceAccessRoles.LegacyMember, WorkspaceScope);
+        Error failure = ScopedAccessProfileManagementErrors
+            .PermissionEscalation;
+        WorkspaceAccessProvisioner provisioner = new(
+            roles,
+            profiles,
+            profiles,
+            [],
+            [new FailingScopedProfileManager(failure)]);
+
+        Result result = await provisioner.ProvisionMemberAsync(
+            WorkspaceId,
+            member.Id,
+            manager.Id,
+            [Guid.NewGuid()],
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(failure, result.Error);
+        Assert.True(roles.Has(
+            member,
+            WorkspaceAccessRoles.MembershipMarker,
+            WorkspaceScope));
+        Assert.True(roles.Has(
+            member,
+            WorkspaceAccessRoles.LegacyMember,
+            WorkspaceScope));
+    }
+
     private sealed class FakeRoles(List<string> operations) : IAccessControlRoleProvisioner
     {
         private readonly HashSet<RoleAssignment> assignments = [];
@@ -802,5 +950,27 @@ public sealed class WorkspaceAccessProvisionerTests
             AccessSubject actor,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class FailingScopedProfileManager(Error error)
+        : IScopedAccessProfileManager
+    {
+        public Task<Result<ScopedAccessProfileAssignmentSet>>
+            GetSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                AccessSubject actor,
+                CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<Result<ScopedAccessProfileAssignmentReconciliation>>
+            ReconcileSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                IReadOnlyCollection<AccessProfileAssignmentTarget> targets,
+                AccessSubject actor,
+                CancellationToken cancellationToken = default) =>
+            Task.FromResult(Result.Failure<
+                ScopedAccessProfileAssignmentReconciliation>(error));
     }
 }

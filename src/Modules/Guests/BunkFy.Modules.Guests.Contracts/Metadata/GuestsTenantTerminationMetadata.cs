@@ -7,13 +7,13 @@ public static class GuestsTenantTerminationMetadata
 {
     public const string OwnerKey = GuestsDataRightsCoordinates.Owner;
     public const string DependencyOwnerKey = "reservations";
-    public const int CatalogVersion = 4;
-    public const int PersonalDataCatalogVersion = 15;
+    public const int CatalogVersion = 6;
+    public const int PersonalDataCatalogVersion = 17;
     public const string ExportCatalogId = "guests.tenant-portability";
     public const int ExportCatalogSchemaVersion = 1;
     public const string ExportSchemaId =
         "guests.tenant-termination-export";
-    public const int ExportSchemaVersion = 3;
+    public const int ExportSchemaVersion = 5;
 
     public const string GuestProfileRecordType = "guest-profile";
     public const string ManagementOperationRecordType =

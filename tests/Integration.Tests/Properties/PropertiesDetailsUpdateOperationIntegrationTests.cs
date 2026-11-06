@@ -45,7 +45,8 @@ public sealed class PropertiesDetailsUpdateOperationIntegrationTests
                 propertyId,
                 "Harbour House",
                 "harbour-house",
-                "UTC")).ConfigureAwait(false);
+                "UTC",
+                "system:integration-test")).ConfigureAwait(false);
         Assert.True(created.IsSuccess, created.Error.Code);
 
         Guid updateOperationId = Guid.NewGuid();
@@ -54,7 +55,7 @@ public sealed class PropertiesDetailsUpdateOperationIntegrationTests
             updateOperationId,
             "Updated House",
             "updated-house",
-            "UTC",
+            TimeZoneId: null,
             ExpectedVersion: 1);
         Result<PropertyMutationReceiptDto>[] concurrent =
             await Task.WhenAll(
@@ -62,8 +63,7 @@ public sealed class PropertiesDetailsUpdateOperationIntegrationTests
                 SendAsync(services, update with
                 {
                     Name = "  Updated House  ",
-                    Code = " UPDATED-HOUSE ",
-                    TimeZoneId = " UTC "
+                    Code = " UPDATED-HOUSE "
                 })).ConfigureAwait(false);
 
         Assert.All(
@@ -88,7 +88,8 @@ public sealed class PropertiesDetailsUpdateOperationIntegrationTests
                 occupiedPropertyId,
                 "Occupied House",
                 "occupied-house",
-                "UTC")).ConfigureAwait(false);
+                "UTC",
+                "system:integration-test")).ConfigureAwait(false);
         Assert.True(occupiedCreated.IsSuccess, occupiedCreated.Error.Code);
 
         Guid correctedOperationId = Guid.NewGuid();
@@ -97,7 +98,7 @@ public sealed class PropertiesDetailsUpdateOperationIntegrationTests
             correctedOperationId,
             "Harbour Annex",
             "occupied-house",
-            "UTC",
+            TimeZoneId: null,
             ExpectedVersion: 2);
         Result<PropertyMutationReceiptDto> failed = await SendAsync(
             services,
@@ -125,7 +126,7 @@ public sealed class PropertiesDetailsUpdateOperationIntegrationTests
                 noChangeOperationId,
                 " Harbour Annex ",
                 " HARBOUR-ANNEX ",
-                " UTC ",
+                TimeZoneId: null,
                 ExpectedVersion: 3)).ConfigureAwait(false);
         Assert.True(noChange.IsSuccess, noChange.Error.Code);
         Assert.Equal(3, noChange.Value.Version);

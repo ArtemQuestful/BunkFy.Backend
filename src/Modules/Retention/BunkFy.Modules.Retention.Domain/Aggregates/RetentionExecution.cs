@@ -77,9 +77,16 @@ public sealed class RetentionExecution : ScopedAggregateRoot<Guid>
         DateTimeOffset startedAtUtc,
         DateTimeOffset deadlineUtc)
     {
+        bool failedWindowInvalid =
+            this.State == RetentionExecutionState.Failed &&
+            (!this.CompletedAtUtc.HasValue ||
+             startedAtUtc < this.CompletedAtUtc.Value);
         if (attempt <= this.Attempt ||
             startedAtUtc == default ||
-            deadlineUtc <= startedAtUtc)
+            startedAtUtc < this.StartedAtUtc ||
+            failedWindowInvalid ||
+            deadlineUtc <= startedAtUtc ||
+            this.Version == long.MaxValue)
         {
             return Result.Failure(RetentionDomainErrors.AttemptInvalid);
         }
@@ -127,7 +134,7 @@ public sealed class RetentionExecution : ScopedAggregateRoot<Guid>
             affectedCount < 0 ||
             remainingCount < 0 ||
             affectedCount > scannedCount ||
-            normalizedCode.Length is 0 or > OutcomeCodeMaxLength ||
+            !IsOutcomeCode(normalizedCode) ||
             completedAtUtc < this.StartedAtUtc ||
             lateNonFailure ||
             isBlocked != hasHoldReview)
@@ -148,6 +155,11 @@ public sealed class RetentionExecution : ScopedAggregateRoot<Guid>
                     holdReviewDueAtUtc)
                 ? Result.Success()
                 : Result.Failure(RetentionDomainErrors.TransitionInvalid);
+        }
+
+        if (this.Version == long.MaxValue)
+        {
+            return Result.Failure(RetentionDomainErrors.TransitionInvalid);
         }
 
         this.State = state;
@@ -211,4 +223,9 @@ public sealed class RetentionExecution : ScopedAggregateRoot<Guid>
             normalized.All(character =>
                 char.IsAsciiLetterOrDigit(character) || character is '-' or '.');
     }
+
+    private static bool IsOutcomeCode(string value) =>
+        value.Length is > 0 and <= OutcomeCodeMaxLength &&
+        value.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '-' or '.');
 }

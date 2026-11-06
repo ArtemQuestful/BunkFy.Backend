@@ -5,6 +5,7 @@ using BunkFy.Modules.DataRights.Contracts;
 using Gma.Framework.Cqrs;
 
 public sealed record CreateDataRightsCaseCommand(
+    Guid OperationId,
     DataRightsCaseScope Scope,
     DataRightsOperation RequestedOperations,
     DataRightsRestrictionDirective RestrictionDirective,

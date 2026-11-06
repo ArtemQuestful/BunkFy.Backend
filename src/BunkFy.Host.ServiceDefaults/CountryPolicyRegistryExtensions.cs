@@ -1,6 +1,7 @@
 namespace BunkFy.Host.ServiceDefaults;
 
 using BunkFy.DataGovernance;
+using BunkFy.TimeZones;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -13,6 +14,18 @@ public static class CountryPolicyRegistryExtensions
     public static IHostApplicationBuilder AddBunkFyCountryPolicies(this IHostApplicationBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
+
+        bool previewDefaults = builder.Configuration.GetValue<bool>(PreviewCountryPolicyDefaults.EnabledConfigurationKey);
+        bool autoActivate = builder.Configuration.GetValue<bool>(PreviewCountryPolicyDefaults.AutoActivateConfigurationKey);
+        if ((previewDefaults || autoActivate) && !builder.Environment.IsEnvironment("Preview"))
+        {
+            throw new InvalidOperationException("Automatic test country policies are available only in the Preview environment.");
+        }
+
+        if (autoActivate && !previewDefaults)
+        {
+            throw new InvalidOperationException("Automatic property activation requires Preview test country policies.");
+        }
 
         CountryPolicyHostingOptions options =
             builder.Configuration.GetSection(ConfigurationSection).Get<CountryPolicyHostingOptions>() ?? new();
@@ -28,12 +41,30 @@ public static class CountryPolicyRegistryExtensions
                     entry.LaunchStatus))
             .ToArray() ?? [];
 
+        if (previewDefaults)
+        {
+            CountryPolicyPackArtifact template = artifacts.SingleOrDefault(artifact =>
+                artifact.Document.PolicyId == "development-hostel-example" &&
+                artifact.Document.PolicyVersion == 2) ??
+                throw new InvalidOperationException("Preview defaults require the mounted version-two example policy.");
+            CountryPolicyPackArtifact[] defaults = [.. PreviewCountryPolicyDefaults.Create(
+                template, TimeZoneCatalog.Default.CanonicalIds)];
+            artifacts = [.. artifacts, .. defaults];
+            allowlist = [.. allowlist, .. defaults.Select(artifact => new CountryPolicyAllowlistEntry(
+                artifact.Document.OperatingCountryCode,
+                artifact.Document.PolicyId,
+                artifact.Document.PolicyVersion,
+                artifact.ContentSha256,
+                CountryLaunchStatus.Engineering))];
+        }
+
         CountryPolicyRegistry registry = CountryPolicyRegistry.Create(
             artifacts,
             allowlist,
             builder.Environment.IsProduction()
                 ? CountryPolicyRuntimeMode.Production
-                : CountryPolicyRuntimeMode.Engineering);
+                : CountryPolicyRuntimeMode.Engineering,
+            EmbeddedTzdbCountryPolicyTimeZoneRules.Instance);
         builder.Services.AddSingleton(registry);
         return builder;
     }

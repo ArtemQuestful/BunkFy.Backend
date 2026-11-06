@@ -140,6 +140,55 @@ public sealed partial class TenantTerminationProcess
         return Result.Success();
     }
 
+    public Result RequestExportRegeneration(
+        long expectedVersion,
+        string actorId,
+        DateTimeOffset nowUtc)
+    {
+        string normalizedActor = NormalizeActor(actorId);
+        if (this.Phase == TenantTerminationProcessPhase.Export &&
+            this.Status == TenantTerminationProcessStatus.Pending &&
+            string.Equals(
+                normalizedActor,
+                this.LastChangedBy,
+                StringComparison.Ordinal) &&
+            nowUtc == this.LastChangedAtUtc)
+        {
+            return Result.Success();
+        }
+
+        Result ready = this.ValidateChange(expectedVersion, actorId, nowUtc);
+        if (ready.IsFailure)
+        {
+            return ready;
+        }
+
+        bool expiredBlock =
+            this.Status == TenantTerminationProcessStatus.Blocked &&
+            (string.Equals(
+                 this.OutcomeCode,
+                 ExportArtifactExpiredOutcomeCode,
+                 StringComparison.Ordinal) ||
+             string.Equals(
+                 this.OutcomeCode,
+                 ExportFragmentExpiredOutcomeCode,
+                 StringComparison.Ordinal));
+        if (this.Phase != TenantTerminationProcessPhase.Export ||
+            (this.Status != TenantTerminationProcessStatus.Running &&
+             !expiredBlock) ||
+            this.HasCurrentExportConfirmation())
+        {
+            return Result.Failure(
+                DataRightsDomainErrors.TenantTerminationTransitionInvalid);
+        }
+
+        this.ClearExportConfirmation();
+        this.Status = TenantTerminationProcessStatus.Pending;
+        this.ClearOutcome();
+        this.CompleteChange(normalizedActor, nowUtc);
+        return Result.Success();
+    }
+
     private Result ValidateRunningOutcome(
         TenantTerminationProcessPhase phase,
         long operationRevision,

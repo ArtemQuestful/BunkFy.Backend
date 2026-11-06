@@ -12,7 +12,8 @@ public enum DataRightsSubjectSelectionValidationStatus
     Valid = 1,
     NotFound = 2,
     Stale = 3,
-    ScopeUnavailable = 4
+    ScopeUnavailable = 4,
+    RetryRequired = 5
 }
 
 public sealed record DataRightsSubjectSelectionValidation(
@@ -31,4 +32,7 @@ public sealed record DataRightsSubjectSelectionValidation(
 
     public static DataRightsSubjectSelectionValidation ScopeUnavailable() =>
         new(DataRightsSubjectSelectionValidationStatus.ScopeUnavailable, null);
+
+    public static DataRightsSubjectSelectionValidation RetryRequired() =>
+        new(DataRightsSubjectSelectionValidationStatus.RetryRequired, null);
 }

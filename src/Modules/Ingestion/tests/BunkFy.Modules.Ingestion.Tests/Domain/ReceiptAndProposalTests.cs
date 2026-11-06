@@ -90,7 +90,7 @@ public sealed class ReceiptAndProposalTests
         ReservationDispatch dispatch = CreateDispatch(ReservationDispatchKind.Cancel);
         Assert.True(dispatch.Complete(
             ReservationDispatchState.Accepted,
-            Guid.NewGuid(),
+            dispatch.ReservationId,
             detailsRevision: 2,
             reservationVersion: 3,
             errorCode: null,
@@ -117,6 +117,158 @@ public sealed class ReceiptAndProposalTests
             IngestionDomainErrors.VersionConflict,
             proposal.BeginApply("staff:42", Guid.NewGuid(), 2, Now).Error);
         Assert.Equal(ChangeProposalState.Pending, proposal.State);
+    }
+
+    [Fact]
+    public void Dispatch_coordinates_follow_operation_kind_and_cannot_rebind_a_reservation()
+    {
+        Guid reservationId = Guid.NewGuid();
+        var createWithReservation = ReservationDispatch.Create(
+            Guid.NewGuid(), "tenant-a", Guid.NewGuid(),
+            ReservationDispatchTriggerKind.Observation, Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), reservationId, ReservationDispatchKind.Create,
+            "1", 1, "{\"guest\":\"Sensitive\"}", null, Now);
+        var updateWithoutReservation = ReservationDispatch.Create(
+            Guid.NewGuid(), "tenant-a", Guid.NewGuid(),
+            ReservationDispatchTriggerKind.Observation, Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), null, ReservationDispatchKind.Amend,
+            "1", 1, "{\"guest\":\"Sensitive\"}", 1, Now);
+
+        Assert.Equal(IngestionDomainErrors.ReservationDispatchInvalid, createWithReservation.Error);
+        Assert.Equal(IngestionDomainErrors.ReservationDispatchInvalid, updateWithoutReservation.Error);
+
+        ReservationDispatch dispatch = CreateDispatch(ReservationDispatchKind.Amend);
+        Assert.Equal(
+            IngestionDomainErrors.ReservationDispatchInvalid,
+            dispatch.Complete(
+                ReservationDispatchState.Applied,
+                Guid.NewGuid(),
+                2,
+                3,
+                null,
+                Now.AddDays(90),
+                Now.AddMinutes(1)).Error);
+        Assert.Equal(
+            IngestionDomainErrors.ReservationDispatchInvalid,
+            dispatch.Complete(
+                ReservationDispatchState.Applied,
+                dispatch.ReservationId,
+                2,
+                3,
+                "unexpected-error",
+                Now.AddDays(90),
+                Now.AddMinutes(1)).Error);
+        Assert.Equal(ReservationDispatchState.Pending, dispatch.State);
+    }
+
+    [Fact]
+    public void Source_link_rejects_incoherent_cancellation_and_reservation_rebinding()
+    {
+        ReservationSourceLink link = ReservationSourceLink.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "fake.http",
+            "booking-123",
+            Now).Value;
+        Guid receiptId = Guid.NewGuid();
+        Guid operationId = Guid.NewGuid();
+        Guid reservationId = Guid.NewGuid();
+        Assert.True(link.Observe(
+            receiptId,
+            "1",
+            1,
+            Now,
+            new string('a', ReservationSourceLink.ContentHashLength),
+            Now).IsSuccess);
+        Assert.True(link.BeginDispatch(operationId, Now.AddMinutes(1)).IsSuccess);
+
+        Assert.Equal(
+            IngestionDomainErrors.ReservationObservationInvalid,
+            link.CompleteDispatch(
+                operationId,
+                receiptId,
+                "1",
+                1,
+                operationalBaseline: null,
+                reservationId,
+                detailsRevision: 1,
+                keepActive: false,
+                applied: true,
+                cancellationPending: true,
+                cancelled: false,
+                Now.AddMinutes(2)).Error);
+        Assert.True(link.CompleteDispatch(
+            operationId,
+            receiptId,
+            "1",
+            1,
+            "{\"schemaVersion\":1}",
+            reservationId,
+            detailsRevision: 1,
+            keepActive: false,
+            applied: true,
+            cancellationPending: false,
+            cancelled: false,
+            Now.AddMinutes(2)).IsSuccess);
+
+        Guid nextReceiptId = Guid.NewGuid();
+        Guid nextOperationId = Guid.NewGuid();
+        Assert.True(link.Observe(
+            nextReceiptId,
+            "2",
+            2,
+            Now.AddMinutes(3),
+            new string('b', ReservationSourceLink.ContentHashLength),
+            Now.AddMinutes(3)).IsSuccess);
+        Assert.True(link.BeginDispatch(nextOperationId, Now.AddMinutes(4)).IsSuccess);
+        Assert.Equal(
+            IngestionDomainErrors.ReservationObservationInvalid,
+            link.CompleteDispatch(
+                nextOperationId,
+                nextReceiptId,
+                "2",
+                2,
+                "{\"schemaVersion\":1}",
+                Guid.NewGuid(),
+                detailsRevision: 2,
+                keepActive: false,
+                applied: true,
+                cancellationPending: false,
+                cancelled: false,
+                Now.AddMinutes(5)).Error);
+        Assert.Equal(reservationId, link.ReservationId);
+    }
+
+    [Fact]
+    public void Terminal_source_history_can_be_anonymised_before_automatic_retention()
+    {
+        ChangeProposal proposal = CreateProposal();
+        Assert.True(proposal.Reject(
+            "staff:42",
+            "Outdated",
+            proposal.Version,
+            Now.AddDays(90),
+            Now.AddMinutes(1)).IsSuccess);
+        Assert.True(proposal.Anonymise(Now.AddMinutes(2)).IsSuccess);
+        Assert.Equal(Guid.Empty, proposal.ReservationId);
+        Assert.Null(proposal.Diff);
+        Assert.Null(proposal.DecisionReason);
+
+        ReservationDispatch dispatch = CreateDispatch(ReservationDispatchKind.Amend);
+        Assert.True(dispatch.Complete(
+            ReservationDispatchState.Applied,
+            dispatch.ReservationId,
+            2,
+            3,
+            null,
+            Now.AddDays(90),
+            Now.AddMinutes(1)).IsSuccess);
+        Assert.True(dispatch.Anonymise(Now.AddMinutes(2)).IsSuccess);
+        Assert.Null(dispatch.ReservationId);
+        Assert.Null(dispatch.SourceRevision);
+        Assert.Null(dispatch.NormalizedSnapshot);
     }
 
     [Fact]

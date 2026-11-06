@@ -19,11 +19,13 @@ public static class PropertiesModuleMetadata
         .WithPermissions([
             new ModulePermissionDescriptor(PropertiesAdminPermissionCodes.Read, "Read property setup.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
             new ModulePermissionDescriptor(PropertiesAdminPermissionCodes.PropertiesManage, "Manage properties.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
+            new ModulePermissionDescriptor(PropertiesAdminPermissionCodes.TimeZonesManage, "Inspect and correct property time zones.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
             new ModulePermissionDescriptor(PropertiesAdminPermissionCodes.RoomsManage, "Manage rooms.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
             new ModulePermissionDescriptor(PropertiesAdminPermissionCodes.BedsManage, "Manage beds.", PermissionScopeRequirement.Scoped, PermissionScopeGrantPolicy.Descendants),
         ])
         .WithPublishedEvent<PropertyCreatedIntegrationEvent>()
         .WithPublishedEvent<PropertyUpdatedIntegrationEvent>()
+        .WithPublishedEvent<PropertyTimeZoneChangedIntegrationEvent>()
         .WithPublishedEvent<PropertyRetiredIntegrationEvent>()
         .WithPublishedEvent<PropertyProcessingPolicyActivatedIntegrationEvent>()
         .WithPublishedEvent<PropertyProcessingSuspendedIntegrationEvent>()

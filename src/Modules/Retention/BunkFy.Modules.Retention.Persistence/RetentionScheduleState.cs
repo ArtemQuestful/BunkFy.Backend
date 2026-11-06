@@ -64,6 +64,12 @@ public sealed class RetentionScheduleState : IScopedEntity
             return;
         }
 
+        if (!isInitialState && this.Version == long.MaxValue)
+        {
+            throw new InvalidOperationException(
+                "Retention.ScheduleVersionExhausted");
+        }
+
         this.LastExecutionId = execution.Id;
         this.State = RetentionExecutionState.Running;
         this.LastStartedAtUtc = execution.StartedAtUtc;
@@ -96,9 +102,23 @@ public sealed class RetentionScheduleState : IScopedEntity
         }
 
         if (this.State == execution.State &&
-            this.LastCompletedAtUtc == execution.CompletedAtUtc)
+            this.LastCompletedAtUtc == execution.CompletedAtUtc &&
+            this.LastScannedCount == execution.ScannedCount &&
+            this.LastAffectedCount == execution.AffectedCount &&
+            this.LastRemainingCount == execution.RemainingCount &&
+            string.Equals(
+                this.OutcomeCode,
+                execution.OutcomeCode,
+                StringComparison.Ordinal) &&
+            this.HoldReviewDueAtUtc == execution.HoldReviewDueAtUtc)
         {
             return;
+        }
+
+        if (this.Version == long.MaxValue)
+        {
+            throw new InvalidOperationException(
+                "Retention.ScheduleVersionExhausted");
         }
 
         this.State = execution.State;

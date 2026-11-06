@@ -21,7 +21,7 @@ public sealed class
     [DockerFact]
     [Trait("Category", "Docker")]
     [Trait("Category", "Integration")]
-    public async Task Same_staff_waits_and_reloads_while_unrelated_staff_progresses()
+    public async Task Same_subject_waits_and_reloads_while_unrelated_coordinates_progress()
     {
         await using PostgreSqlContainer postgreSql =
             new PostgreSqlBuilder("postgres:16-alpine")
@@ -43,11 +43,12 @@ public sealed class
             await waitingDb.Database.BeginTransactionAsync()
                 .ConfigureAwait(false);
 
-        WorkspaceStaffAccessProcess first = Assert.IsType<
-            WorkspaceStaffAccessProcess>(
-            await CreateCoordinator(firstDb).AcquireExistingAsync(
-                seeded.Id,
-                CancellationToken.None).ConfigureAwait(false));
+        await CreateCoordinator(firstDb).AcquireSubjectAsync(
+                seeded.SubjectId,
+                CancellationToken.None).ConfigureAwait(false);
+        WorkspaceStaffAccessProcess first = await firstDb
+            .StaffAccessProcesses.SingleAsync(process =>
+                process.Id == seeded.Id).ConfigureAwait(false);
         Assert.True(first.RecordFailure("winner", Now).IsSuccess);
         await firstDb.SaveChangesAsync().ConfigureAwait(false);
 
@@ -65,8 +66,9 @@ public sealed class
             await unrelatedDb.Database.BeginTransactionAsync()
                 .ConfigureAwait(false))
         {
-            await CreateCoordinator(unrelatedDb).AcquireStaffAsync(
+            await CreateCoordinator(unrelatedDb).AcquireCoordinatesAsync(
                     Guid.NewGuid(),
+                    "subject-b",
                     CancellationToken.None)
                 .WaitAsync(TimeSpan.FromSeconds(2))
                 .ConfigureAwait(false);

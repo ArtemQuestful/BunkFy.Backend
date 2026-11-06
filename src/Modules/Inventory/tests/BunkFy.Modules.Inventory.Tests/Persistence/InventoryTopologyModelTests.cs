@@ -17,6 +17,52 @@ using Xunit;
 public sealed class InventoryTopologyModelTests
 {
     [Fact]
+    public void Authoritative_inventory_tables_declare_database_invariants()
+    {
+        using InventoryDbContext dbContext = CreateDbContext();
+        IModel designModel = dbContext.GetService<IDesignTimeModel>().Model;
+
+        AssertConstraints(
+            designModel.FindEntityType(typeof(InventoryAllocation))!,
+            "CK_allocations_coordinates",
+            "CK_allocations_stay_and_version",
+            "CK_allocations_lifecycle",
+            "CK_allocations_anonymisation_state");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(Domain.Entities.InventoryAllocationUnit))!,
+            "CK_allocation_units_coordinates");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(InventoryAllocationAmendmentDecision))!,
+            "CK_allocation_amendment_decisions_coordinates",
+            "CK_allocation_amendment_decisions_decided_at",
+            "CK_allocation_amendment_decisions_fingerprint",
+            "CK_allocation_amendment_decisions_outcome");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(ManualInventoryBlock))!,
+            "CK_manual_blocks_coordinates",
+            "CK_manual_blocks_content",
+            "CK_manual_blocks_lifecycle");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(RoomInventoryConfiguration))!,
+            "CK_room_configurations_coordinates",
+            "CK_room_configurations_state");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(InventoryAllocationOperationLock))!,
+            "CK_allocation_operation_locks_coordinates",
+            "CK_allocation_operation_locks_revision");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(BedRetirementProcess))!,
+            "CK_bed_retirements_coordinates",
+            "CK_bed_retirements_request",
+            "CK_bed_retirements_lifecycle");
+        AssertConstraints(
+            designModel.FindEntityType(typeof(RoomRetirementProcess))!,
+            "CK_room_retirements_coordinates",
+            "CK_room_retirements_request",
+            "CK_room_retirements_lifecycle");
+    }
+
+    [Fact]
     public void Management_operations_are_scoped_composite_receipts_with_constraints()
     {
         using InventoryDbContext dbContext = CreateDbContext();
@@ -191,7 +237,7 @@ public sealed class InventoryTopologyModelTests
     }
 
     [Fact]
-    public void Manual_block_has_version_concurrency_and_scope_aware_unit_foreign_key()
+    public void Manual_block_has_version_concurrency_and_property_owned_unit_foreign_key()
     {
         using InventoryDbContext dbContext = CreateDbContext();
 
@@ -203,8 +249,25 @@ public sealed class InventoryTopologyModelTests
 
         Assert.True(blockEntity.FindProperty(nameof(ManualInventoryBlock.Version))!.IsConcurrencyToken);
         Assert.True(unitEntity.FindProperty(nameof(InventoryUnit.AvailabilityMutationVersion))!.IsConcurrencyToken);
-        Assert.Equal(["ScopeId", "InventoryUnitId"], foreignKey.Properties.Select(property => property.Name));
-        Assert.Equal(["ScopeId", "Id"], foreignKey.PrincipalKey.Properties.Select(property => property.Name));
+        Assert.Equal(
+            ["ScopeId", "PropertyId", "InventoryUnitId"],
+            foreignKey.Properties.Select(property => property.Name));
+        Assert.Equal(
+            ["ScopeId", "PropertyId", "Id"],
+            foreignKey.PrincipalKey.Properties.Select(property => property.Name));
+        Assert.Equal(
+            "FK_inventory_manual_blocks_inventory_unit",
+            foreignKey.GetConstraintName());
+        Assert.Contains(
+            unitEntity.GetKeys(),
+            key => !key.IsPrimaryKey() &&
+                key.Properties.Select(property => property.Name)
+                    .SequenceEqual(["ScopeId", "PropertyId", "Id"]));
+        Assert.DoesNotContain(
+            unitEntity.GetKeys(),
+            key => !key.IsPrimaryKey() &&
+                key.Properties.Select(property => property.Name)
+                    .SequenceEqual(["ScopeId", "Id"]));
         Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior);
     }
 
@@ -221,6 +284,24 @@ public sealed class InventoryTopologyModelTests
             propertyEntity.GetIndexes(),
             index => index.IsUnique && index.Properties.Select(property => property.Name)
                 .SequenceEqual([nameof(InventoryPropertyTopology.ProjectionOrdinal)]));
+    }
+
+    [Fact]
+    public void Property_selection_version_is_durable_concurrency_and_advances_exactly_once()
+    {
+        using InventoryDbContext dbContext = CreateDbContext();
+        IEntityType propertyEntity = dbContext.Model.FindEntityType(
+            typeof(InventoryPropertyTopology))!;
+        IProperty selectionVersion = propertyEntity.FindProperty(
+            nameof(InventoryPropertyTopology.AvailabilitySelectionVersion))!;
+        InventoryPropertyTopology property = InventoryPropertyTopology.Create(
+            Guid.NewGuid(),
+            "tenant-a");
+
+        property.AdvanceAvailabilitySelection();
+
+        Assert.True(selectionVersion.IsConcurrencyToken);
+        Assert.Equal(2, property.AvailabilitySelectionVersion);
     }
 
     [Fact]
@@ -255,7 +336,10 @@ public sealed class InventoryTopologyModelTests
 
         IEntityType decision = dbContext.Model.FindEntityType(typeof(InventoryAllocationAmendmentDecision))!;
 
-        Assert.Equal([nameof(InventoryAllocationAmendmentDecision.Id)], decision.FindPrimaryKey()!
+        Assert.Equal([
+            nameof(InventoryAllocationAmendmentDecision.ScopeId),
+            nameof(InventoryAllocationAmendmentDecision.Id)
+        ], decision.FindPrimaryKey()!
             .Properties.Select(property => property.Name));
         Assert.True(decision.FindProperty(nameof(InventoryAllocationAmendmentDecision.RequestFingerprint))!.IsFixedLength());
         Assert.Contains(
@@ -297,6 +381,20 @@ public sealed class InventoryTopologyModelTests
                 nameof(BedRetirementProcess.RoomId),
                 nameof(BedRetirementProcess.State)
             ]));
+        IIndex activeTarget = Assert.Single(
+            process.GetIndexes(),
+            index => index.GetDatabaseName() ==
+                "UX_bed_retirements_ScopeId_BedId_active");
+        Assert.True(activeTarget.IsUnique);
+        Assert.Equal(
+            [
+                nameof(BedRetirementProcess.ScopeId),
+                nameof(BedRetirementProcess.BedId)
+            ],
+            activeTarget.Properties.Select(property => property.Name));
+        Assert.Equal(
+            "\"State\" IN (1, 2, 3, 5)",
+            activeTarget.GetFilter());
     }
 
     [Fact]
@@ -328,6 +426,20 @@ public sealed class InventoryTopologyModelTests
                 nameof(RoomRetirementProcess.PropertyId),
                 nameof(RoomRetirementProcess.State)
             ]));
+        IIndex activeTarget = Assert.Single(
+            process.GetIndexes(),
+            index => index.GetDatabaseName() ==
+                "UX_room_retirements_ScopeId_RoomId_active");
+        Assert.True(activeTarget.IsUnique);
+        Assert.Equal(
+            [
+                nameof(RoomRetirementProcess.ScopeId),
+                nameof(RoomRetirementProcess.RoomId)
+            ],
+            activeTarget.Properties.Select(property => property.Name));
+        Assert.Equal(
+            "\"State\" IN (1, 2, 3, 5)",
+            activeTarget.GetFilter());
     }
 
     [Fact]
@@ -442,6 +554,16 @@ public sealed class InventoryTopologyModelTests
             .Options;
 
         return new InventoryDbContext(options, new TestScopeContext());
+    }
+
+    private static void AssertConstraints(
+        IEntityType entity,
+        params string[] expectedNames)
+    {
+        string[] actualNames = entity.GetCheckConstraints()
+            .Select(constraint => constraint.Name!)
+            .ToArray();
+        Assert.All(expectedNames, expected => Assert.Contains(expected, actualNames));
     }
 
     private sealed class TestScopeContext : IScopeContext

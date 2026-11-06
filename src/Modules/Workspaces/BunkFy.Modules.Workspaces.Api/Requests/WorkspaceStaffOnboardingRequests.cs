@@ -12,3 +12,7 @@ public sealed record SubmitWorkspaceStaffOnboardingRequest(
     string? EmployeeNumber,
     string? JobTitle,
     string? Department);
+
+public sealed record WorkspaceStaffOnboardingRecoveryAttemptRequest(
+    Guid OperationId,
+    long ExpectedApplicationVersion);

@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Reservations.Application.Contributors;
 
 using BunkFy.Modules.Reservations.Application.Commands;
+using BunkFy.Modules.Reservations.Application.Handlers;
 using BunkFy.Modules.Reservations.Application.Policies;
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Domain.Retention;
@@ -58,7 +59,8 @@ internal sealed class ReservationRetentionContributor
                 remainingCount: 1,
                 ReservationRetentionCoordinates
                     .CoordinateInvalidOutcome,
-                this.clock.UtcNow);
+                ReservationMutationTime.Normalize(
+                    this.clock.UtcNow));
         }
 
         Result<ReservationRetentionExecutionStart> started =
@@ -143,6 +145,7 @@ internal sealed class ReservationRetentionContributor
                 await this.dispatcher.SendAsync(
                     new ApplyReservationRetentionCommand(
                         request.ExecutionId,
+                        request.Attempt,
                         candidate.PropertyId,
                         candidate.ReservationId,
                         candidate.ReservationVersion,
@@ -232,11 +235,13 @@ internal sealed class ReservationRetentionContributor
             await this.dispatcher.SendAsync(
                 new CompleteReservationRetentionExecutionCommand(
                     request.ExecutionId,
+                    request.Attempt,
                     state,
                     scannedCount,
                     remainingCount,
                     outcomeCode,
-                    this.clock.UtcNow,
+                    ReservationMutationTime.Normalize(
+                        this.clock.UtcNow),
                     holdReviewDueAtUtc,
                     start.StartingProjectionOrdinal,
                     nextAfterProjectionOrdinal),

@@ -14,6 +14,10 @@ public static class GuestsDomainErrors
     public static readonly Error DateOfBirthInvalid = new("Guests.DateOfBirthInvalid", "The date of birth is invalid.");
     public static readonly Error NationalityInvalid = new("Guests.NationalityInvalid", "The nationality country code is invalid.");
     public static readonly Error LanguageTagInvalid = new("Guests.LanguageTagInvalid", "The preferred language tag is invalid.");
+    public static readonly Error LanguageTagsInvalid = new(
+        "Guests.LanguageTagsInvalid", "Provide at most 12 nonempty language tags of up to 35 supported characters each.");
+    public static readonly Error LanguageTagsContradictPreferred = new(
+        "Guests.LanguageTagsContradictPreferred", "The preferred language must be included in an explicitly supplied language collection.");
     public static readonly Error NotesInvalid = new("Guests.NotesInvalid", "The notes are invalid.");
     public static readonly Error ActorInvalid = new("Guests.ActorInvalid", "The actor id is invalid.");
     public static readonly Error EventIdRequired = new("Guests.EventIdRequired", "A domain event id is required.");

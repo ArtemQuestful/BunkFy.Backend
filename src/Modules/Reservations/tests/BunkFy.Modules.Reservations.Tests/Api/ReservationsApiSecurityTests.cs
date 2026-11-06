@@ -13,6 +13,7 @@ using Gma.Framework.Administration.Api;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Security;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
@@ -113,6 +114,71 @@ public sealed class ReservationsApiSecurityTests
         AssertNoStore(adminContext);
     }
 
+    [Theory]
+    [InlineData(
+        "BunkFy.Modules.Reservations.Api.ReservationsNoStoreStartupFilter",
+        "/api/reservations/properties/71000000-0000-0000-0000-000000000001/operations-snapshot",
+        StatusCodes.Status200OK)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.Api.ReservationsNoStoreStartupFilter",
+        "/api/reservations/properties/not-a-guid/operations-snapshot",
+        StatusCodes.Status400BadRequest)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.Api.ReservationsNoStoreStartupFilter",
+        "/api/reservations/properties/71000000-0000-0000-0000-000000000001/operations-snapshot",
+        StatusCodes.Status401Unauthorized)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.Api.ReservationsNoStoreStartupFilter",
+        "/api/reservations/properties/71000000-0000-0000-0000-000000000001/operations-snapshot",
+        StatusCodes.Status403Forbidden)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.AdminApi.ReservationsAdminNoStoreStartupFilter",
+        "/api/admin/reservations/properties/71000000-0000-0000-0000-000000000001/operations-snapshot",
+        StatusCodes.Status200OK)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.AdminApi.ReservationsAdminNoStoreStartupFilter",
+        "/api/admin/reservations/properties/not-a-guid/operations-snapshot",
+        StatusCodes.Status400BadRequest)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.AdminApi.ReservationsAdminNoStoreStartupFilter",
+        "/api/admin/reservations/properties/71000000-0000-0000-0000-000000000001/operations-snapshot",
+        StatusCodes.Status401Unauthorized)]
+    [InlineData(
+        "BunkFy.Modules.Reservations.AdminApi.ReservationsAdminNoStoreStartupFilter",
+        "/api/admin/reservations/properties/71000000-0000-0000-0000-000000000001/operations-snapshot",
+        StatusCodes.Status403Forbidden)]
+    public async Task Reservations_path_boundary_disables_storage_for_every_pipeline_outcome(
+        string filterTypeName,
+        string path,
+        int statusCode)
+    {
+        Type filterType = Assert.Single(
+            AppDomain.CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType(filterTypeName, throwOnError: false)),
+            type => type is not null)!;
+        var filter = Assert.IsType<IStartupFilter>(
+            Activator.CreateInstance(filterType, nonPublic: true),
+            exactMatch: false);
+        using ServiceProvider services = new ServiceCollection().BuildServiceProvider();
+        var builder = new ApplicationBuilder(services);
+        filter.Configure(application => application.Run(async context =>
+        {
+            context.Response.StatusCode = statusCode;
+            await context.Response.StartAsync();
+        }))(builder);
+        RequestDelegate pipeline = builder.Build();
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        context.Request.Path = path;
+
+        await pipeline(context);
+
+        Assert.Equal(statusCode, context.Response.StatusCode);
+        AssertNoStore(context);
+    }
+
     [Fact]
     public async Task Operational_routes_publish_bounded_response_contracts()
     {
@@ -134,6 +200,14 @@ public sealed class ReservationsApiSecurityTests
 
         const string api = "/api/reservations/properties/{propertyId:guid}";
         AssertResponse<ReservationListResponse>(endpoints, HttpMethods.Get, api);
+        RouteEndpoint publicOperations = AssertResponse<ReservationOperationsSnapshotDto>(
+            endpoints,
+            HttpMethods.Get,
+            $"{api}/operations-snapshot");
+        AccessPermissionMetadata operationsPermission =
+            Assert.Single(publicOperations.Metadata.OfType<AccessPermissionMetadata>());
+        Assert.Equal(ReservationsAdminPermissionCodes.Read, operationsPermission.Permission.Value);
+        Assert.Equal("reservations-property", operationsPermission.ScopeResolverName);
         AssertResponse<ReservationMutationReceiptDto>(endpoints, HttpMethods.Post, api);
         AssertResponse<ReservationDto>(endpoints, HttpMethods.Get, $"{api}/{{reservationId:guid}}");
         AssertResponse<ReservationDetailsHistoryListResponse>(
@@ -144,6 +218,10 @@ public sealed class ReservationsApiSecurityTests
 
         const string admin = "/api/admin/reservations/properties/{propertyId:guid}";
         AssertResponse<ReservationListResponse>(endpoints, HttpMethods.Get, admin);
+        AssertResponse<ReservationOperationsSnapshotDto>(
+            endpoints,
+            HttpMethods.Get,
+            $"{admin}/operations-snapshot");
         AssertResponse<ReservationMutationReceiptDto>(endpoints, HttpMethods.Post, admin);
         AssertResponse<ReservationDto>(endpoints, HttpMethods.Get, $"{admin}/{{reservationId:guid}}");
         AssertResponse<ReservationDetailsHistoryListResponse>(
@@ -274,7 +352,7 @@ public sealed class ReservationsApiSecurityTests
             "AuthenticationAssuranceMetadata",
             StringComparison.Ordinal));
 
-    private static void AssertResponse<TResponse>(
+    private static RouteEndpoint AssertResponse<TResponse>(
         IEnumerable<RouteEndpoint> endpoints,
         string method,
         string route)
@@ -292,6 +370,7 @@ public sealed class ReservationsApiSecurityTests
             metadata => metadata.StatusCode == StatusCodes.Status200OK);
 
         Assert.Equal(typeof(TResponse), response.Type);
+        return endpoint;
     }
 
     private static void AssertNoStore(HttpContext context)

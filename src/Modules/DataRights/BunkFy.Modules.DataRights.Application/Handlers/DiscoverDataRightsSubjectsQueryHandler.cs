@@ -9,11 +9,13 @@ using BunkFy.Modules.DataRights.Domain.Models;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Scoping;
+using Microsoft.Extensions.Logging;
 
 internal sealed class DiscoverDataRightsSubjectsQueryHandler(
     IDataRightsCaseRepository cases,
     IEnumerable<IDataRightsSubjectDiscoveryContributor> contributors,
-    IScopeContext scopeContext)
+    IScopeContext scopeContext,
+    ILogger<DiscoverDataRightsSubjectsQueryHandler> logger)
     : IQueryHandler<DiscoverDataRightsSubjectsQuery, DataRightsSubjectDiscoveryResponse>
 {
     public async Task<Result<DataRightsSubjectDiscoveryResponse>> HandleAsync(
@@ -30,6 +32,7 @@ internal sealed class DiscoverDataRightsSubjectsQueryHandler(
             query.Scope,
             query.CaseId,
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (dataRightsCase is null)
         {
             return Result.Failure<DataRightsSubjectDiscoveryResponse>(
@@ -60,39 +63,71 @@ internal sealed class DiscoverDataRightsSubjectsQueryHandler(
             candidates = [];
         foreach (IDataRightsSubjectDiscoveryContributor contributor in contributorSet.Value)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int remaining = DataRightsSubjectDiscoveryLimits.MaxCandidates - candidates.Count;
             if (remaining == 0)
             {
                 break;
             }
 
-            DataRightsSubjectDiscoveryResult result = await contributor.DiscoverAsync(
-                new DataRightsSubjectDiscoveryRequest(
-                    scopeContext.ScopeId,
-                    caseType,
-                    dataRightsCase.PropertyId,
-                    lookup.Value,
-                    remaining),
-                cancellationToken).ConfigureAwait(false);
-            if (result is null ||
-                result.Status != DataRightsSubjectDiscoveryStatus.Succeeded)
+            DataRightsSubjectDiscoveryResult result;
+            try
             {
+                result = await contributor.DiscoverAsync(
+                    new DataRightsSubjectDiscoveryRequest(
+                        scopeContext.ScopeId,
+                        caseType,
+                        dataRightsCase.PropertyId,
+                        lookup.Value,
+                        remaining),
+                    cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (Exception exception)
+                when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    "Data Rights subject discovery owner {OwnerKey} failed because {ExceptionType} was raised.",
+                    contributor.OwnerKey,
+                    exception.GetType().Name);
                 return Result.Failure<DataRightsSubjectDiscoveryResponse>(
-                    DataRightsApplicationErrors.DiscoveryScopeUnavailable);
+                    DataRightsApplicationErrors.SubjectOwnerRetryRequired);
             }
 
-            if (result.Candidates is null || result.Candidates.Count > remaining)
+            if (result is null || result.Candidates is null)
             {
-                return Result.Failure<DataRightsSubjectDiscoveryResponse>(
-                    DataRightsApplicationErrors.SubjectCoordinateInvalid);
+                return InvalidOwnerResult();
+            }
+
+            if (result.Status != DataRightsSubjectDiscoveryStatus.Succeeded)
+            {
+                if (result.Candidates.Count != 0)
+                {
+                    return InvalidOwnerResult();
+                }
+
+                return result.Status switch
+                {
+                    DataRightsSubjectDiscoveryStatus.ScopeUnavailable =>
+                        Result.Failure<DataRightsSubjectDiscoveryResponse>(
+                            DataRightsApplicationErrors.DiscoveryScopeUnavailable),
+                    DataRightsSubjectDiscoveryStatus.RetryRequired =>
+                        Result.Failure<DataRightsSubjectDiscoveryResponse>(
+                            DataRightsApplicationErrors.SubjectOwnerRetryRequired),
+                    _ => InvalidOwnerResult()
+                };
+            }
+
+            if (result.Candidates.Count > remaining)
+            {
+                return InvalidOwnerResult();
             }
 
             foreach (DataRightsSubjectCandidate candidate in result.Candidates)
             {
                 if (!IsValid(candidate, contributor.OwnerKey))
                 {
-                    return Result.Failure<DataRightsSubjectDiscoveryResponse>(
-                        DataRightsApplicationErrors.SubjectCoordinateInvalid);
+                    return InvalidOwnerResult();
                 }
 
                 (string Owner, string RecordType, Guid RecordId) key = (
@@ -117,6 +152,10 @@ internal sealed class DiscoverDataRightsSubjectsQueryHandler(
             bounded,
             bounded.Length == DataRightsSubjectDiscoveryLimits.MaxCandidates));
     }
+
+    private static Result<DataRightsSubjectDiscoveryResponse> InvalidOwnerResult() =>
+        Result.Failure<DataRightsSubjectDiscoveryResponse>(
+            DataRightsApplicationErrors.SubjectOwnerResultInvalid);
 
     private Result<IReadOnlyCollection<IDataRightsSubjectDiscoveryContributor>> ResolveContributors(
         string? ownerKey,

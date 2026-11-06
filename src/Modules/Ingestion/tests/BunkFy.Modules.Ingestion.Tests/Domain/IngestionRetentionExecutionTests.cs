@@ -13,7 +13,7 @@ public sealed class IngestionRetentionExecutionTests
     public void Running_receipt_resumes_on_a_higher_attempt()
     {
         IngestionRetentionExecution execution = Start();
-        Assert.True(execution.RecordAffected(4).IsSuccess);
+        Assert.True(execution.RecordAffected(attempt: 1, count: 4).IsSuccess);
 
         Assert.True(execution.BeginRetry(
             attempt: 2,
@@ -33,21 +33,63 @@ public sealed class IngestionRetentionExecutionTests
         DateTimeOffset completedAt = StartedAt.AddMinutes(2);
         Assert.True(execution.Complete(
             IngestionRetentionExecutionState.Completed,
+            attempt: 1,
             remainingCount: 0,
-            "ingestion.raw-payload.completed",
-            completedAt,
+            outcomeCode: "ingestion.raw-payload.completed",
+            completedAtUtc: completedAt,
             holdReviewDueAtUtc: null).IsSuccess);
 
         Assert.True(execution.Complete(
             IngestionRetentionExecutionState.Completed,
+            attempt: 1,
             remainingCount: 0,
-            "ingestion.raw-payload.completed",
-            completedAt,
+            outcomeCode: "ingestion.raw-payload.completed",
+            completedAtUtc: completedAt,
             holdReviewDueAtUtc: null).IsSuccess);
         Assert.True(execution.BeginRetry(
             attempt: 2,
             StartedAt.AddMinutes(10),
             StartedAt.AddMinutes(20)).IsFailure);
+    }
+
+    [Fact]
+    public void Stale_attempt_cannot_record_or_complete_after_retry_starts()
+    {
+        IngestionRetentionExecution execution = Start();
+        Assert.True(execution.BeginRetry(
+            attempt: 2,
+            StartedAt.AddMinutes(2),
+            StartedAt.AddMinutes(20)).IsSuccess);
+
+        Assert.Equal(
+            IngestionRetentionExecutionErrors.TransitionInvalid,
+            execution.RecordAffected(attempt: 1, count: 1).Error);
+        Assert.Equal(
+            IngestionRetentionExecutionErrors.TransitionInvalid,
+            execution.Complete(
+                IngestionRetentionExecutionState.Completed,
+                attempt: 1,
+                remainingCount: 0,
+                outcomeCode: "ingestion.raw-payload.completed",
+                completedAtUtc: StartedAt.AddMinutes(3),
+                holdReviewDueAtUtc: null).Error);
+        Assert.Equal(IngestionRetentionExecutionState.Running, execution.State);
+        Assert.Equal(0, execution.AffectedCount);
+    }
+
+    [Fact]
+    public void Retry_start_cannot_move_execution_time_backwards()
+    {
+        IngestionRetentionExecution execution = Start();
+
+        Assert.Equal(
+            IngestionRetentionExecutionErrors.TransitionInvalid,
+            execution.BeginRetry(
+                attempt: 2,
+                StartedAt.AddSeconds(-1),
+                StartedAt.AddMinutes(20)).Error);
+        Assert.Equal(1, execution.Attempt);
+        Assert.Equal(StartedAt, execution.StartedAtUtc);
     }
 
     private static IngestionRetentionExecution Start() =>

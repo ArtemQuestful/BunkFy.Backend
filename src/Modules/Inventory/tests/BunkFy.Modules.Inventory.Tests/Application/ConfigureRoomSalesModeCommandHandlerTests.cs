@@ -43,6 +43,8 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
                 InventorySalesMode.BedLevel,
                 2));
         int generatedBeforeReplay = harness.Ids.CallCount;
+        int selectionLocksBeforeReplay = harness.SelectionFence.AcquireCount;
+        int selectionVersionAdvancesBeforeReplay = harness.SelectionFence.AdvanceCount;
 
         Result<RoomInventoryMutationReceiptDto> replay = await harness.HandleAsync(
             new(
@@ -61,6 +63,8 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         Assert.Equal(RoomSalesMode.BedLevel, harness.Configuration.SalesMode);
         Assert.Equal(3, harness.Configuration.Version);
         Assert.Equal(generatedBeforeReplay, harness.Ids.CallCount);
+        Assert.Equal(selectionLocksBeforeReplay + 1, harness.SelectionFence.AcquireCount);
+        Assert.Equal(selectionVersionAdvancesBeforeReplay, harness.SelectionFence.AdvanceCount);
         Assert.Equal(2, harness.Configuration.DomainEvents.Count);
     }
 
@@ -124,6 +128,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         Assert.Equal(eventsBefore, harness.Configuration.DomainEvents.Count);
         Assert.Equal(idsBefore, harness.Ids.CallCount);
         Assert.Equal(2, harness.Operations.Added.Count);
+        Assert.Equal(1, harness.SelectionFence.AdvanceCount);
     }
 
     [Fact]
@@ -148,6 +153,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         Assert.True(retry.IsSuccess);
         Assert.Single(harness.Operations.Added);
         Assert.Equal(1, harness.Ids.CallCount);
+        Assert.Equal(1, harness.SelectionFence.AdvanceCount);
     }
 
     [Fact]
@@ -186,7 +192,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
 
         Assert.True((await harness.HandleAsync(command)).IsSuccess);
 
-        Assert.Equal(["room-lock", "journal-read"], trace);
+        Assert.Equal(["selection-lock", "room-lock", "journal-read"], trace);
     }
 
     [Fact]
@@ -206,6 +212,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
             InventoryApplicationErrors.ManagementOperationInvalid,
             result.Error);
         Assert.Equal(0, harness.Lock.CallCount);
+        Assert.Equal(0, harness.SelectionFence.AcquireCount);
         Assert.Empty(harness.Operations.Added);
     }
 
@@ -261,6 +268,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         RecordingRoomLock operationLock = new(trace);
         MutableAvailabilityRepository availability = new(
             activeAllocationCount);
+        RecordingSelectionFence selectionFence = new(trace);
         TestIdGenerator ids = new();
         ConfigureRoomSalesModeCommandHandler handler = new(
             new InventoryManagementMutationCoordinator(
@@ -270,6 +278,8 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
             new FakeTopologyRepository(status, activeBedCount),
             new FakeConfigurationRepository(configuration),
             availability,
+            selectionFence,
+            new TestBusinessDateProvider(),
             new TestClock(),
             ids);
         return new(
@@ -278,6 +288,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
             operations,
             operationLock,
             availability,
+            selectionFence,
             ids);
     }
 
@@ -287,6 +298,7 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         RecordingManagementOperationRepository Operations,
         RecordingRoomLock Lock,
         MutableAvailabilityRepository Availability,
+        RecordingSelectionFence SelectionFence,
         TestIdGenerator Ids)
     {
         public Task<Result<RoomInventoryMutationReceiptDto>> HandleAsync(
@@ -360,6 +372,28 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
                 "Room sales mode does not acquire an operation-only lock.");
     }
 
+    private sealed class RecordingSelectionFence(List<string>? trace)
+        : IInventoryAvailabilitySelectionFence
+    {
+        public int AcquireCount { get; private set; }
+        public int AdvanceCount { get; private set; }
+
+        public Task AcquireAsync(Guid propertyId, CancellationToken cancellationToken)
+        {
+            Assert.Equal(PropertyId, propertyId);
+            this.AcquireCount++;
+            trace?.Add("selection-lock");
+            return Task.CompletedTask;
+        }
+
+        public Task AdvanceAsync(Guid propertyId, CancellationToken cancellationToken)
+        {
+            Assert.Equal(PropertyId, propertyId);
+            this.AdvanceCount++;
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class MutableAvailabilityRepository(int activeAllocationCount)
         : IInventoryAvailabilityRepository
     {
@@ -419,17 +453,17 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         int activeBedCount)
         : IInventoryTopologyRepository
     {
-        public Task ApplyPropertyAsync(
+        public Task<bool> ApplyPropertyAsync(
             InventoryPropertyTopologyWriteModel property,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken) => Task.FromResult(false);
 
-        public Task ApplyRoomAsync(
+        public Task<bool> ApplyRoomAsync(
             InventoryRoomTopologyWriteModel room,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken) => Task.FromResult(false);
 
-        public Task ApplyBedAsync(
+        public Task<bool> ApplyBedAsync(
             InventoryBedTopologyWriteModel bed,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken) => Task.FromResult(false);
 
         public Task<InventoryRoomTopologySnapshot?> GetRoomAsync(
             Guid propertyId,
@@ -459,12 +493,12 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
         RoomInventoryConfiguration configuration)
         : IRoomInventoryConfigurationRepository
     {
-        public Task EnsureAsync(
+        public Task<bool> EnsureAsync(
             string scopeId,
             Guid propertyId,
             Guid roomId,
             DateTimeOffset createdAtUtc,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken) => Task.FromResult(false);
 
         public Task<RoomInventoryConfiguration?> GetAsync(
             Guid propertyId,
@@ -488,6 +522,15 @@ public sealed class ConfigureRoomSalesModeCommandHandlerTests
             new(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
 
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class TestBusinessDateProvider : IInventoryBusinessDateProvider
+    {
+        public Task<DateOnly?> GetAsync(
+            Guid propertyId,
+            DateTimeOffset nowUtc,
+            CancellationToken cancellationToken) => Task.FromResult<DateOnly?>(
+                DateOnly.FromDateTime(nowUtc.UtcDateTime));
     }
 
     private sealed class TestIdGenerator : IIdGenerator

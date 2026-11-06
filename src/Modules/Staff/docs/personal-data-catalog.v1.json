@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogId": "staff.personal-data",
-  "catalogVersion": 20,
+  "catalogVersion": 21,
   "module": "staff",
   "approvalState": "engineering-default",
   "accessPolicies": [
@@ -57,7 +57,8 @@
       "scope": "tenant-property-authorized",
       "readers": [
         "permission:staff.read",
-        "system:staff-authorized-audience-reader"
+        "system:staff-authorized-audience-reader",
+        "system:station-authorized-roster-reader"
       ],
       "writers": [
         "permission:staff.assign-properties",
@@ -143,21 +144,6 @@
       ]
     },
     {
-      "id": "staff-identity-provisioning-anchors",
-      "scope": "tenant-staff-identity-provisioning",
-      "readers": [
-        "permission:staff.sensitive-profile.read",
-        "subject:self",
-        "system:staff.data-rights-export",
-        "system:staff.tenant-export",
-        "system:workspace-staff-onboarding"
-      ],
-      "writers": [
-        "system:organizations.owner-bootstrap",
-        "system:workspace-staff-onboarding"
-      ]
-    },
-    {
       "id": "staff-retention-execution",
       "scope": "tenant-internal-retention-worker",
       "readers": [
@@ -191,6 +177,21 @@
         "permission:staff.create",
         "permission:staff.manage",
         "subject:self",
+        "system:workspace-staff-onboarding"
+      ]
+    },
+    {
+      "id": "staff-identity-provisioning-anchors",
+      "scope": "tenant-staff-identity-provisioning",
+      "readers": [
+        "permission:staff.sensitive-profile.read",
+        "subject:self",
+        "system:staff.data-rights-export",
+        "system:staff.tenant-export",
+        "system:workspace-staff-onboarding"
+      ],
+      "writers": [
+        "system:organizations.owner-bootstrap",
         "system:workspace-staff-onboarding"
       ]
     }
@@ -309,13 +310,6 @@
       "legalHoldBehavior": "delete-with-owner-profile-disposition"
     },
     {
-      "id": "staff-identity-provisioning-anchor",
-      "approvalState": "engineering-default",
-      "startsAt": "staff-identity-provisioning-anchored",
-      "endsAt": "tenant-termination",
-      "legalHoldBehavior": "retain-durable-provisioning-coordinate"
-    },
-    {
       "id": "staff-retention-anonymisation-proof",
       "approvalState": "engineering-default",
       "startsAt": "staff-retention-anonymisation-completed",
@@ -342,6 +336,13 @@
       "startsAt": "response-created",
       "endsAt": "response-completed",
       "legalHoldBehavior": "not-applicable"
+    },
+    {
+      "id": "staff-identity-provisioning-anchor",
+      "approvalState": "engineering-default",
+      "startsAt": "staff-identity-provisioning-anchored",
+      "endsAt": "tenant-termination",
+      "legalHoldBehavior": "retain-durable-provisioning-coordinate"
     }
   ],
   "rightsPolicies": [
@@ -423,13 +424,6 @@
       "erasure": "delete-with-approved-staff-anonymisation"
     },
     {
-      "id": "staff-identity-provisioning-anchor-control",
-      "export": "include-in-authorized-staff-or-tenant-export",
-      "correction": "immutable-provisioning-coordinate",
-      "restriction": "retain-for-identity-provisioning-reconciliation",
-      "erasure": "retain-pseudonymous-linkage-until-tenant-termination"
-    },
-    {
       "id": "staff-retention-control",
       "export": "include-in-controller-authorized-tenant-export",
       "correction": "retry-through-the-same-execution-coordinate",
@@ -449,6 +443,13 @@
       "correction": "replace-before-submission",
       "restriction": "discard-request",
       "erasure": "discard-on-request-completion"
+    },
+    {
+      "id": "staff-identity-provisioning-anchor-control",
+      "export": "include-in-authorized-staff-or-tenant-export",
+      "correction": "immutable-provisioning-coordinate",
+      "restriction": "retain-for-identity-provisioning-reconciliation",
+      "erasure": "retain-pseudonymous-linkage-until-tenant-termination"
     }
   ],
   "fields": [
@@ -2628,27 +2629,6 @@
           "retentionPolicy": "transient-request"
         },
         {
-          "assembly": "BunkFy.Modules.Staff.Contracts",
-          "type": "BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCandidate",
-          "member": "ExpectedAuthSubjectId",
-          "surface": "integration-command",
-          "retentionPolicy": "transient-request"
-        },
-        {
-          "assembly": "BunkFy.Modules.Staff.Contracts",
-          "type": "BunkFy.Modules.Staff.Contracts.StaffWorkspaceOnboardingIdentityAnchorOutcomeRequest",
-          "member": "ExpectedAuthSubjectId",
-          "surface": "integration-command",
-          "retentionPolicy": "transient-request"
-        },
-        {
-          "assembly": "BunkFy.Modules.Staff.Application",
-          "type": "BunkFy.Modules.Staff.Application.Ports.StaffMemberSafetyEvidence",
-          "member": "AuthSubjectId",
-          "surface": "application-query",
-          "retentionPolicy": "transient-request"
-        },
-        {
           "assembly": "BunkFy.Modules.Staff.Domain",
           "type": "BunkFy.Modules.Staff.Domain.Aggregates.StaffMember",
           "member": "AuthSubjectId",
@@ -2674,6 +2654,55 @@
           "member": "AuthSubjectId",
           "surface": "projection-export",
           "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Api",
+          "type": "BunkFy.Modules.Staff.Api.Requests.StaffAccountDirectoryResolveRequest",
+          "member": "AuthSubjectIds",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Application",
+          "type": "BunkFy.Modules.Staff.Application.Queries.ResolveStaffAccountDirectoryQuery",
+          "member": "AuthSubjectIds",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "AuthSubjectId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "AuthSubjectId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCandidate",
+          "member": "ExpectedAuthSubjectId",
+          "surface": "integration-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffWorkspaceOnboardingIdentityAnchorOutcomeRequest",
+          "member": "ExpectedAuthSubjectId",
+          "surface": "integration-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Application",
+          "type": "BunkFy.Modules.Staff.Application.Ports.StaffMemberSafetyEvidence",
+          "member": "AuthSubjectId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
         }
       ]
     },
@@ -4760,6 +4789,20 @@
           "member": "Items",
           "surface": "api-response",
           "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryResponse",
+          "member": "Items",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryResponse",
+          "member": "Items",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -4789,6 +4832,7 @@
         "data-rights-export",
         "integration-command",
         "persistence",
+        "projection-export",
         "search-index"
       ],
       "allowedBoundaries": [
@@ -4799,6 +4843,13 @@
       ],
       "approvalState": "engineering-default",
       "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffStationLabel",
+          "member": "DisplayName",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
         {
           "assembly": "BunkFy.Modules.Staff.AdminApi",
           "type": "BunkFy.Modules.Staff.AdminApi.StaffAdminApiModule+StaffProfileUpdateRequest",
@@ -4976,6 +5027,20 @@
           "type": "BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto",
           "member": "DisplayName",
           "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "DisplayName",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "DisplayName",
+          "surface": "admin-output",
           "retentionPolicy": "transient-response"
         }
       ]
@@ -5651,12 +5716,6 @@
           "surface": "integration-event"
         },
         {
-          "assembly": "BunkFy.Modules.Staff.Contracts",
-          "type": "BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCreatedIntegrationEvent",
-          "member": "EventId",
-          "surface": "integration-event"
-        },
-        {
           "assembly": "BunkFy.Modules.Staff.Domain",
           "type": "BunkFy.Modules.Staff.Domain.Events.StaffAuthSubjectChangedDomainEvent",
           "member": "EventId",
@@ -5697,6 +5756,12 @@
           "member": "EventId",
           "surface": "domain-event",
           "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCreatedIntegrationEvent",
+          "member": "EventId",
+          "surface": "integration-event"
         }
       ]
     },
@@ -5848,12 +5913,6 @@
           "surface": "integration-event"
         },
         {
-          "assembly": "BunkFy.Modules.Staff.Contracts",
-          "type": "BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCreatedIntegrationEvent",
-          "member": "OccurredAtUtc",
-          "surface": "integration-event"
-        },
-        {
           "assembly": "BunkFy.Modules.Staff.Domain",
           "type": "BunkFy.Modules.Staff.Domain.Events.StaffAuthSubjectChangedDomainEvent",
           "member": "OccurredAtUtc",
@@ -5894,6 +5953,12 @@
           "member": "OccurredAtUtc",
           "surface": "domain-event",
           "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffIdentityProvisioningAnchorCreatedIntegrationEvent",
+          "member": "OccurredAtUtc",
+          "surface": "integration-event"
         }
       ]
     },
@@ -8393,6 +8458,20 @@
           "member": "JobTitle",
           "surface": "api-response",
           "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "JobTitle",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "JobTitle",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -9234,6 +9313,13 @@
       "approvalState": "engineering-default",
       "bindings": [
         {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffStationLabel",
+          "member": "Version",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
           "assembly": "BunkFy.Modules.Staff.AdminApi",
           "type": "BunkFy.Modules.Staff.AdminApi.StaffAdminApiModule+StaffAssignmentRequest",
           "member": "ExpectedVersion",
@@ -9531,6 +9617,20 @@
           "type": "BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto",
           "member": "Version",
           "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "Version",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "Version",
+          "surface": "admin-output",
           "retentionPolicy": "transient-response"
         }
       ]
@@ -9879,6 +9979,7 @@
       "retentionPolicy": "staff-processing-restriction-lifecycle",
       "rightsPolicy": "staff-processing-restriction-control",
       "allowedSurfaces": [
+        "application-command",
         "domain-event",
         "integration-command",
         "integration-event",
@@ -9891,6 +9992,13 @@
       ],
       "approvalState": "engineering-default",
       "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Staff.Application",
+          "type": "BunkFy.Modules.Staff.Application.Commands.ReleaseStaffProcessingRestrictionCommand",
+          "member": "LegacyUnboundTarget",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
         {
           "assembly": "BunkFy.Modules.Staff.Contracts",
           "type": "BunkFy.Modules.Staff.Contracts.StaffProcessingRestrictionChangedIntegrationEvent",
@@ -11620,6 +11728,13 @@
       "bindings": [
         {
           "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffStationLabel",
+          "member": "StaffMemberId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
           "type": "BunkFy.Modules.Staff.Contracts.StaffMemberMutationReceiptDto",
           "member": "StaffMemberId",
           "surface": "admin-output",
@@ -11901,6 +12016,20 @@
           "member": "StaffMemberId",
           "surface": "api-response",
           "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "StaffMemberId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "StaffMemberId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -12046,6 +12175,20 @@
           "type": "BunkFy.Modules.Staff.Contracts.StaffPropertyDirectoryListItemDto",
           "member": "Status",
           "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "Status",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Staff.Contracts",
+          "type": "BunkFy.Modules.Staff.Contracts.StaffAccountDirectoryEntryDto",
+          "member": "Status",
+          "surface": "admin-output",
           "retentionPolicy": "transient-response"
         }
       ]
@@ -12870,16 +13013,34 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "standard",
-      "purposes": ["exact-retry", "mutation-correlation"],
-      "sources": ["accepted-workspace-onboarding", "authorized-staff-management-client"],
+      "purposes": [
+        "exact-retry",
+        "mutation-correlation"
+      ],
+      "sources": [
+        "accepted-workspace-onboarding",
+        "authorized-staff-management-client"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["admin-input", "api-input", "application-command", "integration-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["customer-api", "cross-module", "intra-module", "support"],
+      "allowedSurfaces": [
+        "admin-input",
+        "api-input",
+        "application-command",
+        "integration-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "customer-api",
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13035,16 +13196,28 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "standard",
-      "purposes": ["tenant-isolation", "exact-retry"],
-      "sources": ["tenant-context"],
+      "purposes": [
+        "tenant-isolation",
+        "exact-retry"
+      ],
+      "sources": [
+        "tenant-context"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13074,16 +13247,28 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "standard",
-      "purposes": ["staff-record-linkage", "exact-retry"],
-      "sources": ["staff-profile"],
+      "purposes": [
+        "staff-record-linkage",
+        "exact-retry"
+      ],
+      "sources": [
+        "staff-profile"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13113,16 +13298,28 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "standard",
-      "purposes": ["exact-retry", "mutation-audit"],
-      "sources": ["authorized-staff-member-mutation"],
+      "purposes": [
+        "exact-retry",
+        "mutation-audit"
+      ],
+      "sources": [
+        "authorized-staff-member-mutation"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13152,16 +13349,28 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["optimistic-concurrency", "exact-retry"],
-      "sources": ["authorized-staff-management-request"],
+      "purposes": [
+        "optimistic-concurrency",
+        "exact-retry"
+      ],
+      "sources": [
+        "authorized-staff-management-request"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13191,16 +13400,29 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "elevated",
-      "purposes": ["exact-retry", "request-equivalence"],
-      "sources": ["normalized-staff-member-mutation-request", "system-generated-sha256"],
+      "purposes": [
+        "exact-retry",
+        "request-equivalence"
+      ],
+      "sources": [
+        "normalized-staff-member-mutation-request",
+        "system-generated-sha256"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13230,16 +13452,28 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["original-receipt-replay", "mutation-audit"],
-      "sources": ["staff-member-mutation"],
+      "purposes": [
+        "original-receipt-replay",
+        "mutation-audit"
+      ],
+      "sources": [
+        "staff-member-mutation"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13269,16 +13503,28 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["original-receipt-replay", "mutation-audit"],
-      "sources": ["staff-member-mutation"],
+      "purposes": [
+        "original-receipt-replay",
+        "mutation-audit"
+      ],
+      "sources": [
+        "staff-member-mutation"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13308,16 +13554,32 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["original-receipt-replay", "mutation-audit"],
-      "sources": ["system-clock"],
+      "purposes": [
+        "original-receipt-replay",
+        "mutation-audit"
+      ],
+      "sources": [
+        "system-clock"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["admin-output", "api-response", "application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["customer-api", "cross-module", "intra-module", "support"],
+      "allowedSurfaces": [
+        "admin-output",
+        "api-response",
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "customer-api",
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13361,16 +13623,26 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "elevated",
-      "purposes": ["tenant-portability", "exact-retry", "mutation-audit"],
-      "sources": ["staff-member-mutation-operation-journal"],
+      "purposes": [
+        "tenant-portability",
+        "exact-retry",
+        "mutation-audit"
+      ],
+      "sources": [
+        "staff-member-mutation-operation-journal"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-member-mutation-operations",
       "countryPolicyKey": "staff.member-mutation-operation",
       "retentionPolicy": "staff-member-mutation-operation-journal",
       "rightsPolicy": "staff-member-mutation-operation-replay",
-      "allowedSurfaces": ["data-rights-export"],
-      "allowedBoundaries": ["cross-module"],
+      "allowedSurfaces": [
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13387,16 +13659,28 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "standard",
-      "purposes": ["tenant-isolation", "identity-provisioning-reconciliation"],
-      "sources": ["tenant-context"],
+      "purposes": [
+        "tenant-isolation",
+        "identity-provisioning-reconciliation"
+      ],
+      "sources": [
+        "tenant-context"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "integration-event", "persistence"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "integration-event",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13439,16 +13723,31 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "standard",
-      "purposes": ["identity-provisioning-reconciliation", "tenant-portability"],
-      "sources": ["accepted-provisioning-source"],
+      "purposes": [
+        "identity-provisioning-reconciliation",
+        "tenant-portability"
+      ],
+      "sources": [
+        "accepted-provisioning-source"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "application-query", "integration-command", "persistence", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "application-query",
+        "integration-command",
+        "persistence",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13519,16 +13818,33 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "standard",
-      "purposes": ["identity-provisioning-reconciliation", "exact-retry", "tenant-portability"],
-      "sources": ["accepted-provisioning-source"],
+      "purposes": [
+        "identity-provisioning-reconciliation",
+        "exact-retry",
+        "tenant-portability"
+      ],
+      "sources": [
+        "accepted-provisioning-source"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "application-query", "integration-command", "integration-event", "persistence", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "application-query",
+        "integration-command",
+        "integration-event",
+        "persistence",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13641,16 +13957,33 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "standard",
-      "purposes": ["staff-record-linkage", "identity-provisioning-reconciliation", "tenant-portability"],
-      "sources": ["staff-profile"],
+      "purposes": [
+        "staff-record-linkage",
+        "identity-provisioning-reconciliation",
+        "tenant-portability"
+      ],
+      "sources": [
+        "staff-profile"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "application-query", "integration-command", "integration-event", "persistence", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "application-query",
+        "integration-command",
+        "integration-event",
+        "persistence",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13735,16 +14068,28 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["identity-provisioning-reconciliation", "tenant-portability"],
-      "sources": ["system-clock"],
+      "purposes": [
+        "identity-provisioning-reconciliation",
+        "tenant-portability"
+      ],
+      "sources": [
+        "system-clock"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13774,16 +14119,29 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "elevated",
-      "purposes": ["tenant-portability", "identity-provisioning-reconciliation"],
-      "sources": ["staff-identity-provisioning-anchor"],
+      "purposes": [
+        "tenant-portability",
+        "identity-provisioning-reconciliation"
+      ],
+      "sources": [
+        "staff-identity-provisioning-anchor"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "application-query", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "application-query",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13828,16 +14186,28 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "elevated",
-      "purposes": ["tenant-portability", "identity-provisioning-reconciliation", "lifecycle-safety"],
-      "sources": ["workspace-onboarding-redaction-acknowledgement"],
+      "purposes": [
+        "tenant-portability",
+        "identity-provisioning-reconciliation",
+        "lifecycle-safety"
+      ],
+      "sources": [
+        "workspace-onboarding-redaction-acknowledgement"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13861,16 +14231,31 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["exact-retry", "redaction-acknowledgement", "tenant-portability"],
-      "sources": ["workspace-onboarding-aggregate"],
+      "purposes": [
+        "exact-retry",
+        "redaction-acknowledgement",
+        "tenant-portability"
+      ],
+      "sources": [
+        "workspace-onboarding-aggregate"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "integration-command", "persistence", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "integration-command",
+        "persistence",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13914,16 +14299,31 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["redaction-acknowledgement", "lifecycle-safety", "tenant-portability"],
-      "sources": ["workspace-onboarding-terminal-transition"],
+      "purposes": [
+        "redaction-acknowledgement",
+        "lifecycle-safety",
+        "tenant-portability"
+      ],
+      "sources": [
+        "workspace-onboarding-terminal-transition"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "integration-command", "persistence", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "integration-command",
+        "persistence",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -13967,16 +14367,32 @@
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
       "sensitivity": "standard",
-      "purposes": ["exact-retry", "redaction-acknowledgement", "tenant-portability"],
-      "sources": ["staff-identity-provisioning-anchor-writer"],
+      "purposes": [
+        "exact-retry",
+        "redaction-acknowledgement",
+        "tenant-portability"
+      ],
+      "sources": [
+        "staff-identity-provisioning-anchor-writer"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "integration-command", "integration-event", "persistence", "projection-export", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "integration-command",
+        "integration-event",
+        "persistence",
+        "projection-export",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -14054,16 +14470,30 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["redaction-acknowledgement", "lifecycle-safety", "tenant-portability"],
-      "sources": ["workspace-onboarding-resolution-event"],
+      "purposes": [
+        "redaction-acknowledgement",
+        "lifecycle-safety",
+        "tenant-portability"
+      ],
+      "sources": [
+        "workspace-onboarding-resolution-event"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "staff-identity-provisioning-anchor",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["application-command", "integration-command", "persistence", "data-rights-export"],
-      "allowedBoundaries": ["cross-module", "intra-module"],
+      "allowedSurfaces": [
+        "application-command",
+        "integration-command",
+        "persistence",
+        "data-rights-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -14100,16 +14530,25 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["identity-provisioning-reconciliation", "lifecycle-safety"],
-      "sources": ["staff-identity-provisioning-anchor-state"],
+      "purposes": [
+        "identity-provisioning-reconciliation",
+        "lifecycle-safety"
+      ],
+      "sources": [
+        "staff-identity-provisioning-anchor-state"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "transient-response",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["projection-export"],
-      "allowedBoundaries": ["cross-module"],
+      "allowedSurfaces": [
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -14126,16 +14565,25 @@
       "dataSubject": "staff",
       "classification": "lifecycle",
       "sensitivity": "standard",
-      "purposes": ["identity-provisioning-reconciliation", "access-non-resurrection"],
-      "sources": ["staff-profile-lifecycle"],
+      "purposes": [
+        "identity-provisioning-reconciliation",
+        "access-non-resurrection"
+      ],
+      "sources": [
+        "staff-profile-lifecycle"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "transient-response",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["projection-export"],
-      "allowedBoundaries": ["cross-module"],
+      "allowedSurfaces": [
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -14152,16 +14600,25 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "elevated",
-      "purposes": ["identity-provisioning-reconciliation", "access-non-resurrection"],
-      "sources": ["transient-auth-subject-comparison"],
+      "purposes": [
+        "identity-provisioning-reconciliation",
+        "access-non-resurrection"
+      ],
+      "sources": [
+        "transient-auth-subject-comparison"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "transient-response",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["projection-export"],
-      "allowedBoundaries": ["cross-module"],
+      "allowedSurfaces": [
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -14178,16 +14635,25 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "standard",
-      "purposes": ["identity-provisioning-cutover", "conflict-remediation"],
-      "sources": ["staff-identity-provisioning-anchor-inspection"],
+      "purposes": [
+        "identity-provisioning-cutover",
+        "conflict-remediation"
+      ],
+      "sources": [
+        "staff-identity-provisioning-anchor-inspection"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "transient-response",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["projection-export"],
-      "allowedBoundaries": ["cross-module"],
+      "allowedSurfaces": [
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {
@@ -14204,16 +14670,25 @@
       "dataSubject": "staff",
       "classification": "linked-operational",
       "sensitivity": "elevated",
-      "purposes": ["identity-provisioning-cutover", "reviewed-erasure-evidence"],
-      "sources": ["operator-reviewed-cutover-manifest"],
+      "purposes": [
+        "identity-provisioning-cutover",
+        "reviewed-erasure-evidence"
+      ],
+      "sources": [
+        "operator-reviewed-cutover-manifest"
+      ],
       "authoritativeOwner": "staff",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
       "accessPolicy": "staff-identity-provisioning-anchors",
       "countryPolicyKey": "staff.identity-provisioning-anchor",
       "retentionPolicy": "transient-request",
       "rightsPolicy": "staff-identity-provisioning-anchor-control",
-      "allowedSurfaces": ["integration-command"],
-      "allowedBoundaries": ["cross-module"],
+      "allowedSurfaces": [
+        "integration-command"
+      ],
+      "allowedBoundaries": [
+        "cross-module"
+      ],
       "approvalState": "engineering-default",
       "bindings": [
         {

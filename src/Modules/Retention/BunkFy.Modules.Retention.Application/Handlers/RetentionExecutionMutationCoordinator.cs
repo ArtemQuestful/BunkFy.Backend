@@ -4,15 +4,18 @@ using BunkFy.Modules.Retention.Application.Commands;
 using BunkFy.Modules.Retention.Application.Ports;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Retention.Domain.Aggregates;
+using BunkFy.Modules.Retention.Domain.Models;
 using Gma.Framework.Scoping;
 
 internal sealed record RetentionExecutionStartLease(
     bool TargetAvailable,
+    bool ScheduleAvailable,
     RetentionExecution? Execution);
 
 internal sealed class RetentionExecutionMutationCoordinator(
     IRetentionMutationLock mutationLock,
     IRetentionExecutionRepository executions,
+    IRetentionScheduleHealthReader scheduleHealth,
     IRetentionScopeRepository scopes,
     IScopeContext scopeContext)
 {
@@ -62,7 +65,20 @@ internal sealed class RetentionExecutionMutationCoordinator(
                     cancellationToken)
                 .ConfigureAwait(false)
             : null;
-        return new(targetAvailable, execution);
+        RetentionScheduleStateSnapshot? schedule = targetAvailable
+            ? await scheduleHealth.GetAsync(
+                    tenantId,
+                    command.OwnerKey,
+                    command.DataClassKey,
+                    command.PropertyId,
+                    command.ExecutionPolicyVersion,
+                    cancellationToken)
+                .ConfigureAwait(false)
+            : null;
+        bool scheduleAvailable = schedule is null ||
+            schedule.State != (int)RetentionExecutionState.Running ||
+            schedule.LastExecutionId == command.ExecutionId;
+        return new(targetAvailable, scheduleAvailable, execution);
     }
 
     public async Task<RetentionExecution?> AcquireCompletionAsync(

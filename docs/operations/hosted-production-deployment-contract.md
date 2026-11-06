@@ -165,6 +165,13 @@ services disabled. Approved replay and retention windows, task/NATS composition
 constraints, and activation evidence are defined in
 [Durable Runtime Production Admission](durable-runtime-production-admission.md).
 
+For `WORKER-RESERVATIONS-0104-REPAIR`, bind the repaired Worker composition to
+the same immutable API/Worker release identity and admission attempt. Before
+enabling affected work, retain the isolated actual-PostgreSQL rebuild receipt
+and prove the Reservations-owned writer, transaction and checkpoint store are
+selected. A healthy API or web preview is not evidence of Worker task success.
+See the dated writer-ownership amendment in the durable-runtime contract.
+
 ## External Adapter Daemons
 
 Every Production `BunkFy.AdapterHost` deployment declares its exact release,
@@ -213,6 +220,14 @@ In distributed HTTP mode, Redis/provider unavailability fails closed with a
 bounded `503` response. An exceeded budget returns `429`; neither response
 includes client addresses or provider details.
 
+Reservations property-projection task failures require a bounded operational
+signal and an owned recovery runbook. Preserve failed attempts and compare
+pending/failed task counts before and after a specifically admitted retry or
+correlated rebuild. Verify completed checkpoints and exact projection rows for
+both synthetic tenant controls, no crossed-tenant output, and no unrelated queue
+regression. Record private alert routing and the responsible operator; this
+requirement does not claim those hosted controls already exist.
+
 ## Rollout And Rollback
 
 The root `Product Image Evidence` workflow can produce candidate-only backend
@@ -232,7 +247,35 @@ listed below.
 6. Roll back to a recorded prior digest while preserving compatible database,
    object-store, and Data Protection state.
 
+For the Reservations writer-ownership repair, the rollout receipt additionally
+binds the exact repaired source/image, old failure evidence, explicit task-retry
+decision, before/after backlog and task states, projection/checkpoint results,
+and bounded logs/metrics. Pin the prior Worker digest and name the rollback or
+forward-fix owner. Rolling back the binary does not undo successfully rebuilt
+data; retain compatible schema and checkpoints, and do not delete task history
+or restore stale projections merely to match an older binary. The bounded DI
+repair adds no schema or API contract change; do not invent a migration for it.
+Normal migration admission still applies if other changes share the release.
+
+Local implementation/tests, exact-commit CI, compiled images, hosted execution,
+private monitoring and executed rollback are separate evidence gates. The dated
+repair amendment alone advances none of the hosted/private gates.
+
 ## Evidence Still Required
+
+### Shared stations (28 September 2026 candidate amendment)
+
+Stations remains default-off. Activation additionally binds the exact HTTPS
+origin/cookie/CSRF behavior, primary authentication and assurance, PostgreSQL
+migration catalogue, deployment-owned pepper/version/external epoch, persistent
+protected Data Protection keys and distributed `station-read`/`station-write`
+policy behavior. Legacy and current station implementations must not coexist.
+Verify negative configuration and deployed edge/provider-outage cases; do not
+treat configuration validation as proof of key durability or hosted controls.
+The bounded first job is due-arrival check-in, not the entire primary workspace.
+See [Shared-station PIN admission](stations-production-admission.md) for canary,
+support, rights/retention, monitoring, restore non-resurrection and rollback
+requirements. No production activation is granted by this amendment.
 
 Before a hosted launch, private operations must retain:
 

@@ -10,7 +10,8 @@ internal sealed class WorkspaceAccessProvisioner(
     IAccessControlRoleProvisioner roles,
     IAccessProfileProvisioner profiles,
     IScopedAccessProfileProvisioner scopedProfiles,
-    IEnumerable<IAccessProfileManager> profileManagers)
+    IEnumerable<IAccessProfileManager> profileManagers,
+    IEnumerable<IScopedAccessProfileManager> scopedProfileManagers)
 {
     internal const string ProvisioningActorId = WorkspaceAccessActors.Provisioner;
     private const int AssignmentPageSize = 100;
@@ -18,6 +19,10 @@ internal sealed class WorkspaceAccessProvisioner(
     private readonly IAccessProfileProvisioner profiles = profiles;
     private readonly IScopedAccessProfileProvisioner scopedProfiles = scopedProfiles;
     private readonly IAccessProfileManager? profileManager = profileManagers.SingleOrDefault();
+    private readonly IScopedAccessProfileManager scopedProfileManager =
+        scopedProfileManagers.SingleOrDefault() ??
+        throw new InvalidOperationException(
+            "Workspace access provisioning requires the supported scoped profile manager composition.");
 
     internal WorkspaceAccessProvisioner(
         IAccessControlRoleProvisioner roles,
@@ -28,7 +33,8 @@ internal sealed class WorkspaceAccessProvisioner(
             roles,
             profiles,
             scopedProfiles,
-            profileManager is null ? [] : [profileManager])
+            profileManager is null ? [] : [profileManager],
+            [new LegacyScopedProfileManagerAdapter(scopedProfiles)])
     {
     }
 
@@ -85,7 +91,7 @@ internal sealed class WorkspaceAccessProvisioner(
             .ConfigureAwait(false);
     }
 
-    public async Task ProvisionMemberAsync(
+    public async Task<Result> ProvisionMemberAsync(
         string workspaceId,
         string subjectId,
         Guid profileId,
@@ -114,15 +120,87 @@ internal sealed class WorkspaceAccessProvisioner(
             : distinctPropertyIds.Select(propertyId => new AccessProfileAssignmentTarget(
                 profileId,
                 WorkspaceAccessScopes.CreateProperty(workspaceId, propertyId))).ToArray();
-        await this.scopedProfiles.ReconcileSubjectScopedAssignmentsAsync(
-            subject,
-            workspaceScope,
-            targets,
-            actor,
-            cancellationToken).ConfigureAwait(false);
+        Result<ScopedAccessProfileAssignmentReconciliation> reconciled =
+            await this.scopedProfileManager.ReconcileSubjectAssignmentsAsync(
+                subject,
+                workspaceScope,
+                targets,
+                actor,
+                cancellationToken).ConfigureAwait(false);
+        if (reconciled.IsFailure)
+        {
+            return Result.Failure(reconciled.Error);
+        }
+
         await this.RemoveLegacyMemberAssignmentAsync(subject, workspaceScope, cancellationToken)
             .ConfigureAwait(false);
+        return Result.Success();
     }
+
+    public async Task<WorkspaceMemberAccessEquivalence> InspectMemberEquivalenceAsync(
+        string workspaceId,
+        string subjectId,
+        AccessProfileDto expectedProfile,
+        IReadOnlyCollection<Guid> propertyIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(expectedProfile);
+        AccessScope workspaceScope = WorkspaceAccessScopes.Create(workspaceId);
+        AccessSubject subject = AccessSubject.User(subjectId);
+        bool hasMarker = await this.roles.HasAssignmentAsync(
+                subject,
+                WorkspaceAccessRoles.MembershipMarker,
+                workspaceScope,
+                cancellationToken).ConfigureAwait(false);
+        bool hasLegacy = await this.roles.HasAssignmentAsync(
+                subject,
+                WorkspaceAccessRoles.LegacyMember,
+                workspaceScope,
+                cancellationToken).ConfigureAwait(false);
+        bool hasOwner = await this.roles.HasAssignmentAsync(
+                subject,
+                WorkspaceAccessRoles.Owner,
+                workspaceScope,
+                cancellationToken).ConfigureAwait(false);
+        ScopedAccessProfileAssignmentSet current = await this.scopedProfiles
+            .GetSubjectScopedAssignmentsAsync(
+                subject,
+                workspaceScope,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        AccessScope[] expectedScopes = propertyIds.Distinct().Order().Any()
+            ? propertyIds.Distinct().Order()
+                .Select(propertyId =>
+                    WorkspaceAccessScopes.CreateProperty(
+                        workspaceId,
+                        propertyId))
+                .ToArray()
+            : [workspaceScope];
+        bool exactAssignments = current.Assignments.Count == expectedScopes.Length &&
+            current.Assignments.All(assignment =>
+                MatchesProfile(assignment.Profile, expectedProfile) &&
+                expectedScopes.Contains(assignment.AssignmentScope));
+        return hasMarker && !hasLegacy && !hasOwner && exactAssignments
+            ? WorkspaceMemberAccessEquivalence.Equivalent
+            : WorkspaceMemberAccessEquivalence.Conflict;
+    }
+
+    private static bool MatchesProfile(
+        AccessProfileDto actual,
+        AccessProfileDto expected) =>
+        actual.Id == expected.Id &&
+        string.Equals(
+            actual.OwnerScope,
+            expected.OwnerScope,
+            StringComparison.Ordinal) &&
+        string.Equals(actual.Key, expected.Key, StringComparison.Ordinal) &&
+        actual.Status == AccessProfileStatus.Active &&
+        expected.Status == AccessProfileStatus.Active &&
+        actual.Version == expected.Version &&
+        actual.Permissions.Order(StringComparer.Ordinal).SequenceEqual(
+            expected.Permissions.Order(StringComparer.Ordinal),
+            StringComparer.Ordinal);
 
     private async Task ProvisionDefaultMemberAsync(
         AccessSubject subject,
@@ -530,4 +608,45 @@ internal sealed class WorkspaceAccessProvisioner(
             pageNumber++;
         }
     }
+
+    // Internal constructors support existing unit-level collaborators. Runtime
+    // DI enters through the primary constructor and requires the Result-based
+    // IScopedAccessProfileManager implementation.
+    private sealed class LegacyScopedProfileManagerAdapter(
+        IScopedAccessProfileProvisioner provisioner)
+        : IScopedAccessProfileManager
+    {
+        public async Task<Result<ScopedAccessProfileAssignmentSet>>
+            GetSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                AccessSubject actor,
+                CancellationToken cancellationToken = default) =>
+            Result.Success(await provisioner.GetSubjectScopedAssignmentsAsync(
+                    subject,
+                    ownerScope,
+                    cancellationToken)
+                .ConfigureAwait(false));
+
+        public async Task<Result<ScopedAccessProfileAssignmentReconciliation>>
+            ReconcileSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                IReadOnlyCollection<AccessProfileAssignmentTarget> targets,
+                AccessSubject actor,
+                CancellationToken cancellationToken = default) =>
+            Result.Success(await provisioner.ReconcileSubjectScopedAssignmentsAsync(
+                    subject,
+                    ownerScope,
+                    targets,
+                    actor,
+                    cancellationToken)
+                .ConfigureAwait(false));
+    }
+}
+
+internal enum WorkspaceMemberAccessEquivalence
+{
+    Conflict = 0,
+    Equivalent = 1
 }

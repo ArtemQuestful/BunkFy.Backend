@@ -33,6 +33,11 @@ internal sealed class DataRightsExportArtifactConfiguration
                 "CK_data_rights_export_artifacts_version",
                 "\"Version\" >= 1");
             table.HasCheckConstraint(
+                "CK_data_rights_export_artifacts_retry_version",
+                "\"LastRetryBaseVersion\" IS NULL OR " +
+                "(\"LastRetryBaseVersion\" >= 1 AND " +
+                "\"LastRetryBaseVersion\" < \"Version\")");
+            table.HasCheckConstraint(
                 "CK_data_rights_export_artifacts_timestamps",
                 "\"ExpiresAtUtc\" > \"RequestedAtUtc\" AND " +
                 "(\"GenerationStartedAtUtc\" IS NULL OR " +

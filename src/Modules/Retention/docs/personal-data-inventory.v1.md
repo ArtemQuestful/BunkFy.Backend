@@ -1,4 +1,4 @@
-# retention Personal-Data Inventory v3
+# retention Personal-Data Inventory v4
 
 Generated from `retention.personal-data` schema v1.
 Catalogue approval: `engineering-default`.
@@ -32,19 +32,24 @@ Engineering metadata is not legal or country-launch approval.
 
 | Id | Subject | Class | Sensitivity | Purposes | Sources | Owner | Context | Access | Country | Retention | Rights | Surfaces | Boundaries | Approval |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| retention.property-reference | account-holder | linked-operational | elevated | owner-module-execution<br>property-retention-scheduling<br>schedule-health | properties-projection | properties | customer-controller-bunk-fy-processor | retention-control-plane | retention.property-reference | retention-control-plane-evidence | retention-scope-coordinate | api-response<br>application-query<br>data-rights-export<br>integration-command<br>persistence | cross-module<br>customer-api<br>intra-module<br>processor | engineering-default |
+| retention.property-reference | account-holder | linked-operational | elevated | owner-module-execution<br>property-retention-scheduling<br>schedule-health | properties-projection | properties | customer-controller-bunk-fy-processor | retention-control-plane | retention.property-reference | retention-control-plane-evidence | retention-scope-coordinate | api-input<br>api-response<br>application-command<br>application-query<br>data-rights-export<br>integration-command<br>persistence | cross-module<br>customer-api<br>intra-module<br>processor | engineering-default |
 | retention.tenant-destruction.owner-proof | subject-scoped | linked-operational | elevated | destruction-accountability<br>owner-proof-correlation<br>tenant-termination-safety | approved-tenant-termination-case<br>retention-owner-destruction | retention | customer-controller-bunk-fy-processor | retention-tenant-destruction-proof | retention.tenant-destruction.owner-proof | retention-tenant-destruction-proof | retention-tenant-destruction-proof-control | persistence | intra-module<br>processor | engineering-default |
-| retention.tenant-scope-reference | account-holder | pseudonymous-identifier | elevated | owner-module-execution<br>retention-scope-correlation<br>schedule-health | organizations-projection<br>tenant-execution-context | organizations | customer-controller-bunk-fy-processor | retention-control-plane | retention.tenant-scope-reference | retention-control-plane-evidence | retention-scope-coordinate | application-query<br>data-rights-export<br>integration-command<br>persistence | cross-module<br>intra-module<br>processor | engineering-default |
+| retention.tenant-scope-reference | account-holder | pseudonymous-identifier | elevated | owner-module-execution<br>retention-scope-correlation<br>schedule-health | organizations-projection<br>tenant-execution-context | organizations | customer-controller-bunk-fy-processor | retention-control-plane | retention.tenant-scope-reference | retention-control-plane-evidence | retention-scope-coordinate | application-command<br>application-query<br>data-rights-export<br>integration-command<br>integration-event<br>persistence | cross-module<br>intra-module<br>processor | engineering-default |
 
 ## Code Bindings
 
 | Field | Assembly | Type | Member | Surface | Effective retention |
 |---|---|---|---|---|---|
+| retention.property-reference | BunkFy.Modules.Retention.Application | BunkFy.Modules.Retention.Application.Commands.RetentionRunRetryExpectation | PropertyId | application-command | transient-owner-execution-request |
 | retention.property-reference | BunkFy.Modules.Retention.Application | BunkFy.Modules.Retention.Application.Ports.RetentionScheduleTarget | PropertyId | application-query | transient-owner-execution-request |
 | retention.property-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetentionContributionRequest | PropertyId | integration-command | transient-owner-execution-request |
+| retention.property-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetentionRunRetryWorkItem | PropertyId | integration-command | transient-owner-execution-request |
 | retention.property-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetentionScheduleHealthDto | PropertyId | api-response | transient-owner-execution-request |
+| retention.property-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetryRetentionScheduleRequest | PropertyId | api-input | transient-owner-execution-request |
 | retention.property-reference | BunkFy.Modules.Retention.Domain | BunkFy.Modules.Retention.Domain.Aggregates.RetentionExecution | PropertyId | persistence | retention-control-plane-evidence |
+| retention.property-reference | BunkFy.Modules.Retention.Domain | BunkFy.Modules.Retention.Domain.Aggregates.RetentionRunRetryRequest | PropertyId | persistence | retention-control-plane-evidence |
 | retention.property-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.Repositories.RetentionExecutionTenantExport | PropertyId | data-rights-export | retention-tenant-termination-export-fragment |
+| retention.property-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.Repositories.RetentionRunRetryRequestTenantExport | PropertyId | data-rights-export | retention-tenant-termination-export-fragment |
 | retention.property-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.Repositories.RetentionScheduleStateTenantExport | PropertyId | data-rights-export | retention-tenant-termination-export-fragment |
 | retention.property-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.RetentionPropertyProjection | Id | persistence | retention-control-plane-evidence |
 | retention.property-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.RetentionScheduleState | PropertyId | persistence | retention-control-plane-evidence |
@@ -74,10 +79,15 @@ Engineering metadata is not legal or country-launch approval.
 | retention.tenant-destruction.owner-proof | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.TenantTermination.RetentionTenantDestroyReceipt | ScopeId | persistence | retention-tenant-destruction-proof |
 | retention.tenant-destruction.owner-proof | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.TenantTermination.RetentionTenantDestroyReceipt | SelectedRevision | persistence | retention-tenant-destruction-proof |
 | retention.tenant-destruction.owner-proof | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.TenantTermination.RetentionTenantDestroyReceipt | StartedAtUtc | persistence | retention-tenant-destruction-proof |
+| retention.tenant-scope-reference | BunkFy.Modules.Retention.Application | BunkFy.Modules.Retention.Application.Commands.RequestRetentionRunRetryCommand | TenantId | application-command | transient-owner-execution-request |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Application | BunkFy.Modules.Retention.Application.Ports.RetentionScheduleTarget | ScopeId | application-query | transient-owner-execution-request |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetentionContributionRequest | TenantId | integration-command | transient-owner-execution-request |
+| retention.tenant-scope-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetentionRunRetryRequestedIntegrationEvent | TenantId | integration-event | transient-owner-execution-request |
+| retention.tenant-scope-reference | BunkFy.Modules.Retention.Contracts | BunkFy.Modules.Retention.Contracts.RetentionRunRetryWorkItem | TenantId | integration-command | transient-owner-execution-request |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Domain | BunkFy.Modules.Retention.Domain.Aggregates.RetentionExecution | ScopeId | persistence | retention-control-plane-evidence |
+| retention.tenant-scope-reference | BunkFy.Modules.Retention.Domain | BunkFy.Modules.Retention.Domain.Aggregates.RetentionRunRetryRequest | ScopeId | persistence | retention-control-plane-evidence |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.Repositories.RetentionExecutionTenantExport | ScopeId | data-rights-export | retention-tenant-termination-export-fragment |
+| retention.tenant-scope-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.Repositories.RetentionRunRetryRequestTenantExport | ScopeId | data-rights-export | retention-tenant-termination-export-fragment |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.Repositories.RetentionScheduleStateTenantExport | ScopeId | data-rights-export | retention-tenant-termination-export-fragment |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.RetentionScheduleState | ScopeId | persistence | retention-control-plane-evidence |
 | retention.tenant-scope-reference | BunkFy.Modules.Retention.Persistence | BunkFy.Modules.Retention.Persistence.RetentionTenantProjection | ScopeId | persistence | retention-control-plane-evidence |

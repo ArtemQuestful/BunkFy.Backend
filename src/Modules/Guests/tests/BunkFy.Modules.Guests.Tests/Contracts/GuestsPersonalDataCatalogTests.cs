@@ -123,6 +123,11 @@ public sealed class GuestsPersonalDataCatalogTests
         AssertType(
             typeof(GuestRetentionEligibilityResult),
             PersonalDataSurface.ApplicationCommand);
+        AssertBinding(
+            typeof(GuestRetentionAnonymisationProofTenantExport),
+            nameof(GuestRetentionAnonymisationProofTenantExport
+                .TimeZoneCatalogVersion),
+            PersonalDataSurface.DataRightsExport);
         AssertType(typeof(GetGuestProfileQuery), PersonalDataSurface.ApplicationQuery);
         AssertType(
             typeof(GetGuestStayHistoryQuery),

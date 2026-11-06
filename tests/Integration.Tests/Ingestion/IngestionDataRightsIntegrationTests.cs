@@ -74,17 +74,24 @@ public sealed class IngestionDataRightsIntegrationTests
                 IIngestionPropertyProjectionRepository properties =
                     scope.ServiceProvider.GetRequiredService<
                         IIngestionPropertyProjectionRepository>();
-                await properties.ApplySnapshotAsync(
-                    new(
-                        TenantId,
-                        propertyId,
-                        "Execution House",
-                        "execution-house",
-                        IsActive: true,
-                        PropertyProcessingStatus.Unconfigured,
-                        GovernancePolicy: null,
-                        SourceVersion: 1),
-                    CancellationToken.None);
+                await using (var transaction =
+                    await dbContext.Database.BeginTransactionAsync())
+                {
+                    await properties.ApplySnapshotAsync(
+                        new(
+                            TenantId,
+                            propertyId,
+                            "Execution House",
+                            "execution-house",
+                            IsActive: true,
+                            PropertyProcessingStatus.Unconfigured,
+                            GovernancePolicy: null,
+                            SourceVersion: 1),
+                        CancellationToken.None);
+                    await dbContext.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                }
+
                 await CountryPolicyIntegrationTestData
                     .ApplyActivationAsync(
                         scope.ServiceProvider,
@@ -325,17 +332,23 @@ public sealed class IngestionDataRightsIntegrationTests
             IIngestionPropertyProjectionRepository properties =
                 scope.ServiceProvider
                     .GetRequiredService<IIngestionPropertyProjectionRepository>();
-            await properties.ApplySnapshotAsync(
-                new IngestionPropertyProjectionWriteModel(
-                    TenantId,
-                    propertyId,
-                    "Provider House",
-                    "provider-house",
-                    IsActive: true,
-                    PropertyProcessingStatus.Unconfigured,
-                    GovernancePolicy: null,
-                    SourceVersion: 1),
-                CancellationToken.None);
+            await using (var transaction =
+                await dbContext.Database.BeginTransactionAsync())
+            {
+                await properties.ApplySnapshotAsync(
+                    new IngestionPropertyProjectionWriteModel(
+                        TenantId,
+                        propertyId,
+                        "Provider House",
+                        "provider-house",
+                        IsActive: true,
+                        PropertyProcessingStatus.Unconfigured,
+                        GovernancePolicy: null,
+                        SourceVersion: 1),
+                    CancellationToken.None);
+                await dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
 
             AdapterConnection connection = AdapterConnection.Create(
                 connectionId,
@@ -505,17 +518,23 @@ public sealed class IngestionDataRightsIntegrationTests
             IIngestionPropertyProjectionRepository properties =
                 scope.ServiceProvider
                     .GetRequiredService<IIngestionPropertyProjectionRepository>();
-            await properties.ApplySnapshotAsync(
-                new IngestionPropertyProjectionWriteModel(
-                    TenantId,
-                    propertyId,
-                    "Restore House",
-                    "restore-house",
-                    IsActive: true,
-                    PropertyProcessingStatus.Unconfigured,
-                    GovernancePolicy: null,
-                    SourceVersion: 1),
-                CancellationToken.None);
+            await using (var transaction =
+                await dbContext.Database.BeginTransactionAsync())
+            {
+                await properties.ApplySnapshotAsync(
+                    new IngestionPropertyProjectionWriteModel(
+                        TenantId,
+                        propertyId,
+                        "Restore House",
+                        "restore-house",
+                        IsActive: true,
+                        PropertyProcessingStatus.Unconfigured,
+                        GovernancePolicy: null,
+                        SourceVersion: 1),
+                    CancellationToken.None);
+                await dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
             AdapterConnection connection = AdapterConnection.Create(
                 connectionId,
                 TenantId,

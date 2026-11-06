@@ -818,10 +818,12 @@ public sealed class DataRightsAnonymisationExecutionIntegrationTests
 
         DataRightsDbContext dataRights =
             scope.ServiceProvider.GetRequiredService<DataRightsDbContext>();
-        await ResolveHandler<PropertyCreatedIntegrationEvent>(
-                scope.ServiceProvider,
-                DataRightsModuleMetadata.Name)
-            .HandleAsync(propertyCreated, CancellationToken.None)
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            dataRights,
+            token => ResolveHandler<PropertyCreatedIntegrationEvent>(
+                    scope.ServiceProvider,
+                    DataRightsModuleMetadata.Name)
+                .HandleAsync(propertyCreated, token))
             .ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
@@ -884,10 +886,14 @@ public sealed class DataRightsAnonymisationExecutionIntegrationTests
             PropertyStatus.Active,
             1);
 
-        await ResolveHandler<PropertyCreatedIntegrationEvent>(
-                scope.ServiceProvider,
-                ReservationsModuleMetadata.Name)
-            .HandleAsync(propertyCreated, CancellationToken.None)
+        ReservationsDbContext reservations = scope.ServiceProvider
+            .GetRequiredService<ReservationsDbContext>();
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            reservations,
+            token => ResolveHandler<PropertyCreatedIntegrationEvent>(
+                    scope.ServiceProvider,
+                    ReservationsModuleMetadata.Name)
+                .HandleAsync(propertyCreated, token))
             .ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
@@ -901,16 +907,16 @@ public sealed class DataRightsAnonymisationExecutionIntegrationTests
         await scope.ServiceProvider.GetRequiredService<IReservationRepository>()
             .AddAsync(reservation, CancellationToken.None)
             .ConfigureAwait(false);
-        await scope.ServiceProvider.GetRequiredService<ReservationsDbContext>()
-            .SaveChangesAsync()
-            .ConfigureAwait(false);
+        await reservations.SaveChangesAsync().ConfigureAwait(false);
 
         DataRightsDbContext dataRights =
             scope.ServiceProvider.GetRequiredService<DataRightsDbContext>();
-        await ResolveHandler<PropertyCreatedIntegrationEvent>(
-                scope.ServiceProvider,
-                DataRightsModuleMetadata.Name)
-            .HandleAsync(propertyCreated, CancellationToken.None)
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            dataRights,
+            token => ResolveHandler<PropertyCreatedIntegrationEvent>(
+                    scope.ServiceProvider,
+                    DataRightsModuleMetadata.Name)
+                .HandleAsync(propertyCreated, token))
             .ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
@@ -1014,10 +1020,14 @@ public sealed class DataRightsAnonymisationExecutionIntegrationTests
         guests.GuestProfiles.Add(guest);
         await guests.SaveChangesAsync().ConfigureAwait(false);
 
-        await ResolveHandler<PropertyCreatedIntegrationEvent>(
-                scope.ServiceProvider,
-                ReservationsModuleMetadata.Name)
-            .HandleAsync(propertyCreated, CancellationToken.None)
+        ReservationsDbContext reservations = scope.ServiceProvider
+            .GetRequiredService<ReservationsDbContext>();
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            reservations,
+            token => ResolveHandler<PropertyCreatedIntegrationEvent>(
+                    scope.ServiceProvider,
+                    ReservationsModuleMetadata.Name)
+                .HandleAsync(propertyCreated, token))
             .ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
@@ -1031,16 +1041,16 @@ public sealed class DataRightsAnonymisationExecutionIntegrationTests
         await scope.ServiceProvider.GetRequiredService<IReservationRepository>()
             .AddAsync(reservation, CancellationToken.None)
             .ConfigureAwait(false);
-        await scope.ServiceProvider.GetRequiredService<ReservationsDbContext>()
-            .SaveChangesAsync()
-            .ConfigureAwait(false);
+        await reservations.SaveChangesAsync().ConfigureAwait(false);
 
         DataRightsDbContext dataRights = scope.ServiceProvider
             .GetRequiredService<DataRightsDbContext>();
-        await ResolveHandler<PropertyCreatedIntegrationEvent>(
-                scope.ServiceProvider,
-                DataRightsModuleMetadata.Name)
-            .HandleAsync(propertyCreated, CancellationToken.None)
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            dataRights,
+            token => ResolveHandler<PropertyCreatedIntegrationEvent>(
+                    scope.ServiceProvider,
+                    DataRightsModuleMetadata.Name)
+                .HandleAsync(propertyCreated, token))
             .ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,

@@ -352,7 +352,7 @@ public sealed class WorkspaceStaffOnboardingMutationCoordinatorTests
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

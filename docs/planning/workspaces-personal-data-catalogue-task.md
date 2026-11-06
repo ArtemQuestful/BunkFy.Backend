@@ -85,3 +85,38 @@ Local evidence:
 - SP-003 automatic retention schedules, legal holds, and deletion evidence.
 - Final legal approval of purposes, retention periods, controller allocation,
   and country-policy activation.
+
+## 2026-08-25 Recovery-Receipt Amendment
+
+Backend checkpoint 3 retains the append-only staff-onboarding recovery receipt
+and accepted Organizations membership binding while tightening proof,
+chronology, retry, and default-off admission. This local amendment does not
+alter the historical published evidence above and is not yet exact-commit CI or
+hosted proof.
+
+- Every receipt actor role that can identify a person (applicant, plan creator,
+  and recovery actor) is discoverable. Subject export minimizes cross-subject
+  disclosure: an onboarding/Staff-linked selection includes only the
+  applicant's raw subject binding, while a direct multi-role receipt selection
+  nulls every raw actor field. This redaction is incomplete protection, not a
+  production-ready Data Rights contract: the generic request is not bound to a
+  verified requester identity and matched actor role. Full raw plan-creator and
+  recovery-operator attribution remains in the internal receipt and authorized
+  tenant-termination/controller export. The effective system actor is a
+  non-personal constant.
+- Request, target-set, Staff-state, Staff-property-set, and Access-facts hashes
+  are classified as linked personal metadata. No raw property ids, permissions,
+  profile PII, exception text, or tokens are stored in the receipt.
+- Recovery receipts inherit onboarding retention and are exported before the
+  existing tenant-termination onboarding-receipt destruction stage deletes and
+  counts them.
+- There is no historical membership-binding backfill. Legacy partial records
+  remain `ReviewRequired`.
+- Raw recovery-actor retention/pseudonymisation and verified subject/role-bound
+  Data Rights selection/export are explicit production activation blockers.
+  They are not solved by receipt field minimization or local export tests.
+
+The implementation and catalogue tests are repository evidence only. SP-001,
+SP-002, SP-003, and SP-008 still require an exact candidate, exact-commit CI,
+hosted lifecycle proof, and company privacy/legal approval before production
+activation; those evidence classes remain separate.

@@ -6,4 +6,5 @@ using Gma.Framework.Cqrs;
 
 public sealed record GetDataRightsCorrectionExecutionQuery(
     DataRightsCaseScope Scope,
-    Guid CaseId) : IQuery<DataRightsCorrectionExecutionDetailsDto>;
+    Guid CaseId,
+    string ActorId) : IQuery<DataRightsCorrectionExecutionDetailsDto>;

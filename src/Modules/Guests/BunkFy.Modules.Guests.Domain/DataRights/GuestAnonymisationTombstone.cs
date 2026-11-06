@@ -10,6 +10,7 @@ using Gma.Framework.Results;
 public sealed class GuestAnonymisationTombstone : ScopedAggregateRoot<Guid>
 {
     public const int CurrentContractVersion = 2;
+    public const long MaximumRevision = 2;
 
     private GuestAnonymisationTombstone() { }
 
@@ -142,6 +143,8 @@ public sealed class GuestAnonymisationTombstone : ScopedAggregateRoot<Guid>
         if (ledgerEntryId == Guid.Empty ||
             timestamp == default ||
             timestamp < completedAtUtc ||
+            this.ContractVersion != CurrentContractVersion ||
+            this.State != GuestAnonymisationTombstoneState.Anonymised ||
             this.Authority != GuestAnonymisationAuthority.DataRights ||
             this.CompletedAtUtc != completedAtUtc ||
             !string.Equals(
@@ -155,11 +158,18 @@ public sealed class GuestAnonymisationTombstone : ScopedAggregateRoot<Guid>
 
         if (this.LedgerEntryId.HasValue)
         {
-            return this.LedgerEntryId == ledgerEntryId &&
+            return this.Revision is >= 1 and <= MaximumRevision &&
+                this.LedgerEntryId == ledgerEntryId &&
                 this.LastReplayedAtUtc.HasValue
                 ? Result.Success()
                 : Result.Failure(
                     GuestsDomainErrors.AnonymisationTombstoneInvalid);
+        }
+
+        if (this.LastReplayedAtUtc.HasValue || this.Revision != 1)
+        {
+            return Result.Failure(
+                GuestsDomainErrors.AnonymisationTombstoneInvalid);
         }
 
         this.LedgerEntryId = ledgerEntryId;
@@ -174,7 +184,7 @@ public sealed class GuestAnonymisationTombstone : ScopedAggregateRoot<Guid>
         DateTimeOffset originallyCompletedAtUtc,
         string ownerReceiptSha256) =>
         this.ContractVersion == CurrentContractVersion &&
-        this.Revision >= 1 &&
+        this.Revision is >= 1 and <= MaximumRevision &&
         this.State == GuestAnonymisationTombstoneState.Anonymised &&
         this.Authority == GuestAnonymisationAuthority.DataRights &&
         this.Id == guestId &&
@@ -190,7 +200,7 @@ public sealed class GuestAnonymisationTombstone : ScopedAggregateRoot<Guid>
     public bool Matches(GuestAnonymisationReceipt receipt) =>
         receipt is not null &&
         this.ContractVersion == CurrentContractVersion &&
-        this.Revision >= 1 &&
+        this.Revision is >= 1 and <= MaximumRevision &&
         this.State == GuestAnonymisationTombstoneState.Anonymised &&
         this.Authority == GuestAnonymisationAuthority.DataRights &&
         this.Id == receipt.GuestId &&
@@ -204,9 +214,11 @@ public sealed class GuestAnonymisationTombstone : ScopedAggregateRoot<Guid>
         GuestRetentionAnonymisationReceipt receipt) =>
         receipt is not null &&
         this.ContractVersion == CurrentContractVersion &&
-        this.Revision >= 1 &&
+        this.Revision == 1 &&
         this.State == GuestAnonymisationTombstoneState.Anonymised &&
         this.Authority == GuestAnonymisationAuthority.Retention &&
+        !this.LedgerEntryId.HasValue &&
+        !this.LastReplayedAtUtc.HasValue &&
         this.Id == receipt.GuestId &&
         this.CompletedAtUtc == receipt.CompletedAtUtc &&
         string.Equals(

@@ -53,6 +53,8 @@ public sealed class IngestionExecutionLockIntegrationTests
         await ProveSharedReadsAndCoordinateIsolationAsync(
             connectionString,
             connection.Id).ConfigureAwait(false);
+        await ProveRetentionExecutionSerializationAsync(connectionString)
+            .ConfigureAwait(false);
     }
 
     [DockerFact]
@@ -264,6 +266,52 @@ public sealed class IngestionExecutionLockIntegrationTests
         await waitingWriter.WaitAsync(TimeSpan.FromSeconds(10))
             .ConfigureAwait(false);
         await writerTransaction.CommitAsync().ConfigureAwait(false);
+    }
+
+    private static async Task ProveRetentionExecutionSerializationAsync(
+        string connectionString)
+    {
+        Guid executionId = Guid.NewGuid();
+        await using IngestionDbContext firstDb = CreateDbContext(connectionString);
+        await using IngestionDbContext waitingDb = CreateDbContext(connectionString);
+        await using IDbContextTransaction firstTransaction =
+            await firstDb.Database.BeginTransactionAsync().ConfigureAwait(false);
+        await using IDbContextTransaction waitingTransaction =
+            await waitingDb.Database.BeginTransactionAsync().ConfigureAwait(false);
+        IngestionExecutionLock first = new(firstDb);
+        IngestionExecutionLock waiting = new(waitingDb);
+
+        await first.AcquireRetentionExecutionAsync(
+            TenantId,
+            executionId,
+            CancellationToken.None).ConfigureAwait(false);
+        Task waitingAcquisition = waiting.AcquireRetentionExecutionAsync(
+            TenantId,
+            executionId,
+            CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
+        Assert.False(waitingAcquisition.IsCompleted);
+
+        await using (IngestionDbContext unrelatedDb =
+            CreateDbContext(connectionString))
+        await using (IDbContextTransaction unrelatedTransaction =
+            await unrelatedDb.Database.BeginTransactionAsync()
+                .ConfigureAwait(false))
+        {
+            await new IngestionExecutionLock(unrelatedDb)
+                .AcquireRetentionExecutionAsync(
+                    TenantId,
+                    Guid.NewGuid(),
+                    CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+            await unrelatedTransaction.CommitAsync().ConfigureAwait(false);
+        }
+
+        await firstTransaction.CommitAsync().ConfigureAwait(false);
+        await waitingAcquisition.WaitAsync(TimeSpan.FromSeconds(10))
+            .ConfigureAwait(false);
+        await waitingTransaction.CommitAsync().ConfigureAwait(false);
     }
 
     private static UpdateAdapterConnectionCommandHandler CreateUpdateHandler(

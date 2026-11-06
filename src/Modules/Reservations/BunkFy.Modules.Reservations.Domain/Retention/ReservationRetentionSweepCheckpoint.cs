@@ -89,4 +89,54 @@ public sealed class ReservationRetentionSweepCheckpoint
         this.Version++;
         return Result.Success();
     }
+
+    public Result PrepareRetry(
+        ReservationRetentionExecution failedExecution,
+        DateTimeOffset retryStartedAtUtc)
+    {
+        if (failedExecution.State !=
+                ReservationRetentionExecutionState.Failed ||
+            !string.Equals(
+                this.ScopeId,
+                failedExecution.ScopeId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                this.DataClassKey,
+                failedExecution.DataClassKey,
+                StringComparison.Ordinal) ||
+            this.ExecutionPolicyVersion !=
+                failedExecution.ExecutionPolicyVersion ||
+            !failedExecution.CompletedAtUtc.HasValue ||
+            retryStartedAtUtc == default ||
+            retryStartedAtUtc < failedExecution.CompletedAtUtc.Value)
+        {
+            return Result.Failure(
+                ReservationsDomainErrors.RetentionCheckpointConflict);
+        }
+
+        if (this.LastExecutionId == failedExecution.Id)
+        {
+            if (this.UpdatedAtUtc !=
+                failedExecution.CompletedAtUtc.Value)
+            {
+                return Result.Failure(
+                    ReservationsDomainErrors
+                        .RetentionCheckpointConflict);
+            }
+
+            this.AfterProjectionOrdinal =
+                failedExecution.StartingProjectionOrdinal;
+            this.LastExecutionId = null;
+            this.UpdatedAtUtc = retryStartedAtUtc;
+            this.Version++;
+            return Result.Success();
+        }
+
+        return this.AfterProjectionOrdinal ==
+                   failedExecution.StartingProjectionOrdinal &&
+               this.UpdatedAtUtc <= failedExecution.StartedAtUtc
+            ? Result.Success()
+            : Result.Failure(
+                ReservationsDomainErrors.RetentionCheckpointConflict);
+    }
 }

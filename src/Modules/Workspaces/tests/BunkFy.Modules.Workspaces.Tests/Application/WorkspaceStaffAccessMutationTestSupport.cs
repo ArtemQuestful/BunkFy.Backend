@@ -23,6 +23,15 @@ internal static class WorkspaceStaffAccessMutationTestSupport
         List<string>? calls)
         : IWorkspaceStaffAccessOperationLock
     {
+        public Task AcquireSubjectAsync(
+            string subjectId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            calls?.Add("subject-coordinate");
+            return Task.CompletedTask;
+        }
+
         public Task AcquireStaffAsync(
             Guid staffMemberId,
             CancellationToken cancellationToken)
@@ -32,8 +41,29 @@ internal static class WorkspaceStaffAccessMutationTestSupport
             return Task.CompletedTask;
         }
 
+        public Task AcquireCoordinatesAsync(
+            Guid staffMemberId,
+            string subjectId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            calls?.Add("subject-coordinate");
+            calls?.Add("staff-coordinate");
+            return Task.CompletedTask;
+        }
+
         public Task<bool> TryAcquireProcessAsync(
             Guid processId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            calls?.Add("staff-coordinate");
+            return Task.FromResult(processExists);
+        }
+
+        public Task<bool> TryAcquireStaffVersionAsync(
+            Guid staffMemberId,
+            long targetStaffVersion,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();

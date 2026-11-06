@@ -461,6 +461,30 @@ public sealed class CountryPolicyEngineTests
     }
 
     [Fact]
+    public void Rights_response_resolves_a_known_tzdb_alias_before_evaluation()
+    {
+        CountryPolicyPackArtifact artifact = WithRightsResponseRules(Parse());
+        CountryPolicyRegistry registry = ProductionRegistry(artifact);
+        CountryPolicyBinding binding = Assert.IsType<CountryPolicyEvidence>(
+            registry.EvaluateActivation(ValidActivation()).Evidence).ToBinding();
+
+        CountryPolicyRightsResponseDecision decision =
+            registry.EvaluateRightsResponse(
+                new(
+                    binding,
+                    "hostel",
+                    CountryPolicyRight.Export,
+                    "GB",
+                    EvaluationTime));
+
+        Assert.True(decision.IsAllowed);
+        CountryPolicyRightsResponseEvidence evidence =
+            Assert.IsType<CountryPolicyRightsResponseEvidence>(
+                decision.Evidence);
+        Assert.Equal("Europe/London", evidence.TimeZoneId);
+    }
+
+    [Fact]
     public void Calendar_deadline_moves_a_nonexistent_local_time_to_the_first_valid_instant()
     {
         bool calculated =
@@ -468,11 +492,77 @@ public sealed class CountryPolicyEngineTests
                 new(2026, 3, 1, 1, 30, 0, TimeSpan.Zero),
                 "Europe/London",
                 new CountryPolicyCalendarPeriod { Days = 28 },
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance,
                 out DateTimeOffset dueAtUtc);
 
         Assert.True(calculated);
         Assert.Equal(
             new DateTimeOffset(2026, 3, 29, 1, 0, 0, TimeSpan.Zero),
+            dueAtUtc);
+    }
+
+    [Fact]
+    public void Calendar_deadline_uses_the_latest_instant_for_an_ambiguous_local_time()
+    {
+        bool calculated =
+            CountryPolicyCalendarDeadlineCalculator.TryCalculate(
+                new(2026, 9, 27, 0, 30, 0, TimeSpan.Zero),
+                "Europe/London",
+                new CountryPolicyCalendarPeriod { Days = 28 },
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance,
+                out DateTimeOffset dueAtUtc);
+
+        Assert.True(calculated);
+        Assert.Equal(
+            new DateTimeOffset(2026, 10, 25, 1, 30, 0, TimeSpan.Zero),
+            dueAtUtc);
+    }
+
+    [Theory]
+    [InlineData(
+        "America/Edmonton",
+        2026, 10, 1, 18,
+        2026, 11, 1, 18)]
+    [InlineData(
+        "Africa/Casablanca",
+        2026, 9, 1, 10,
+        2026, 10, 1, 11)]
+    public void Calendar_deadline_uses_pinned_2026c_future_rules(
+        string timeZoneId,
+        int receivedYear,
+        int receivedMonth,
+        int receivedDay,
+        int receivedHour,
+        int dueYear,
+        int dueMonth,
+        int dueDay,
+        int dueHour)
+    {
+        bool calculated =
+            CountryPolicyCalendarDeadlineCalculator.TryCalculate(
+                new DateTimeOffset(
+                    receivedYear,
+                    receivedMonth,
+                    receivedDay,
+                    receivedHour,
+                    0,
+                    0,
+                    TimeSpan.Zero),
+                timeZoneId,
+                new CountryPolicyCalendarPeriod { Months = 1 },
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance,
+                out DateTimeOffset dueAtUtc);
+
+        Assert.True(calculated);
+        Assert.Equal(
+            new DateTimeOffset(
+                dueYear,
+                dueMonth,
+                dueDay,
+                dueHour,
+                0,
+                0,
+                TimeSpan.Zero),
             dueAtUtc);
     }
 
@@ -496,7 +586,9 @@ public sealed class CountryPolicyEngineTests
         };
 
         IReadOnlyList<string> errors =
-            CountryPolicyPackValidator.Validate(invalid);
+            CountryPolicyPackValidator.Validate(
+                invalid,
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance);
 
         Assert.Contains(
             errors,
@@ -508,6 +600,176 @@ public sealed class CountryPolicyEngineTests
             error => error.Contains(
                 "'Correction' rule",
                 StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Version_two_registry_fails_closed_without_time_zone_rules()
+    {
+        CountryPolicyPackArtifact artifact = WithRightsResponseRules(Parse());
+
+        CountryPolicyRegistryValidationException exception = Assert.Throws<
+            CountryPolicyRegistryValidationException>(() =>
+                CountryPolicyRegistry.Create(
+                    [artifact],
+                    [Allow(artifact)],
+                    CountryPolicyRuntimeMode.Production));
+
+        Assert.Contains(
+            exception.Errors,
+            error => error.Contains(
+                "unavailable time zone",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Version_two_policy_requires_primary_tzdb_identifiers()
+    {
+        CountryPolicyPackDocument document = WithRightsResponseRules(Parse())
+            .Document;
+        CountryPolicyPackDocument invalid = document with
+        {
+            RightsRule = document.RightsRule with
+            {
+                ResponseRules = document.RightsRule.ResponseRules!
+                    .Select(rule => rule with
+                    {
+                        AllowedTimeZoneIds = ["GB"]
+                    })
+                    .ToArray()
+            }
+        };
+
+        IReadOnlyList<string> errors =
+            CountryPolicyPackValidator.Validate(
+                invalid,
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "primary TZDB identifiers",
+                StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(" Europe/London")]
+    [InlineData("Europe/London ")]
+    public void Version_two_policy_rejects_time_zone_identifier_whitespace(
+        string timeZoneId)
+    {
+        CountryPolicyPackDocument document = WithRightsResponseRules(Parse())
+            .Document;
+        CountryPolicyPackDocument invalid = document with
+        {
+            RightsRule = document.RightsRule with
+            {
+                ResponseRules = document.RightsRule.ResponseRules!
+                    .Select(rule => rule with
+                    {
+                        AllowedTimeZoneIds = [timeZoneId]
+                    })
+                    .ToArray()
+            }
+        };
+
+        IReadOnlyList<string> errors =
+            CountryPolicyPackValidator.Validate(
+                invalid,
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "bounded time-zone identifiers",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Version_two_policy_detects_duplicate_primary_time_zones()
+    {
+        CountryPolicyPackDocument document = WithRightsResponseRules(Parse())
+            .Document;
+        CountryPolicyRightsResponseRule first =
+            document.RightsRule.ResponseRules![0];
+        CountryPolicyPackDocument invalid = document with
+        {
+            RightsRule = document.RightsRule with
+            {
+                ResponseRules =
+                [
+                    first with
+                    {
+                        AllowedTimeZoneIds = ["Europe/London", "GB"]
+                    },
+                    .. document.RightsRule.ResponseRules.Skip(1)
+                ]
+            }
+        };
+
+        IReadOnlyList<string> errors =
+            CountryPolicyPackValidator.Validate(
+                invalid,
+                PinnedTzdbCountryPolicyTimeZoneRules.Instance);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "duplicate primary time zone 'Europe/London'",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Bound_policy_admits_only_a_canonical_zone_allowed_by_every_rule()
+    {
+        CountryPolicyPackArtifact artifact = WithRightsResponseRules(Parse());
+        CountryPolicyRegistry registry = ProductionRegistry(artifact);
+        CountryPolicyBinding binding = Assert.IsType<CountryPolicyEvidence>(
+            registry.EvaluateActivation(ValidActivation()).Evidence).ToBinding();
+
+        CountryPolicyTimeZoneDecision allowed =
+            registry.EvaluateTimeZoneCompatibility(new(
+                binding,
+                "hostel",
+                "Europe/London",
+                EvaluationTime));
+        CountryPolicyTimeZoneDecision denied =
+            registry.EvaluateTimeZoneCompatibility(new(
+                binding,
+                "hostel",
+                "Europe/Paris",
+                EvaluationTime));
+        CountryPolicyTimeZoneDecision alias =
+            registry.EvaluateTimeZoneCompatibility(new(
+                binding,
+                "hostel",
+                "GB",
+                EvaluationTime));
+
+        Assert.True(allowed.IsAllowed);
+        Assert.Equal("Europe/London", allowed.TimeZoneId);
+        Assert.Equal(
+            CountryPolicyDecisionReason.TimeZoneNotPermitted,
+            denied.Reason);
+        Assert.Equal(CountryPolicyDecisionReason.InvalidRequest, alias.Reason);
+    }
+
+    [Fact]
+    public void Legacy_policy_without_time_zone_rules_does_not_invent_a_restriction()
+    {
+        CountryPolicyPackArtifact artifact = Parse();
+        CountryPolicyRegistry registry = ProductionRegistry(artifact);
+        CountryPolicyBinding binding = Assert.IsType<CountryPolicyEvidence>(
+            registry.EvaluateActivation(ValidActivation()).Evidence).ToBinding();
+
+        CountryPolicyTimeZoneDecision decision =
+            registry.EvaluateTimeZoneCompatibility(new(
+                binding,
+                "hostel",
+                "Europe/London",
+                EvaluationTime));
+
+        Assert.True(decision.IsAllowed);
+        Assert.Equal("Europe/London", decision.TimeZoneId);
     }
 
     [Theory]
@@ -584,7 +846,11 @@ public sealed class CountryPolicyEngineTests
     }
 
     private static CountryPolicyRegistry ProductionRegistry(CountryPolicyPackArtifact artifact) =>
-        CountryPolicyRegistry.Create([artifact], [Allow(artifact)], CountryPolicyRuntimeMode.Production);
+        CountryPolicyRegistry.Create(
+            [artifact],
+            [Allow(artifact)],
+            CountryPolicyRuntimeMode.Production,
+            PinnedTzdbCountryPolicyTimeZoneRules.Instance);
 
     private static CountryPolicyAllowlistEntry Allow(CountryPolicyPackArtifact artifact) =>
         new(

@@ -12,8 +12,11 @@ internal static class GuestManagementOperationFingerprint
         Guid propertyId,
         Guid guestId,
         long expectedVersion,
-        GuestProfileChange values) => Compute(
-            "guest-profile-update-v1",
+        GuestProfileChange values)
+    {
+        string?[] fields =
+        [
+            values.LanguageTags is null ? "guest-profile-update-v1" : "guest-profile-update-v2",
             propertyId.ToString("N"),
             guestId.ToString("N"),
             expectedVersion.ToString(CultureInfo.InvariantCulture),
@@ -24,7 +27,14 @@ internal static class GuestManagementOperationFingerprint
             values.DateOfBirth?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             values.NationalityCountryCode,
             values.PreferredLanguageTag,
-            values.Notes);
+            values.Notes
+        ];
+        return values.LanguageTags is null
+            ? Compute(fields)
+            : Compute([.. fields, "language-tags-present",
+                values.LanguageTags.Length.ToString(CultureInfo.InvariantCulture),
+                .. values.LanguageTags.Select(GuestLanguageTags.Identity).Order(StringComparer.Ordinal)]);
+    }
 
     private static string Compute(params string?[] values)
     {

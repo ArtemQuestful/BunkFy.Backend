@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Reservations.Persistence.Repositories;
 
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Reservations.Contracts;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using Microsoft.EntityFrameworkCore;
 
 internal sealed partial class ReservationsTenantTerminationContributor
@@ -23,6 +24,11 @@ internal sealed partial class ReservationsTenantTerminationContributor
             count,
             cancellationToken).ConfigureAwait(false);
         count = await this.ExportManagementOperationsAsync(
+            tenantId,
+            sink,
+            count,
+            cancellationToken).ConfigureAwait(false);
+        count = await this.ExportStayAmendmentOperationsAsync(
             tenantId,
             sink,
             count,
@@ -134,16 +140,13 @@ internal sealed partial class ReservationsTenantTerminationContributor
         long count,
         CancellationToken cancellationToken)
     {
-        await foreach (ReservationManagementOperation operation in
-            dbContext.ManagementOperations
-                .AsNoTracking()
-                .Where(item => item.ScopeId == tenantId)
-                .OrderBy(item => item.ReservationId)
-                .ThenBy(item => item.Id)
+        await foreach (ManagementExportRow row in this.ManagementExportQuery(tenantId)
                 .AsAsyncEnumerable()
                 .WithCancellation(cancellationToken)
                 .ConfigureAwait(false))
         {
+            var operation = row.Operation;
+            var attribution = row.Attribution;
             ReservationManagementOperationTenantExport record = new(
                 operation.ScopeId,
                 operation.PropertyId,
@@ -155,14 +158,98 @@ internal sealed partial class ReservationsTenantTerminationContributor
                     operation.ExpectedDetailsRevision,
                     operation.BusinessDate,
                     operation.RequestFingerprint,
-                    operation.CreatedAtUtc));
+                    operation.CreatedAtUtc),
+                attribution is null ? null : new(attribution.StationId, attribution.BrowserSessionId, attribution.StaffMemberId,
+                    attribution.ActorSessionId, attribution.Generation, attribution.Authority, attribution.ResultingVersion, attribution.JobGrantRevision));
             await WriteAsync(
                 ReservationsTenantTerminationMetadata
                     .ManagementOperationRecordType,
                 DataRightsExportRecordIds.CreateDeterministicChild(
                     operation.ReservationId,
                     operation.Id.ToString("N")),
-                recordVersion: 3,
+                recordVersion: 5,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        return count;
+    }
+
+    internal IQueryable<ManagementExportRow> ManagementExportQuery(string tenantId)
+    {
+        var parents = dbContext.ManagementOperations.AsNoTracking().Where(item => item.ScopeId == tenantId);
+        // Order entity columns before constructing the export row so every provider can translate it.
+        // Keep one streaming query; unsupported providers never reference the PostgreSQL-only child.
+        return dbContext.Database.IsNpgsql()
+            ? from operation in parents
+              from attribution in dbContext.StationAttributions.AsNoTracking().Where(x =>
+                  x.ScopeId == operation.ScopeId && x.ReservationId == operation.ReservationId && x.OperationId == operation.Id).DefaultIfEmpty()
+              orderby operation.ReservationId, operation.Id
+              select new ManagementExportRow(operation, attribution)
+            : parents.OrderBy(operation => operation.ReservationId).ThenBy(operation => operation.Id)
+                .Select(operation => new ManagementExportRow(operation, null));
+    }
+
+    internal sealed record ManagementExportRow(ReservationManagementOperation Operation, ReservationStationAttribution? Attribution);
+
+    private async Task<long> ExportStayAmendmentOperationsAsync(
+        string tenantId,
+        IDataRightsExportSink sink,
+        long count,
+        CancellationToken cancellationToken)
+    {
+        await foreach (ReservationStayAmendmentOperation operation in
+            dbContext.StayAmendmentOperations
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.ReservationId)
+                .ThenBy(item => item.Id)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            ReservationStayAmendmentOperationTenantExport record = new(
+                operation.ScopeId,
+                operation.PropertyId,
+                operation.ReservationId,
+                operation.Id,
+                new ReservationStayAmendmentOperationStateTenantExport(
+                    operation.InventoryRequestId,
+                    operation.RequestSchemaVersion,
+                    operation.RequestFingerprint,
+                    operation.TargetArrival,
+                    operation.TargetDeparture,
+                    operation.TargetExpectedArrivalTime,
+                    operation.TargetExpectedDepartureTime,
+                    operation.TargetInventoryUnitIds is null
+                        ? null
+                        : operation.GetTargetInventoryUnitIds()
+                            .Order()
+                            .ToArray(),
+                    operation.ExpectedDetailsRevision,
+                    operation.Outcome,
+                    operation.OperationVersion,
+                    operation.RequestedAtUtc,
+                    operation.UpdatedAtUtc,
+                    operation.CompletedAtUtc,
+                    operation.ResultingDetailsRevision,
+                    operation.ResultingReservationVersion,
+                    operation.ResultingAllocationVersion,
+                    operation.RejectionCode,
+                    operation.ReconciliationCount,
+                    operation.LastReconciledAtUtc),
+                new ReservationStayAmendmentOperationStaffTenantExport(
+                    operation.RequestedBy,
+                    operation.LastReconciledBy));
+            await WriteAsync(
+                ReservationsTenantTerminationMetadata
+                    .StayAmendmentOperationRecordType,
+                DataRightsExportRecordIds.CreateDeterministicChild(
+                    operation.ReservationId,
+                    operation.Id.ToString("N")),
+                operation.OperationVersion,
                 record,
                 sink,
                 cancellationToken).ConfigureAwait(false);

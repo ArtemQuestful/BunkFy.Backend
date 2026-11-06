@@ -10,7 +10,7 @@ internal sealed class BedRetirementOutcomeCoordinator(
     IBedRetirementRepository retirements,
     ISystemClock clock)
 {
-    public async Task CompleteFromTopologyAsync(
+    public async Task<bool> CompleteFromTopologyAsync(
         Guid propertyId,
         Guid roomId,
         Guid bedId,
@@ -21,7 +21,7 @@ internal sealed class BedRetirementOutcomeCoordinator(
             .ConfigureAwait(false);
         if (!topologyChangeId.HasValue)
         {
-            return;
+            return false;
         }
 
         BedRetirementProcess process = await this.AcquireRequiredAsync(
@@ -31,9 +31,11 @@ internal sealed class BedRetirementOutcomeCoordinator(
             bedId,
             "Bed-retirement topology completion does not match a durable Inventory process.",
             cancellationToken).ConfigureAwait(false);
+        InventoryRetirementProcessState stateBefore = process.State;
         EnsureSucceeded(
             process.Complete(clock.UtcNow),
             "Bed-retirement topology completion");
+        return process.State != stateBefore;
     }
 
     public async Task MarkFinalizedAsync(

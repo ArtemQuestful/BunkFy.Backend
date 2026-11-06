@@ -115,6 +115,7 @@ internal sealed class StartDataRightsAnonymisationExecutionCommandHandler(
                     ExecutingActorId: command.ActorId,
                     CaseType: command.Scope.CaseType),
                 cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!approval.IsApproved ||
                 approval.ApprovalEvidence is null ||
                 !DataRightsApprovalEvidenceComparer.Matches(

@@ -18,4 +18,5 @@ public sealed record ApplyGuestDataRightsCorrectionCommand(
     string? NationalityCountryCode,
     string? PreferredLanguageTag,
     string? Notes,
-    string ActorId) : ITransactionalCommand<GuestDataRightsCorrectionReceiptDto>;
+    string ActorId,
+    string[]? LanguageTags = null) : ITransactionalCommand<GuestDataRightsCorrectionReceiptDto>;

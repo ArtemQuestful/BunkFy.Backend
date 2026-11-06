@@ -35,6 +35,20 @@ internal static class StaffMemberEndpoints
                 .ConfigureAwait(false)).ToHttpResult(StaffApiEndpointSupport.ErrorStatusCodes))
             .Produces<StaffDirectoryListResponse>(StatusCodes.Status200OK)
             .RequireTenant().RequireTenantPermission(StaffAdminPermissionCodes.Read);
+        members.MapPost("/account-directory/resolve", async (
+            StaffAccountDirectoryResolveRequest request,
+            HttpContext context,
+            IRequestDispatcher dispatcher,
+            CancellationToken token) =>
+        {
+            StaffApiEndpointSupport.MarkSensitiveResponse(context);
+            return (await dispatcher.QueryAsync(
+                new ResolveStaffAccountDirectoryQuery(request.AuthSubjectIds),
+                token).ConfigureAwait(false)).ToHttpResult(
+                    StaffApiEndpointSupport.ErrorStatusCodes);
+        }).Produces<StaffAccountDirectoryResponse>(StatusCodes.Status200OK)
+            .RequireTenant()
+            .RequireTenantPermission(StaffAdminPermissionCodes.SensitiveProfileRead);
         members.MapGet("/{staffMemberId:guid}", async (Guid staffMemberId,
             IRequestDispatcher dispatcher, CancellationToken token) =>
             (await dispatcher.QueryAsync(new GetStaffDirectoryMemberQuery(staffMemberId), token)

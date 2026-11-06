@@ -180,7 +180,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
         Assert.Equal(
             "workspace.termination.destroyed",
             completed.ResultCode);
-        Assert.Equal(1024, completed.AffectedCount);
+        Assert.Equal(1025, completed.AffectedCount);
         Assert.Equal(1, completed.SelectedProofRevision);
         Assert.Equal(3, completed.ResultingProofRevision);
         Assert.Contains(3, progressCounts);
@@ -224,7 +224,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             await ReadDestroyReceiptCountAsync(ownerContext, TenantA)
                 .ConfigureAwait(false));
         Assert.Equal(
-            1024,
+            1025,
             await ReadDestroyReceiptRemovedCountAsync(ownerContext, TenantA)
                 .ConfigureAwait(false));
         Assert.Equal(

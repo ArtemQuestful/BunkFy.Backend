@@ -17,6 +17,7 @@ internal sealed class RequestBedRetirementCommandHandler(
     IBedRetirementRepository retirements,
     IRoomRetirementRepository roomRetirements,
     IInventoryAvailabilityRepository availability,
+    IInventoryAvailabilitySelectionFence selectionFence,
     BedRetirementCoordinator coordinator,
     InventoryUnitDefinitionPublisher definitions,
     IScopeContext scopeContext,
@@ -54,6 +55,8 @@ internal sealed class RequestBedRetirementCommandHandler(
                 command.RoomId,
                 command.BedId,
                 normalizedReason);
+        await selectionFence.AcquireAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         await mutations.AcquireRoomAsync(command.RoomId, cancellationToken)
             .ConfigureAwait(false);
         InventoryManagementReplayDecision<
@@ -148,6 +151,8 @@ internal sealed class RequestBedRetirementCommandHandler(
             command.PropertyId,
             [command.BedId],
             cancellationToken).ConfigureAwait(false);
+        await selectionFence.AdvanceAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         BedRetirementDto result = await coordinator.TryAdvanceAsync(
             created.Value,
             excludedAllocationId: null,

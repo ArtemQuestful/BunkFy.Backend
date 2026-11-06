@@ -233,22 +233,14 @@ internal sealed class VerifyTenantTerminationTaskHandler(
             dispatch.PolicyEvidenceSha256,
             dispatch.ExecutingActorId,
             deadlineUtc);
-        using CancellationTokenSource deadline =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(
-            BeginTenantTerminationOwnerWorkCommandHandler.OwnerCallTimeout);
-        try
-        {
-            return await contributor.ExecuteAsync(
-                request,
-                deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (
-            !cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                "DataRights.TenantTerminationVerificationDeadlineExceeded");
-        }
+        DataRightsDeadlineExecution<TenantTerminationContributionResult>
+            execution = await DataRightsDeadlineExecutor.ExecuteAsync(
+            clock,
+            deadlineUtc,
+            "DataRights.TenantTerminationVerificationDeadlineExceeded",
+            token => contributor.ExecuteAsync(request, token),
+            cancellationToken).ConfigureAwait(false);
+        return execution.Value;
     }
 
     private static void ValidateBoundary(

@@ -26,6 +26,7 @@ public sealed class ApplyReservationRetentionCommandHandlerTests
         Fixture fixture = CreateFixture("tenant-a");
         ApplyReservationRetentionCommand command = new(
             fixture.Execution.Id,
+            Attempt: 1,
             fixture.Reservation.PropertyId,
             fixture.Reservation.Id,
             fixture.Reservation.Version,
@@ -66,6 +67,31 @@ public sealed class ApplyReservationRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    Attempt: 1,
+                    fixture.Reservation.PropertyId,
+                    fixture.Reservation.Id,
+                    fixture.Reservation.Version,
+                    fixture.Reservation.DetailsRevision),
+                CancellationToken.None);
+
+        Assert.Equal(
+            ReservationsApplicationErrors.RetentionExecutionNotFound,
+            result.Error);
+        Assert.Equal(0, fixture.Candidates.LoadCount);
+        Assert.Equal(0, fixture.OperationLock.CallCount);
+        Assert.False(fixture.Reservation.IsAnonymised);
+    }
+
+    [Fact]
+    public async Task Stale_attempt_is_rejected_before_discovery()
+    {
+        Fixture fixture = CreateFixture("tenant-a");
+
+        Result<ReservationRetentionMutationResult> result =
+            await fixture.Handler.HandleAsync(
+                new(
+                    fixture.Execution.Id,
+                    Attempt: 2,
                     fixture.Reservation.PropertyId,
                     fixture.Reservation.Id,
                     fixture.Reservation.Version,
@@ -96,6 +122,7 @@ public sealed class ApplyReservationRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    Attempt: 1,
                     fixture.Reservation.PropertyId,
                     fixture.Reservation.Id,
                     fixture.Reservation.Version,

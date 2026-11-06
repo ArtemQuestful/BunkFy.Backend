@@ -2,11 +2,14 @@ namespace Integration.Tests;
 
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using BunkFy.Adapter.Abstractions;
 using BunkFy.Adapters.ImapReservationMail;
 using BunkFy.Adapters.JsonFileDrop;
 using BunkFy.Extensions.DataRights.TenantTermination;
 using BunkFy.Host.Worker;
+using BunkFy.Modules.DataRights.Application.Models;
+using BunkFy.Modules.DataRights.Application.Ports;
 using BunkFy.Modules.DataRights.Application.Production;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Guests.Contracts;
@@ -24,6 +27,7 @@ using BunkFy.Modules.Properties.Persistence;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Persistence;
 using BunkFy.ObservationParsing;
@@ -38,6 +42,7 @@ using Gma.Framework.Results;
 using Gma.Framework.Tasks;
 using Gma.Framework.Tasks.Infrastructure;
 using Gma.Framework.Tenancy;
+using Gma.Modules.AccessControl.Contracts;
 using Gma.Modules.Auth.Domain.Services;
 using Gma.Modules.Auth.Persistence;
 using Gma.Modules.Notifications.Contracts;
@@ -46,6 +51,7 @@ using Gma.Modules.Organizations.Persistence;
 using Gma.Modules.TaskRuntime.Persistence;
 using Integration.Tests.Support;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -59,7 +65,28 @@ public sealed class WorkerHostIntegrationTests
 {
     [Fact]
     [Trait("Category", "Integration")]
-    public void Worker_host_composes_the_exact_tenant_termination_catalogue()
+    public void Retention_consumer_requires_local_task_runtime_recovery()
+    {
+        ConfigurationManager configuration = new();
+        configuration["NatsConsumers:Enabled"] = "true";
+        configuration["Worker:Modules:Retention"] = "true";
+        configuration["Worker:Modules:TaskRuntime"] = "false";
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => WorkerHostOptions.FromConfiguration(configuration));
+
+        Assert.Contains("must compose TaskRuntime", error.Message);
+
+        configuration["NatsConsumers:Enabled"] = "false";
+        WorkerHostOptions apiOnly = WorkerHostOptions.FromConfiguration(
+            configuration);
+        Assert.True(apiOnly.Modules.Retention);
+        Assert.False(apiOnly.Modules.TaskRuntime);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Worker_host_composes_the_exact_tenant_termination_catalogue()
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(
             new HostApplicationBuilderSettings { EnvironmentName = "Integration" });
@@ -121,12 +148,143 @@ public sealed class WorkerHostIntegrationTests
         Result<TenantTerminationProductionCatalogEvidence> evidence =
             catalog.Validate(
                 TenantTerminationProductionOwnerCatalog.RequiredOwnerKeys);
+        ITenantTerminationContributor guests = scope.ServiceProvider
+            .GetServices<ITenantTerminationContributor>()
+            .Single(contributor => contributor.Descriptor.OwnerKey ==
+                GuestsTenantTerminationMetadata.OwnerKey);
 
         Assert.True(composition.IsValid, composition.Report);
         Assert.True(evidence.IsSuccess);
         Assert.Equal(12, evidence.Value.OwnerCount);
         Assert.Equal("workspaces", evidence.Value.TerminalOwnerKey);
         Assert.Matches("^[0-9a-f]{64}$", evidence.Value.CatalogSha256);
+        Assert.Equal(6, guests.Descriptor.CatalogVersion);
+        Assert.Equal(
+            GuestsTenantTerminationMetadata.CatalogSha256,
+            guests.Descriptor.CatalogSha256);
+        Assert.Contains(
+            "catalog=6",
+            GuestsTenantTerminationMetadata.CatalogManifest,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "catalog=5",
+            GuestsTenantTerminationMetadata.CatalogManifest,
+            StringComparison.Ordinal);
+        await AssertOldGuestsCatalogCoordinateRejectedAsync(
+            scope.ServiceProvider);
+    }
+
+    private static async Task AssertOldGuestsCatalogCoordinateRejectedAsync(
+        IServiceProvider services)
+    {
+        ITenantTerminationContributor[] contributors = services
+            .GetServices<ITenantTerminationContributor>()
+            .ToArray();
+        TenantTerminationContributorDescriptor liveGuests = contributors
+            .Single(contributor => contributor.Descriptor.OwnerKey ==
+                GuestsTenantTerminationMetadata.OwnerKey)
+            .Descriptor;
+        string version5Manifest = GuestsTenantTerminationMetadata
+            .CatalogManifest
+            .Replace("|catalog=6|", "|catalog=5|", StringComparison.Ordinal)
+            .Replace(
+                "|personal-data-catalog=17|",
+                "|personal-data-catalog=16|",
+                StringComparison.Ordinal)
+            .Replace(
+                "|export-schema=guests.tenant-termination-export:5|",
+                "|export-schema=guests.tenant-termination-export:4|",
+                StringComparison.Ordinal);
+        string version5Sha256 = Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes(version5Manifest)));
+        TenantTerminationExportOwnerCatalogEntry[] frozenOwners = contributors
+            .Where(contributor => contributor.Descriptor.PhasePlans.Any(
+                plan => plan.Phase ==
+                    TenantTerminationContributionPhase.Export))
+            .Select(contributor => contributor.Descriptor)
+            .Select(descriptor => new TenantTerminationExportOwnerCatalogEntry(
+                descriptor.OwnerKey,
+                descriptor.ContractVersion,
+                descriptor.OwnerKey ==
+                    GuestsTenantTerminationMetadata.OwnerKey
+                    ? 5
+                    : descriptor.CatalogVersion,
+                descriptor.OwnerKey ==
+                    GuestsTenantTerminationMetadata.OwnerKey
+                    ? version5Sha256
+                    : descriptor.CatalogSha256))
+            .ToArray();
+        TenantTerminationExportOwnerCatalogEntry oldGuests = frozenOwners
+            .Single(owner => owner.OwnerKey ==
+                GuestsTenantTerminationMetadata.OwnerKey);
+        DateTimeOffset frozenAtUtc = new(
+            2026,
+            8,
+            15,
+            12,
+            0,
+            0,
+            TimeSpan.Zero);
+        var frozenRevision = new TenantTerminationFrozenRevision(
+            "7f000000-0000-0000-0000-000000000001",
+            Guid.Parse("7f100000-0000-0000-0000-000000000001"),
+            Guid.Parse("7f200000-0000-0000-0000-000000000001"),
+            ApprovalRevision: 1,
+            FreezeOperationRevision: 2,
+            Guid.Parse("7f300000-0000-0000-0000-000000000001"),
+            WorkspaceFenceRevision: 3,
+            new string('a', TenantTerminationContract.Sha256Length),
+            frozenAtUtc,
+            frozenOwners);
+        ITenantTerminationExportFragmentAssembler assembler = services
+            .GetRequiredService<ITenantTerminationExportFragmentAssembler>();
+        string frozenRevisionSha256 = Assert.IsType<string>(assembler
+            .GetType()
+            .GetMethod(
+                "ComputeFrozenRevisionSha256",
+                System.Reflection.BindingFlags.Static |
+                System.Reflection.BindingFlags.NonPublic,
+                binder: null,
+                [typeof(TenantTerminationFrozenRevision)],
+                modifiers: null)!
+            .Invoke(null, [frozenRevision]));
+        var request = new TenantTerminationExportFragmentAssemblyRequest(
+            frozenRevision.TenantId,
+            frozenRevision.ProcessId,
+            frozenRevision.CaseId,
+            frozenRevision.ApprovalRevision,
+            frozenRevision.FreezeOperationRevision,
+            ExportOperationRevision: 3,
+            frozenRevision.TerminationEpoch,
+            frozenRevision.WorkspaceFenceRevision,
+            frozenRevisionSha256,
+            frozenRevision.PolicyEvidenceSha256,
+            "integration:catalog-v4-replay",
+            frozenRevision.FrozenAtUtc,
+            frozenRevision.FrozenAtUtc.AddMinutes(1),
+            frozenRevision.FrozenAtUtc.AddMinutes(10),
+            new TenantTerminationExportOwnerWork(
+                oldGuests.OwnerKey,
+                Guid.Parse("7f400000-0000-0000-0000-000000000001"),
+                Guid.Parse("7f500000-0000-0000-0000-000000000001"),
+                oldGuests.ContractVersion,
+                oldGuests.CatalogVersion,
+                oldGuests.CatalogSha256),
+            frozenOwners);
+        await using MemoryStream output = new();
+
+        DataRightsExportGenerationException rejected =
+            await Assert.ThrowsAsync<DataRightsExportGenerationException>(
+                () => assembler.AssembleAsync(
+                    request,
+                    output,
+                    CancellationToken.None));
+
+        Assert.Equal(6, liveGuests.CatalogVersion);
+        Assert.Equal(5, oldGuests.CatalogVersion);
+        Assert.NotEqual(liveGuests.CatalogSha256, oldGuests.CatalogSha256);
+        Assert.Equal("tenant-export-owner-catalog-invalid", rejected.Code);
+        Assert.Equal(0, output.Length);
     }
 
     [Fact]
@@ -243,6 +401,16 @@ public sealed class WorkerHostIntegrationTests
 
         Assert.True(result.IsValid, result.Report);
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<WorkspacesDbContext>());
+        Assert.NotNull(scope.ServiceProvider
+            .GetRequiredService<IStaffOnboardingStateVerifier>());
+        Assert.NotNull(scope.ServiceProvider
+            .GetRequiredService<IAccessControlSubjectAuthoritySnapshotReader>());
+        Assert.NotNull(scope.ServiceProvider
+            .GetRequiredService<IScopedAccessProfileManager>());
+        Assert.NotNull(scope.ServiceProvider
+            .GetRequiredService<IWorkspaceStaffOnboardingRecoveryOperationLock>());
+        Assert.NotNull(scope.ServiceProvider
+            .GetRequiredService<IWorkspaceStaffOnboardingRecoveryReceiptRepository>());
         Assert.Single(
             worker.Services.GetServices<IHostedService>(),
             service => service.GetType().Name == "OrganizationsLifecycleService");
@@ -409,12 +577,11 @@ public sealed class WorkerHostIntegrationTests
         await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bunkfy_file_drop_worker_tests")
             .Build();
-        await using IContainer minio = new ContainerBuilder("quay.io/minio/minio:latest")
+        await using IContainer minio = ProviderTestContainers.Minio()
             .WithEnvironment("MINIO_ROOT_USER", "minioadmin")
             .WithEnvironment("MINIO_ROOT_PASSWORD", "minioadmin")
             .WithPortBinding(9000, assignRandomHostPort: true)
             .WithCommand("server", "/data", "--console-address", ":9001")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(9000))
             .Build();
         await using IContainer redis = new ContainerBuilder("redis:7.4-alpine")
             .WithPortBinding(6379, assignRandomHostPort: true)
@@ -603,18 +770,22 @@ public sealed class WorkerHostIntegrationTests
                                           item.EventType == typeof(PropertyCreatedIntegrationEvent));
         var handler = (IIntegrationEventHandler<PropertyCreatedIntegrationEvent>)scope.ServiceProvider
             .GetRequiredService(subscription.HandlerType);
-        await handler.HandleAsync(
-            new PropertyCreatedIntegrationEvent(
-                Guid.NewGuid(),
-                tenantId,
-                DateTimeOffset.UtcNow,
-                propertyId,
-                "File Drop House",
-                "file-drop-house",
-                "UTC",
-                PropertyStatus.Active,
-                1),
-            CancellationToken.None).ConfigureAwait(false);
+        IngestionDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<IngestionDbContext>();
+        await ModuleTransactionIntegrationTestData.ExecuteAsync(
+            dbContext,
+            token => handler.HandleAsync(
+                new PropertyCreatedIntegrationEvent(
+                    Guid.NewGuid(),
+                    tenantId,
+                    DateTimeOffset.UtcNow,
+                    propertyId,
+                    "File Drop House",
+                    "file-drop-house",
+                    "UTC",
+                    PropertyStatus.Active,
+                    1),
+                token)).ConfigureAwait(false);
         await CountryPolicyIntegrationTestData.ApplyActivationAsync(
             scope.ServiceProvider,
             IngestionModuleMetadata.Name,
@@ -622,7 +793,6 @@ public sealed class WorkerHostIntegrationTests
             propertyId,
             2).ConfigureAwait(false);
 
-        IngestionDbContext dbContext = scope.ServiceProvider.GetRequiredService<IngestionDbContext>();
         dbContext.AdapterConnections.Add(AdapterConnection.Create(
             connectionId,
             tenantId,

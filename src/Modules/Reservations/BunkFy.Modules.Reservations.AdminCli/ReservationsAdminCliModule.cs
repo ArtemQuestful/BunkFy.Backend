@@ -34,12 +34,14 @@ public sealed class ReservationsAdminCliModule : IAdminCliModule
         AdminCliGlobalOptions globalOptions = commands.Services.GetRequiredService<AdminCliGlobalOptions>();
         Command module = new(ReservationsModuleMetadata.Name, "Reservation administration operations.")
         {
+            CreateOperationsSnapshotCommand(commands.Services, globalOptions),
             CreateListCommand(commands.Services, globalOptions),
             CreateGetCommand(commands.Services, globalOptions),
             CreateCreateCommand(commands.Services, globalOptions),
             CreateCancelCommand(commands.Services, globalOptions),
             CreateLinkGuestCommand(commands.Services, globalOptions),
             ReservationInventoryAdminCliCommand.Create(commands.Services, globalOptions),
+            ReservationStayAmendmentAdminCliCommand.Create(commands.Services, globalOptions),
             CreateStayLifecycleCommand(
                 commands.Services,
                 globalOptions,
@@ -87,6 +89,70 @@ public sealed class ReservationsAdminCliModule : IAdminCliModule
                         actorId))
         };
         commands.AddCommand(this.Name, module);
+    }
+
+    private static Command CreateOperationsSnapshotCommand(
+        IServiceProvider services,
+        AdminCliGlobalOptions globalOptions)
+    {
+        Option<Guid> propertyOption = PropertyOption();
+        Option<string?> localDateOption = new("--local-date");
+        Option<int> upcomingLimitOption = new("--upcoming-limit")
+        {
+            DefaultValueFactory = _ => ReservationsContractLimits.DefaultOperationsSnapshotUpcomingLimit
+        };
+        Command command = new(
+            "operations-snapshot",
+            "Show exact current Reservations operations cohorts for one property-local date; requires a valid projected IANA time zone.")
+        {
+            propertyOption,
+            localDateOption,
+            upcomingLimitOption
+        };
+        command.SetAction((parseResult, cancellationToken) =>
+            services.GetRequiredService<AdminCliExecutor>().ExecuteAsync(
+                parseResult,
+                AdminOperation.Create(
+                    ReservationsAdminOperationNames.OperationsSnapshot,
+                    ReservationsAdminPermissions.Read),
+                parseResult.GetValue(globalOptions.TenantOption),
+                requireTenant: true,
+                async (provider, token) =>
+                {
+                    string? localDateText = parseResult.GetValue(localDateOption);
+                    if (!string.IsNullOrWhiteSpace(localDateText) &&
+                        !TryParseDate(localDateText, out _))
+                    {
+                        return Result.Failure<ReservationOperationsSnapshotDto>(
+                            ReservationsApplicationErrors.OperationsSnapshotLocalDateInvalid);
+                    }
+
+                    DateOnly? localDate = string.IsNullOrWhiteSpace(localDateText)
+                        ? null
+                        : DateOnly.ParseExact(
+                            localDateText,
+                            "yyyy-MM-dd",
+                            CultureInfo.InvariantCulture);
+                    Result<ReservationOperationsSnapshotDto> result = await provider
+                        .GetRequiredService<IRequestDispatcher>()
+                        .QueryAsync(
+                            new GetReservationOperationsSnapshotQuery(
+                                parseResult.GetRequiredValue(propertyOption),
+                                localDate,
+                                parseResult.GetValue(upcomingLimitOption)),
+                            token)
+                        .ConfigureAwait(false);
+                    if (result.IsSuccess)
+                    {
+                        WriteOperationsSnapshot(
+                            result.Value,
+                            parseResult.GetValue(globalOptions.OutputOption) ?? AdminCliOutput.Table);
+                    }
+
+                    return result;
+                },
+                cancellationToken));
+        return command;
     }
 
     private static Command CreateListCommand(IServiceProvider services, AdminCliGlobalOptions globalOptions)
@@ -469,9 +535,77 @@ public sealed class ReservationsAdminCliModule : IAdminCliModule
                 ("ExpectedArrival", reservation => reservation.ExpectedArrivalTime?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty),
                 ("ExpectedDeparture", reservation => reservation.ExpectedDepartureTime?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty),
                 ("Guest", reservation => reservation.PrimaryGuestName),
+                ("Guests", reservation => reservation.GuestCount.ToString(CultureInfo.InvariantCulture)),
                 ("Status", reservation => reservation.Status.ToString()),
                 ("Units", reservation => reservation.InventoryUnitCount.ToString(CultureInfo.InvariantCulture))
             ]);
+
+    internal static void WriteOperationsSnapshot(
+        ReservationOperationsSnapshotDto snapshot,
+        string output)
+    {
+        if (AdminCliOutput.NormalizeFormat(output) == AdminCliOutput.Json)
+        {
+            AdminCliOutput.WriteObject(snapshot, output);
+            return;
+        }
+
+        AdminCliOutput.WriteRows(
+            [snapshot],
+            output,
+            [
+                ("PropertyId", item => item.PropertyId.ToString()),
+                ("LocalDate", item => item.LocalDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                ("TimeZone", item => item.TimeZoneId),
+                ("DateSource", item => item.DateSource.ToString()),
+                ("ObservedAtUtc", item => item.ObservedAtUtc.ToString("O", CultureInfo.InvariantCulture)),
+                ("ArrivalsOnLocalDate", item => FormatCount(item.Cohorts.ConfirmedArrivalsOnLocalDate)),
+                ("DeparturesOnLocalDate", item => FormatCount(item.Cohorts.ScheduledDeparturesOnLocalDate)),
+                ("CurrentlyInHouse", item => FormatCount(item.Cohorts.CurrentlyInHouse)),
+                ("Attention", item => FormatCount(item.Attention.Total)),
+                ("Upcoming", item => item.Upcoming.Count.ToString(CultureInfo.InvariantCulture)),
+                ("HasMoreUpcoming", item => item.HasMoreUpcoming.ToString())
+            ]);
+
+        AdminCliOutput.WriteRows(
+            AttentionRows(snapshot.Attention),
+            output,
+            [
+                ("AttentionCategory", item => item.Category),
+                ("Reservations", item => item.Count.ReservationCount.ToString(CultureInfo.InvariantCulture)),
+                ("Guests", item => item.Count.GuestCount.ToString(CultureInfo.InvariantCulture))
+            ]);
+
+        if (snapshot.Upcoming.Count > 0)
+        {
+            WriteReservationSummaries(snapshot.Upcoming, output);
+        }
+    }
+
+    private static string FormatCount(ReservationOperationsCountDto count) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{count.ReservationCount} reservations / {count.GuestCount} guests");
+
+    private static IReadOnlyCollection<OperationsAttentionRow> AttentionRows(
+        ReservationOperationsAttentionCountsDto attention) =>
+    [
+        new(nameof(attention.PendingAllocation), attention.PendingAllocation),
+        new(nameof(attention.AllocationRejected), attention.AllocationRejected),
+        new(nameof(attention.CancellationPending), attention.CancellationPending),
+        new(nameof(attention.NoShowPending), attention.NoShowPending),
+        new(nameof(attention.CheckoutPending), attention.CheckoutPending),
+        new(
+            nameof(attention.ArrivalBeforeLocalDateStillConfirmed),
+            attention.ArrivalBeforeLocalDateStillConfirmed),
+        new(
+            nameof(attention.DepartureBeforeLocalDateStillInHouse),
+            attention.DepartureBeforeLocalDateStillInHouse)
+    ];
+
+    private sealed record OperationsAttentionRow(
+        string Category,
+        ReservationOperationsCountDto Count);
 
     private static void WriteReservationMutationReceipts(
         IReadOnlyCollection<ReservationMutationReceiptDto> receipts,

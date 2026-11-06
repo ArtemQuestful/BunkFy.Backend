@@ -61,7 +61,8 @@ internal sealed class ListRetentionScheduleHealthQueryHandler(
         }
 
         RetentionScheduleHealthDto[] ordered = health
-            .OrderByDescending(item => item.Overdue)
+            .OrderByDescending(NeedsAttention)
+            .ThenByDescending(item => item.Overdue)
             .ThenBy(item => item.NextDueAtUtc)
             .ThenBy(item => item.OwnerKey, StringComparer.Ordinal)
             .ThenBy(item => item.DataClassKey, StringComparer.Ordinal)
@@ -100,6 +101,7 @@ internal sealed class ListRetentionScheduleHealthQueryHandler(
             descriptor.TargetScopeKind,
             target.PropertyId,
             descriptor.ExecutionPolicyVersion,
+            snapshot?.Version ?? 0,
             snapshot is null
                 ? RetentionExecutionStatus.NeverRun
                 : Map(snapshot.State),
@@ -113,8 +115,28 @@ internal sealed class ListRetentionScheduleHealthQueryHandler(
             snapshot?.LastAffectedCount,
             snapshot?.LastRemainingCount,
             snapshot?.OutcomeCode,
-            snapshot?.HoldReviewDueAtUtc);
+            snapshot?.HoldReviewDueAtUtc,
+            snapshot?.Retry is { } retry ? ToRetryDto(retry) : null);
     }
+
+    private static RetentionRunRetryReceiptDto ToRetryDto(
+        RetentionRunRetryRequestSnapshot retry) => new(
+            retry.RequestId,
+            retry.RunId,
+            retry.EvidenceVersion,
+            retry.Attempt,
+            retry.State switch
+            {
+                (int)RetentionRunRetryRequestState.Pending =>
+                    RetentionRunRetryStatus.Pending,
+                (int)RetentionRunRetryRequestState.Applied =>
+                    RetentionRunRetryStatus.Applied,
+                _ => RetentionRunRetryStatus.Failed
+            },
+            retry.RequestedAtUtc,
+            retry.ScheduledAtUtc,
+            retry.CompletedAtUtc,
+            retry.FailureCode);
 
     private static RetentionScheduleHealthSummaryDto Summarize(
         RetentionScheduleHealthDto[] items)
@@ -124,9 +146,7 @@ internal sealed class ListRetentionScheduleHealthQueryHandler(
         int needsAttention = 0;
         foreach (RetentionScheduleHealthDto item in items)
         {
-            if (item.Overdue || item.Status is
-                RetentionExecutionStatus.Blocked or
-                RetentionExecutionStatus.Failed)
+            if (NeedsAttention(item))
             {
                 needsAttention++;
             }
@@ -142,6 +162,13 @@ internal sealed class ListRetentionScheduleHealthQueryHandler(
 
         return new(items.Length, healthy, running, needsAttention);
     }
+
+    private static bool NeedsAttention(RetentionScheduleHealthDto item) =>
+        item.Overdue || item.Status is
+            RetentionExecutionStatus.Unknown or
+            RetentionExecutionStatus.NeverRun or
+            RetentionExecutionStatus.Blocked or
+            RetentionExecutionStatus.Failed;
 
     private static RetentionExecutionStatus Map(int state) =>
         (RetentionExecutionState)state switch

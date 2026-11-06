@@ -27,6 +27,40 @@ using Xunit;
 public sealed class IngestionModelTests
 {
     [Fact]
+    public void Source_graph_records_declare_authoritative_database_invariants()
+    {
+        using IngestionDbContext dbContext = CreateDbContext();
+        IModel model = dbContext.GetService<IDesignTimeModel>().Model;
+
+        AssertConstraints(
+            model.FindEntityType(typeof(ReservationSourceLink))!,
+            "CK_reservation_source_links_coordinates",
+            "CK_reservation_source_links_observation_shape",
+            "CK_reservation_source_links_applied_shape",
+            "CK_reservation_source_links_lifecycle",
+            "CK_reservation_source_links_anonymised_shape");
+        AssertConstraints(
+            model.FindEntityType(typeof(ReservationDispatch))!,
+            "CK_reservation_dispatches_coordinates",
+            "CK_reservation_dispatches_kind_shape",
+            "CK_reservation_dispatches_lifecycle",
+            "CK_reservation_dispatches_sensitive_history_lifecycle",
+            "CK_reservation_dispatches_anonymised_shape");
+        AssertConstraints(
+            model.FindEntityType(typeof(ChangeProposal))!,
+            "CK_change_proposals_coordinates",
+            "CK_change_proposals_reason_code",
+            "CK_change_proposals_lifecycle",
+            "CK_change_proposals_sensitive_history_lifecycle",
+            "CK_change_proposals_anonymised_shape");
+        AssertConstraints(
+            model.FindEntityType(typeof(ObservationReprocessingAttempt))!,
+            "CK_observation_reprocessing_attempts_coordinates",
+            "CK_observation_reprocessing_attempts_counters",
+            "CK_observation_reprocessing_attempts_lifecycle");
+    }
+
+    [Fact]
     public void Connection_management_operations_are_scoped_and_immutable()
     {
         using IngestionDbContext dbContext = CreateDbContext();
@@ -1157,6 +1191,16 @@ public sealed class IngestionModelTests
             .UseInMemoryDatabase($"ingestion-model-{Guid.NewGuid():N}")
             .Options;
         return new IngestionDbContext(options, new TestScopeContext());
+    }
+
+    private static void AssertConstraints(
+        IEntityType entity,
+        params string[] expectedNames)
+    {
+        string[] actualNames = entity.GetCheckConstraints()
+            .Select(constraint => constraint.Name!)
+            .ToArray();
+        Assert.All(expectedNames, expected => Assert.Contains(expected, actualNames));
     }
 
     private static PropertyGovernancePolicyBinding CreateGovernancePolicyBinding()

@@ -12,6 +12,7 @@ using Gma.Framework.Security;
 using Gma.Framework.Security.AspNetCore;
 using Gma.Framework.Tenancy.AccessControl.AspNetCore;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +36,8 @@ public sealed class ReservationsModule : IModule
         builder.Services.AddOptions<ReservationsApiSecurityOptions>();
         builder.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IAccessHttpScopeResolver, ReservationsPropertyAccessScopeResolver>());
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IStartupFilter, ReservationsNoStoreStartupFilter>());
         builder.Services.AddReservationsApplication();
         builder.AddReservationsPersistence();
     }
@@ -48,6 +51,27 @@ public sealed class ReservationsModule : IModule
             .WithModuleName(this.Name)
             .WithTags("Reservations")
             .RequireAuthorization();
+
+        group.MapGet("/operations-snapshot", async (
+            Guid propertyId,
+            [AsParameters] OperationsSnapshotRequest request,
+            HttpContext httpContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            MarkPersonalDataResponse(httpContext);
+            return (await dispatcher.QueryAsync(
+                new GetReservationOperationsSnapshotQuery(
+                    propertyId,
+                    request.LocalDate,
+                    request.UpcomingLimit ?? ReservationsContractLimits.DefaultOperationsSnapshotUpcomingLimit),
+                cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
+        })
+            .Produces<ReservationOperationsSnapshotDto>(StatusCodes.Status200OK)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                ReservationsAdminPermissionCodes.Read,
+                ReservationsPropertyAccessScopeResolver.ResolverName);
 
         group.MapPost("", async (
             Guid propertyId,
@@ -127,6 +151,10 @@ public sealed class ReservationsModule : IModule
             ReservationStatus[]? status,
             string? search,
             ReservationListOrder? order,
+            ReservationListView? view,
+            DateOnly? operatingDate,
+            DateOnly? overlapsFrom,
+            DateOnly? overlapsTo,
             int? page,
             int? pageSize,
             HttpContext httpContext,
@@ -141,10 +169,43 @@ public sealed class ReservationsModule : IModule
                     search,
                     order ?? ReservationListOrder.CreatedDescending,
                     page ?? PageRequest.DefaultPage,
-                    pageSize ?? PageRequest.DefaultPageSize),
+                    pageSize ?? PageRequest.DefaultPageSize,
+                    overlapsFrom,
+                    overlapsTo,
+                    view,
+                    operatingDate),
                 cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
         })
             .Produces<ReservationListResponse>(StatusCodes.Status200OK)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                ReservationsAdminPermissionCodes.Read,
+                ReservationsPropertyAccessScopeResolver.ResolverName);
+
+        group.MapGet("/stay-amendments/recovery", async (
+            Guid propertyId,
+            ReservationStayAmendmentOutcome? cursorOutcome,
+            DateTimeOffset? cursorUpdatedAtUtc,
+            Guid? cursorOperationId,
+            Guid? cursorReservationId,
+            int? pageSize,
+            HttpContext httpContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            MarkPersonalDataResponse(httpContext);
+            return (await dispatcher.QueryAsync(
+                new ListReservationStayAmendmentRecoveryQuery(
+                    propertyId,
+                    CreateStayAmendmentRecoveryCursor(
+                        cursorOutcome,
+                        cursorUpdatedAtUtc,
+                        cursorOperationId,
+                        cursorReservationId),
+                    pageSize ?? StayAmendmentRecoveryDefaultPageSize),
+                cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
+        })
+            .Produces<ReservationStayAmendmentRecoveryPageDto>(StatusCodes.Status200OK)
             .RequireTenant()
             .RequireResolvedScopePermission(
                 ReservationsAdminPermissionCodes.Read,
@@ -187,6 +248,25 @@ public sealed class ReservationsModule : IModule
                 cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
         })
             .Produces<ReservationDetailsHistoryListResponse>(StatusCodes.Status200OK)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                ReservationsAdminPermissionCodes.Read,
+                ReservationsPropertyAccessScopeResolver.ResolverName);
+
+        group.MapGet("/{reservationId:guid}/stay-amendments/{operationId:guid}", async (
+            Guid propertyId,
+            Guid reservationId,
+            Guid operationId,
+            HttpContext httpContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            MarkPersonalDataResponse(httpContext);
+            return (await dispatcher.QueryAsync(
+                new GetReservationStayAmendmentQuery(propertyId, reservationId, operationId),
+                cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
+        })
+            .Produces<ReservationStayAmendmentReceiptDto>(StatusCodes.Status200OK)
             .RequireTenant()
             .RequireResolvedScopePermission(
                 ReservationsAdminPermissionCodes.Read,
@@ -253,6 +333,69 @@ public sealed class ReservationsModule : IModule
                     cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
         })
             .Produces<ReservationMutationReceiptDto>(StatusCodes.Status200OK)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                ReservationsAdminPermissionCodes.Manage,
+                ReservationsPropertyAccessScopeResolver.ResolverName);
+
+        group.MapPut("/{reservationId:guid}/stay-amendments/{operationId:guid}", async (
+            Guid propertyId,
+            Guid reservationId,
+            Guid operationId,
+            AmendReservationStayRequest request,
+            HttpContext httpContext,
+            IAccessHttpSubjectResolver subjectResolver,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            MarkPersonalDataResponse(httpContext);
+            string? actorId = ResolveActor(httpContext, subjectResolver);
+            return actorId is null
+                ? Results.Unauthorized()
+                : (await dispatcher.SendAsync(
+                    new AmendReservationStayCommand(
+                        operationId,
+                        propertyId,
+                        reservationId,
+                        request.Arrival,
+                        request.Departure,
+                        request.ExpectedArrivalTime,
+                        request.ExpectedDepartureTime,
+                        request.InventoryUnitIds,
+                        request.ExpectedDetailsRevision,
+                        actorId),
+                    cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
+        })
+            .Produces<ReservationStayAmendmentReceiptDto>(StatusCodes.Status200OK)
+            .RequireTenant()
+            .RequireResolvedScopePermission(
+                ReservationsAdminPermissionCodes.Manage,
+                ReservationsPropertyAccessScopeResolver.ResolverName);
+
+        group.MapPost("/{reservationId:guid}/stay-amendments/{operationId:guid}/reconcile", async (
+            Guid propertyId,
+            Guid reservationId,
+            Guid operationId,
+            ReconcileReservationStayAmendmentRequest request,
+            HttpContext httpContext,
+            IAccessHttpSubjectResolver subjectResolver,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            MarkPersonalDataResponse(httpContext);
+            string? actorId = ResolveActor(httpContext, subjectResolver);
+            return actorId is null
+                ? Results.Unauthorized()
+                : (await dispatcher.SendAsync(
+                    new ReconcileReservationStayAmendmentCommand(
+                        propertyId,
+                        reservationId,
+                        operationId,
+                        request.ExpectedOperationVersion,
+                        actorId),
+                    cancellationToken).ConfigureAwait(false)).ToHttpResult(ErrorStatusCodes);
+        })
+            .Produces<ReservationStayAmendmentReceiptDto>(StatusCodes.Status200OK)
             .RequireTenant()
             .RequireResolvedScopePermission(
                 ReservationsAdminPermissionCodes.Manage,
@@ -432,6 +575,10 @@ public sealed class ReservationsModule : IModule
         DateOnly BusinessDate,
         long ExpectedVersion);
 
+    public sealed record OperationsSnapshotRequest(
+        DateOnly? LocalDate,
+        int? UpcomingLimit);
+
     public sealed record LinkReservationGuestRequest(
         Guid GuestId,
         ReservationGuestRoleKind Role,
@@ -454,9 +601,23 @@ public sealed class ReservationsModule : IModule
         IReadOnlyCollection<Guid> InventoryUnitIds,
         long ExpectedDetailsRevision);
 
+    public sealed record AmendReservationStayRequest(
+        DateOnly Arrival,
+        DateOnly Departure,
+        TimeOnly? ExpectedArrivalTime,
+        TimeOnly? ExpectedDepartureTime,
+        IReadOnlyCollection<Guid> InventoryUnitIds,
+        long ExpectedDetailsRevision);
+
+    public sealed record ReconcileReservationStayAmendmentRequest(long ExpectedOperationVersion);
+
     private static readonly ApiErrorStatusCodeMap ErrorStatusCodes = CreateErrorStatusCodes(
         new(ReservationsApplicationErrors.WorkspaceProcessingRestricted.Code, StatusCodes.Status423Locked),
         new(ReservationsApplicationErrors.WorkspaceProcessingAdmissionUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
+        new(ReservationsApplicationErrors.PropertyNotFound.Code, StatusCodes.Status404NotFound),
+        new(ReservationsApplicationErrors.PropertyInactive.Code, StatusCodes.Status409Conflict),
+        new(ReservationsApplicationErrors.PropertyTimeZoneUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
+        new(ReservationsApplicationErrors.OperationsSnapshotLimitInvalid.Code, StatusCodes.Status400BadRequest),
         new(ReservationsApplicationErrors.ReservationNotFound.Code, StatusCodes.Status404NotFound),
         new(ReservationsApplicationErrors.ExternalSourceAlreadyExists.Code, StatusCodes.Status409Conflict),
         new(ReservationsApplicationErrors.CreationOperationConflict.Code, StatusCodes.Status409Conflict),
@@ -475,6 +636,12 @@ public sealed class ReservationsModule : IModule
         new(ReservationsApplicationErrors.CorrectionNoChanges.Code, StatusCodes.Status409Conflict),
         new(ReservationsApplicationErrors.AllocationAmendmentInProgress.Code, StatusCodes.Status409Conflict),
         new(ReservationsApplicationErrors.AllocationAmendmentInvalid.Code, StatusCodes.Status409Conflict),
+        new(ReservationsApplicationErrors.StayAmendmentOperationNotFound.Code, StatusCodes.Status404NotFound),
+        new(ReservationsApplicationErrors.StayAmendmentOperationConflict.Code, StatusCodes.Status409Conflict),
+        new(ReservationsApplicationErrors.StayAmendmentOperationVersionConflict.Code, StatusCodes.Status409Conflict),
+        new(ReservationsApplicationErrors.StayAmendmentReconcileInvalid.Code, StatusCodes.Status409Conflict),
+        new(ReservationsApplicationErrors.StayAmendmentReconcileTooSoon.Code, StatusCodes.Status429TooManyRequests),
+        new(ReservationsApplicationErrors.StayAmendmentRequestInvalid.Code, StatusCodes.Status400BadRequest),
         new(ReservationsApplicationErrors.StayBusinessDateInvalid.Code, StatusCodes.Status400BadRequest),
         new(ReservationsApplicationErrors.StayProvenanceInvalid.Code, StatusCodes.Status400BadRequest),
         new(ReservationsApplicationErrors.GuestNotLinkable.Code, StatusCodes.Status409Conflict),
@@ -508,4 +675,19 @@ public sealed class ReservationsModule : IModule
             ? null
             : $"{Gma.Framework.AccessControl.AccessSubjectKindNames.GetName(subject.Kind)}:{subject.Id}";
     }
+
+    private static ReservationStayAmendmentRecoveryCursorDto? CreateStayAmendmentRecoveryCursor(
+        ReservationStayAmendmentOutcome? outcome,
+        DateTimeOffset? updatedAtUtc,
+        Guid? operationId,
+        Guid? reservationId) =>
+        outcome is null && updatedAtUtc is null && operationId is null && reservationId is null
+            ? null
+            : new ReservationStayAmendmentRecoveryCursorDto(
+                outcome ?? ReservationStayAmendmentOutcome.Unknown,
+                updatedAtUtc ?? default,
+                operationId ?? Guid.Empty,
+                reservationId ?? Guid.Empty);
+
+    private const int StayAmendmentRecoveryDefaultPageSize = 50;
 }

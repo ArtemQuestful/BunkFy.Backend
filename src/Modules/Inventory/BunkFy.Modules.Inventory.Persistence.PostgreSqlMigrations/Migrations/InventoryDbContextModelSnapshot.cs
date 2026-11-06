@@ -85,11 +85,23 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ScopeId", "BedId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_bed_retirements_ScopeId_BedId_active")
+                        .HasFilter("\"State\" IN (1, 2, 3, 5)");
+
                     b.HasIndex("ScopeId", "BedId", "State");
 
                     b.HasIndex("ScopeId", "PropertyId", "RoomId", "State");
 
-                    b.ToTable("bed_retirements", "inventory");
+                    b.ToTable("bed_retirements", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_bed_retirements_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"RoomId\" <> '00000000-0000-0000-0000-000000000000' AND \"BedId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
+                            t.HasCheckConstraint("CK_bed_retirements_lifecycle", "(\"State\" = 1 AND \"Version\" = 1 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NULL AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 2 AND \"Version\" >= 2 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 3 AND \"Version\" >= 3 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 4 AND \"Version\" >= 3 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NOT NULL AND \"CompletedAtUtc\" = \"UpdatedAtUtc\" AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 5 AND \"Version\" >= 3 AND \"RejectionReasonCode\" IS NOT NULL AND \"RejectionReasonCode\" > 0 AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 6 AND \"Version\" = 2 AND \"RejectionReasonCode\" IS NULL AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NOT NULL AND \"CanceledBy\" IS NOT NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"CanceledAtUtc\" IS NOT NULL AND length(trim(\"CancellationReason\")) > 0 AND length(trim(\"CanceledBy\")) > 0 AND \"CanceledAtUtc\" = \"UpdatedAtUtc\" AND \"CanceledAtUtc\" >= \"CreatedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_bed_retirements_request", "length(trim(\"Reason\")) > 0 AND length(trim(\"RequestedBy\")) > 0");
+                        });
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.Aggregates.InventoryAllocation", b =>
@@ -156,6 +168,12 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
                     b.ToTable("allocations", "inventory", t =>
                         {
                             t.HasCheckConstraint("CK_allocations_anonymisation_state", "(\"IsAnonymised\" = TRUE AND \"AnonymisedAtUtc\" IS NOT NULL) OR (\"IsAnonymised\" = FALSE AND \"AnonymisedAtUtc\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_allocations_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"ReservationId\" <> '00000000-0000-0000-0000-000000000000' AND \"AllocationRequestId\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
+                            t.HasCheckConstraint("CK_allocations_lifecycle", "(\"Status\" = 1 AND \"Rejection\" = 0 AND \"ReleaseRequestId\" IS NULL AND \"ReleasedAtUtc\" IS NULL) OR (\"Status\" = 2 AND \"Rejection\" BETWEEN 1 AND 6 AND \"ReleaseRequestId\" IS NULL AND \"ReleasedAtUtc\" IS NULL) OR (\"Status\" = 3 AND \"Rejection\" = 0 AND \"ReleaseRequestId\" IS NOT NULL AND \"ReleaseRequestId\" <> '00000000-0000-0000-0000-000000000000' AND \"ReleasedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" >= \"CreatedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_allocations_stay_and_version", "\"Arrival\" < \"Departure\" AND \"Version\" >= 1");
                         });
                 });
 
@@ -205,13 +223,145 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ScopeId", "InventoryUnitId");
+                    b.HasIndex("ScopeId", "PropertyId", "BlockGroupId", "InventoryUnitId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_inventory_manual_blocks_group_unit");
 
                     b.HasIndex("ScopeId", "PropertyId", "BlockGroupId", "Status");
 
                     b.HasIndex("ScopeId", "PropertyId", "InventoryUnitId", "Status", "Arrival", "Departure");
 
-                    b.ToTable("manual_blocks", "inventory");
+                    b.ToTable("manual_blocks", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_manual_blocks_content", "\"Arrival\" < \"Departure\" AND length(trim(\"Reason\")) > 0");
+
+                            t.HasCheckConstraint("CK_manual_blocks_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"BlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"InventoryUnitId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
+                            t.HasCheckConstraint("CK_manual_blocks_lifecycle", "(\"Status\" = 1 AND \"Version\" = 1 AND \"ReleasedAtUtc\" IS NULL) OR (\"Status\" = 2 AND \"Version\" = 2 AND \"ReleasedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" >= \"CreatedAtUtc\")");
+                        });
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.Aggregates.ManualInventoryBlockGroup", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("PropertyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ActiveBlockCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("Arrival")
+                        .HasColumnType("date");
+
+                    b.Property<string>("BuildingLabel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByActorId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateOnly>("Departure")
+                        .HasColumnType("date");
+
+                    b.Property<string>("FloorLabel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("InitialBlockCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("InventoryUnitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastModifiedByActorId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("MembershipDigest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<int>("MembershipDigestVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("ReleasedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReplacesGroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("RoomId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SelectionDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TargetKind")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ScopeId", "PropertyId", "Id")
+                        .HasName("PK_inventory_manual_block_groups");
+
+                    b.HasIndex("ScopeId", "PropertyId", "ReplacesGroupId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_inventory_manual_block_groups_replaces")
+                        .HasFilter("\"ReplacesGroupId\" IS NOT NULL");
+
+                    b.HasIndex("ScopeId", "PropertyId", "CreatedAtUtc", "Id")
+                        .IsDescending(false, false, true, false)
+                        .HasDatabaseName("IX_inventory_manual_block_groups_property_created");
+
+                    b.HasIndex("ScopeId", "PropertyId", "State", "CreatedAtUtc", "Id")
+                        .IsDescending(false, false, false, true, false)
+                        .HasDatabaseName("IX_inventory_manual_block_groups_property_state_created");
+
+                    b.ToTable("manual_block_groups", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_actors", "((\"TargetKind\" = 0 AND \"CreatedByActorId\" IS NULL AND (\"LastModifiedByActorId\" IS NULL OR (char_length(btrim(\"LastModifiedByActorId\")) > 0 AND \"LastModifiedByActorId\" = btrim(\"LastModifiedByActorId\") AND \"LastModifiedByActorId\" !~ '[[:cntrl:]]'))) OR (\"TargetKind\" BETWEEN 1 AND 5 AND \"CreatedByActorId\" IS NOT NULL AND char_length(btrim(\"CreatedByActorId\")) > 0 AND \"CreatedByActorId\" = btrim(\"CreatedByActorId\") AND \"CreatedByActorId\" !~ '[[:cntrl:]]' AND \"LastModifiedByActorId\" IS NOT NULL AND char_length(btrim(\"LastModifiedByActorId\")) > 0 AND \"LastModifiedByActorId\" = btrim(\"LastModifiedByActorId\") AND \"LastModifiedByActorId\" !~ '[[:cntrl:]]'))");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND char_length(btrim(\"ScopeId\")) > 0 AND (\"ReplacesGroupId\" IS NULL OR (\"ReplacesGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ReplacesGroupId\" <> \"Id\"))");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_counts", "\"InitialBlockCount\" > 0 AND \"ActiveBlockCount\" BETWEEN 0 AND \"InitialBlockCount\" AND (\"InitialBlockCount\" <= 500 OR (\"TargetKind\" = 0 AND \"State\" = 3 AND \"ActiveBlockCount\" = 0))");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_digests", "(\"SelectionDigest\" IS NULL OR (char_length(\"SelectionDigest\") = 64 AND \"SelectionDigest\" ~ '^[0-9a-f]{64}$')) AND char_length(\"MembershipDigest\") = 64 AND \"MembershipDigest\" ~ '^[0-9a-f]{64}$' AND \"MembershipDigestVersion\" = 1");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_lifecycle", "\"Version\" > 0 AND (\"UpdatedAtUtc\" IS NULL OR \"UpdatedAtUtc\" >= \"CreatedAtUtc\") AND (\"ReleasedAtUtc\" IS NULL OR \"ReleasedAtUtc\" >= \"CreatedAtUtc\") AND ((\"State\" = 1 AND \"ActiveBlockCount\" = \"InitialBlockCount\" AND \"UpdatedAtUtc\" IS NULL AND \"ReleasedAtUtc\" IS NULL) OR (\"State\" = 2 AND \"ActiveBlockCount\" > 0 AND \"ActiveBlockCount\" < \"InitialBlockCount\" AND \"UpdatedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" IS NULL) OR (\"State\" IN (3, 4) AND \"ActiveBlockCount\" = 0 AND \"UpdatedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" = \"UpdatedAtUtc\"))");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_range", "\"Arrival\" < \"Departure\"");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_target", "(\"TargetKind\" = 0 AND \"SelectionDigest\" IS NULL AND \"BuildingLabel\" IS NULL AND \"FloorLabel\" IS NULL AND \"RoomId\" IS NULL AND \"InventoryUnitId\" IS NULL) OR (\"TargetKind\" = 1 AND \"SelectionDigest\" IS NOT NULL AND \"BuildingLabel\" IS NULL AND \"FloorLabel\" IS NULL AND \"RoomId\" IS NULL AND \"InventoryUnitId\" IS NULL) OR (\"TargetKind\" = 2 AND \"SelectionDigest\" IS NOT NULL AND \"BuildingLabel\" IS NOT NULL AND char_length(btrim(\"BuildingLabel\")) > 0 AND \"BuildingLabel\" = btrim(\"BuildingLabel\") AND \"BuildingLabel\" !~ '[[:cntrl:]]' AND \"FloorLabel\" IS NULL AND \"RoomId\" IS NULL AND \"InventoryUnitId\" IS NULL) OR (\"TargetKind\" = 3 AND \"SelectionDigest\" IS NOT NULL AND \"FloorLabel\" IS NOT NULL AND char_length(btrim(\"FloorLabel\")) > 0 AND \"FloorLabel\" = btrim(\"FloorLabel\") AND \"FloorLabel\" !~ '[[:cntrl:]]' AND (\"BuildingLabel\" IS NULL OR (char_length(btrim(\"BuildingLabel\")) > 0 AND \"BuildingLabel\" = btrim(\"BuildingLabel\") AND \"BuildingLabel\" !~ '[[:cntrl:]]')) AND \"RoomId\" IS NULL AND \"InventoryUnitId\" IS NULL) OR (\"TargetKind\" = 4 AND \"SelectionDigest\" IS NOT NULL AND \"BuildingLabel\" IS NULL AND \"FloorLabel\" IS NULL AND \"RoomId\" IS NOT NULL AND \"RoomId\" <> '00000000-0000-0000-0000-000000000000' AND \"InventoryUnitId\" IS NULL) OR (\"TargetKind\" = 5 AND \"SelectionDigest\" IS NOT NULL AND \"BuildingLabel\" IS NULL AND \"FloorLabel\" IS NULL AND \"RoomId\" IS NULL AND \"InventoryUnitId\" IS NOT NULL AND \"InventoryUnitId\" <> '00000000-0000-0000-0000-000000000000')");
+
+                            t.HasCheckConstraint("CK_inventory_manual_block_groups_text", "char_length(\"Reason\") BETWEEN 1 AND 500 AND \"Reason\" = btrim(\"Reason\") AND \"Reason\" !~ '[[:cntrl:]]'");
+                        });
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.Aggregates.RoomInventoryConfiguration", b =>
@@ -249,7 +399,12 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasIndex("ScopeId", "PropertyId");
 
-                    b.ToTable("room_configurations", "inventory");
+                    b.ToTable("room_configurations", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_room_configurations_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
+                            t.HasCheckConstraint("CK_room_configurations_state", "\"AvailabilityMutationVersion\" >= \"Version\" AND ((\"Version\" = 1 AND \"SalesMode\" = 1 AND \"UpdatedAtUtc\" IS NULL) OR (\"Version\" >= 2 AND \"SalesMode\" IN (2, 3) AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\"))");
+                        });
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.Aggregates.RoomRetirementProcess", b =>
@@ -311,11 +466,23 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ScopeId", "RoomId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_room_retirements_ScopeId_RoomId_active")
+                        .HasFilter("\"State\" IN (1, 2, 3, 5)");
+
                     b.HasIndex("ScopeId", "PropertyId", "State");
 
                     b.HasIndex("ScopeId", "RoomId", "State");
 
-                    b.ToTable("room_retirements", "inventory");
+                    b.ToTable("room_retirements", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_room_retirements_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"RoomId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
+                            t.HasCheckConstraint("CK_room_retirements_lifecycle", "(\"State\" = 1 AND \"Version\" = 1 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NULL AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 2 AND \"Version\" >= 2 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 3 AND \"Version\" >= 3 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 4 AND \"Version\" >= 3 AND \"RejectionReasonCode\" IS NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NOT NULL AND \"CompletedAtUtc\" = \"UpdatedAtUtc\" AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 5 AND \"Version\" >= 3 AND \"RejectionReasonCode\" IS NOT NULL AND \"RejectionReasonCode\" > 0 AND \"UpdatedAtUtc\" IS NOT NULL AND \"UpdatedAtUtc\" >= \"CreatedAtUtc\" AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NULL AND \"CanceledBy\" IS NULL AND \"CanceledAtUtc\" IS NULL) OR (\"State\" = 6 AND \"Version\" = 2 AND \"RejectionReasonCode\" IS NULL AND \"CompletedAtUtc\" IS NULL AND \"CancellationReason\" IS NOT NULL AND \"CanceledBy\" IS NOT NULL AND \"UpdatedAtUtc\" IS NOT NULL AND \"CanceledAtUtc\" IS NOT NULL AND length(trim(\"CancellationReason\")) > 0 AND length(trim(\"CanceledBy\")) > 0 AND \"CanceledAtUtc\" = \"UpdatedAtUtc\" AND \"CanceledAtUtc\" >= \"CreatedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_room_retirements_request", "length(trim(\"Reason\")) > 0 AND length(trim(\"RequestedBy\")) > 0");
+                        });
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.DataRights.InventoryAllocationAnonymisationReceipt", b =>
@@ -603,13 +770,19 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasIndex("ScopeId", "Id", "AllocationId");
 
-                    b.ToTable("allocation_units", "inventory");
+                    b.ToTable("allocation_units", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_allocation_units_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"AllocationId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+                        });
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Persistence.InventoryAllocationAmendmentDecision", b =>
                 {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("AllocationId")
@@ -639,16 +812,20 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<Guid>("ReservationId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ScopeId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.HasKey("Id");
+                    b.HasKey("ScopeId", "Id");
 
                     b.HasIndex("ScopeId", "AllocationId", "DecidedAtUtc");
 
-                    b.ToTable("allocation_amendment_decisions", "inventory");
+                    b.ToTable("allocation_amendment_decisions", "inventory", t =>
+                        {
+                            t.HasCheckConstraint("CK_allocation_amendment_decisions_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"AllocationId\" <> '00000000-0000-0000-0000-000000000000' AND \"ReservationId\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND char_length(\"ScopeId\") > 0 AND \"ScopeId\" = btrim(\"ScopeId\") AND \"ScopeId\" !~ '[[:space:][:cntrl:]]'");
+
+                            t.HasCheckConstraint("CK_allocation_amendment_decisions_decided_at", "\"DecidedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
+
+                            t.HasCheckConstraint("CK_allocation_amendment_decisions_fingerprint", "length(\"RequestFingerprint\") = 64 AND \"RequestFingerprint\" ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("CK_allocation_amendment_decisions_outcome", "(\"Confirmed\" = TRUE AND \"RejectionReason\" IS NULL AND \"AllocationVersion\" IS NOT NULL AND \"AllocationVersion\" >= 1) OR (\"Confirmed\" = FALSE AND \"RejectionReason\" IS NOT NULL AND \"RejectionReason\" BETWEEN 1 AND 11 AND \"AllocationVersion\" IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Persistence.InventoryAllocationOperationLock", b =>
@@ -678,6 +855,8 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("allocation_operation_locks", "inventory", t =>
                         {
+                            t.HasCheckConstraint("CK_allocation_operation_locks_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"Id\" = \"AllocationId\" AND length(trim(\"ScopeId\")) > 0");
+
                             t.HasCheckConstraint("CK_allocation_operation_locks_revision", "\"Revision\" >= 1");
                         });
                 });
@@ -756,11 +935,20 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
                         .HasColumnType("character(64)")
                         .IsFixedLength();
 
+                    b.Property<int?>("ResultActiveBlockCount")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("ResultAffectedBlockCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ResultAlreadyReleasedBlockCount")
                         .HasColumnType("integer");
 
                     b.Property<Guid?>("ResultBlockGroupId")
                         .HasColumnType("uuid");
+
+                    b.Property<int?>("ResultBlockGroupStatus")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("ResultBlockId")
                         .HasColumnType("uuid");
@@ -768,11 +956,28 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<int?>("ResultBlockStatus")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("ResultCreatedBlockCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResultMembershipDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<Guid?>("ResultPreviousBlockGroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("ResultReleasedBlockCount")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("ResultSalesMode")
                         .HasColumnType("integer");
 
                     b.Property<Guid?>("ResultTopologyChangeId")
                         .HasColumnType("uuid");
+
+                    b.Property<int?>("ResultTotalBlockCount")
+                        .HasColumnType("integer");
 
                     b.Property<long>("ResultVersion")
                         .HasColumnType("bigint");
@@ -787,9 +992,11 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
                             t.HasCheckConstraint("CK_inventory_management_operations_fingerprint", "char_length(\"RequestFingerprint\") = 64 AND \"RequestFingerprint\" ~ '^[0-9a-f]{64}$'");
 
-                            t.HasCheckConstraint("CK_inventory_management_operations_kind", "\"Kind\" BETWEEN 1 AND 11 AND ((\"Kind\" = 1 AND \"ResourceKind\" = 1) OR (\"Kind\" IN (2, 3) AND \"ResourceKind\" = 2 AND \"ResourceId\" = \"PropertyId\") OR (\"Kind\" = 4 AND \"ResourceKind\" = 3 AND \"ResultBlockId\" IS NOT NULL AND \"ResourceId\" = \"ResultBlockId\") OR (\"Kind\" = 5 AND \"ResourceKind\" = 4 AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResourceId\" = \"ResultBlockGroupId\") OR (\"Kind\" = 6 AND \"ResourceKind\" = 5) OR (\"Kind\" = 7 AND \"ResourceKind\" = 6 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 8 AND \"ResourceKind\" = 1) OR (\"Kind\" = 9 AND \"ResourceKind\" = 7 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 10 AND \"ResourceKind\" = 6 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 11 AND \"ResourceKind\" = 7 AND \"ResourceId\" = \"ResultTopologyChangeId\"))");
+                            t.HasCheckConstraint("CK_inventory_management_operations_group_v2_shape", "((\"Kind\" BETWEEN 1 AND 11 AND \"ResultBlockGroupStatus\" IS NULL AND \"ResultPreviousBlockGroupId\" IS NULL AND \"ResultTotalBlockCount\" IS NULL AND \"ResultActiveBlockCount\" IS NULL AND \"ResultReleasedBlockCount\" IS NULL AND \"ResultAlreadyReleasedBlockCount\" IS NULL AND \"ResultCreatedBlockCount\" IS NULL AND \"ResultMembershipDigest\" IS NULL) OR (\"Kind\" = 12 AND \"ResultBlockGroupStatus\" = 1 AND \"ResultPreviousBlockGroupId\" IS NULL AND \"ResultTotalBlockCount\" BETWEEN 1 AND 500 AND \"ResultActiveBlockCount\" = \"ResultTotalBlockCount\" AND \"ResultReleasedBlockCount\" = 0 AND \"ResultAlreadyReleasedBlockCount\" = 0 AND \"ResultCreatedBlockCount\" = \"ResultTotalBlockCount\" AND \"ResultAffectedBlockCount\" = \"ResultTotalBlockCount\" AND \"ResultVersion\" = 1 AND \"ResultMembershipDigest\" IS NOT NULL) OR (\"Kind\" = 13 AND \"ResultPreviousBlockGroupId\" = \"ResourceId\" AND \"ResultTotalBlockCount\" BETWEEN 1 AND 500 AND \"ResultActiveBlockCount\" > 0 AND \"ResultReleasedBlockCount\" >= 0 AND \"ResultAlreadyReleasedBlockCount\" >= 0 AND \"ResultCreatedBlockCount\" >= 0 AND \"ResultMembershipDigest\" IS NOT NULL AND ((\"ResultBlockGroupId\" = \"ResourceId\" AND \"ResultVersion\" = \"ExpectedVersion\" AND \"ResultAffectedBlockCount\" = 0 AND \"ResultReleasedBlockCount\" = 0 AND \"ResultCreatedBlockCount\" = 0 AND \"ResultTotalBlockCount\" = \"ResultActiveBlockCount\" + \"ResultAlreadyReleasedBlockCount\" AND ((\"ResultBlockGroupStatus\" = 1 AND \"ResultActiveBlockCount\" = \"ResultTotalBlockCount\") OR (\"ResultBlockGroupStatus\" = 2 AND \"ResultActiveBlockCount\" < \"ResultTotalBlockCount\"))) OR (\"ResultBlockGroupId\" <> \"ResourceId\" AND \"ResultVersion\" = 1 AND \"ResultBlockGroupStatus\" = 1 AND \"ResultActiveBlockCount\" = \"ResultTotalBlockCount\" AND \"ResultCreatedBlockCount\" = \"ResultTotalBlockCount\" AND \"ResultReleasedBlockCount\" > 0 AND \"ResultAffectedBlockCount\" = \"ResultReleasedBlockCount\" + \"ResultCreatedBlockCount\"))) OR (\"Kind\" = 14 AND \"ResultPreviousBlockGroupId\" IS NULL AND \"ResultBlockGroupId\" = \"ResourceId\" AND \"ResultTotalBlockCount\" > 0 AND \"ResultActiveBlockCount\" = 0 AND \"ResultCreatedBlockCount\" = 0 AND \"ResultMembershipDigest\" IS NOT NULL AND ((\"ResultVersion\" = \"ExpectedVersion\" AND \"ResultBlockGroupStatus\" IN (3, 4) AND \"ResultAffectedBlockCount\" = 0 AND \"ResultReleasedBlockCount\" = 0 AND \"ResultAlreadyReleasedBlockCount\" = \"ResultTotalBlockCount\") OR (\"ResultVersion\" = \"ExpectedVersion\" + 1 AND \"ResultBlockGroupStatus\" = 3 AND \"ResultReleasedBlockCount\" > 0 AND \"ResultAffectedBlockCount\" = \"ResultReleasedBlockCount\" AND \"ResultTotalBlockCount\" = \"ResultReleasedBlockCount\" + \"ResultAlreadyReleasedBlockCount\" AND \"ResultTotalBlockCount\" <= 500))))");
 
-                            t.HasCheckConstraint("CK_inventory_management_operations_result", "(\"Kind\" = 1 AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" BETWEEN \"ExpectedVersion\" AND \"ExpectedVersion\" + 1 AND \"ResultSalesMode\" IS NOT NULL AND \"ResultSalesMode\" IN (2, 3) AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NULL AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NULL AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 2 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 1 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NOT NULL AND \"ResultBlockId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NOT NULL AND \"ResultBlockStatus\" = 1 AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" = 1 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 3 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 0 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" > 0 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 4 AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" = \"ExpectedVersion\" + 1 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NOT NULL AND \"ResultBlockId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NOT NULL AND \"ResultBlockStatus\" = 2 AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" = 1 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 5 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 0 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" > 0 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" IN (6, 8) AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" > 0 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NULL AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NULL AND \"ResultTopologyChangeId\" IS NOT NULL AND \"ResultTopologyChangeId\" <> '00000000-0000-0000-0000-000000000000') OR (\"Kind\" IN (7, 9, 10, 11) AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" = \"ExpectedVersion\" + 1 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NULL AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NULL AND \"ResultTopologyChangeId\" IS NOT NULL AND \"ResultTopologyChangeId\" <> '00000000-0000-0000-0000-000000000000')");
+                            t.HasCheckConstraint("CK_inventory_management_operations_kind", "\"Kind\" BETWEEN 1 AND 14 AND ((\"Kind\" = 1 AND \"ResourceKind\" = 1) OR (\"Kind\" IN (2, 3) AND \"ResourceKind\" = 2 AND \"ResourceId\" = \"PropertyId\") OR (\"Kind\" = 4 AND \"ResourceKind\" = 3 AND \"ResultBlockId\" IS NOT NULL AND \"ResourceId\" = \"ResultBlockId\") OR (\"Kind\" = 5 AND \"ResourceKind\" = 4 AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResourceId\" = \"ResultBlockGroupId\") OR (\"Kind\" = 6 AND \"ResourceKind\" = 5) OR (\"Kind\" = 7 AND \"ResourceKind\" = 6 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 8 AND \"ResourceKind\" = 1) OR (\"Kind\" = 9 AND \"ResourceKind\" = 7 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 10 AND \"ResourceKind\" = 6 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 11 AND \"ResourceKind\" = 7 AND \"ResourceId\" = \"ResultTopologyChangeId\") OR (\"Kind\" = 12 AND \"ResourceKind\" = 2 AND \"ResourceId\" = \"PropertyId\") OR (\"Kind\" = 13 AND \"ResourceKind\" = 4 AND \"ResourceId\" = \"ResultPreviousBlockGroupId\") OR (\"Kind\" = 14 AND \"ResourceKind\" = 4 AND \"ResourceId\" = \"ResultBlockGroupId\"))");
+
+                            t.HasCheckConstraint("CK_inventory_management_operations_result", "(\"Kind\" = 1 AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" BETWEEN \"ExpectedVersion\" AND \"ExpectedVersion\" + 1 AND \"ResultSalesMode\" IS NOT NULL AND \"ResultSalesMode\" IN (2, 3) AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NULL AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NULL AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 2 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 1 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NOT NULL AND \"ResultBlockId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NOT NULL AND \"ResultBlockStatus\" = 1 AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" = 1 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 3 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 0 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" > 0 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 4 AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" = \"ExpectedVersion\" + 1 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NOT NULL AND \"ResultBlockId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NOT NULL AND \"ResultBlockStatus\" = 2 AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" = 1 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" = 5 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 0 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" > 0 AND \"ResultTopologyChangeId\" IS NULL) OR (\"Kind\" IN (6, 8) AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" > 0 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NULL AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NULL AND \"ResultTopologyChangeId\" IS NOT NULL AND \"ResultTopologyChangeId\" <> '00000000-0000-0000-0000-000000000000') OR (\"Kind\" IN (7, 9, 10, 11) AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" = \"ExpectedVersion\" + 1 AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NULL AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NULL AND \"ResultTopologyChangeId\" IS NOT NULL AND \"ResultTopologyChangeId\" <> '00000000-0000-0000-0000-000000000000') OR (\"Kind\" IN (12, 13, 14) AND \"ResultSalesMode\" IS NULL AND \"ResultBlockId\" IS NULL AND \"ResultBlockGroupId\" IS NOT NULL AND \"ResultBlockGroupId\" <> '00000000-0000-0000-0000-000000000000' AND \"ResultBlockStatus\" IS NULL AND \"ResultAffectedBlockCount\" IS NOT NULL AND \"ResultAffectedBlockCount\" >= 0 AND \"ResultTopologyChangeId\" IS NULL AND \"ResultBlockGroupStatus\" IS NOT NULL AND \"ResultBlockGroupStatus\" BETWEEN 1 AND 4 AND \"ResultTotalBlockCount\" IS NOT NULL AND \"ResultTotalBlockCount\" > 0 AND \"ResultActiveBlockCount\" IS NOT NULL AND \"ResultActiveBlockCount\" BETWEEN 0 AND \"ResultTotalBlockCount\" AND \"ResultReleasedBlockCount\" IS NOT NULL AND \"ResultReleasedBlockCount\" >= 0 AND \"ResultAlreadyReleasedBlockCount\" IS NOT NULL AND \"ResultAlreadyReleasedBlockCount\" >= 0 AND \"ResultCreatedBlockCount\" IS NOT NULL AND \"ResultCreatedBlockCount\" >= 0 AND char_length(\"ResultMembershipDigest\") = 64 AND \"ResultMembershipDigest\" ~ '^[0-9a-f]{64}$' AND ((\"Kind\" = 12 AND \"ExpectedVersion\" = 0 AND \"ResultVersion\" = 1 AND \"ResultPreviousBlockGroupId\" IS NULL) OR (\"Kind\" = 13 AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" > 0 AND \"ResultPreviousBlockGroupId\" IS NOT NULL AND \"ResultPreviousBlockGroupId\" <> '00000000-0000-0000-0000-000000000000') OR (\"Kind\" = 14 AND \"ExpectedVersion\" > 0 AND \"ResultVersion\" > 0 AND \"ResultPreviousBlockGroupId\" IS NULL)))");
                         });
                 });
 
@@ -841,6 +1048,12 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<long>("AvailabilitySelectionVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(1L);
 
                     b.Property<string>("Code")
                         .IsRequired()
@@ -1088,7 +1301,7 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_inventory_tenant_destroy_operation_batch", "\"BatchSize\" BETWEEN 1 AND 500");
 
-                            t.HasCheckConstraint("CK_inventory_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 20 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
+                            t.HasCheckConstraint("CK_inventory_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 21 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
 
                             t.HasCheckConstraint("CK_inventory_tenant_destroy_operation_revisions", "\"SelectedRevision\" >= 0 AND \"ResultingRevision\" = \"SelectedRevision\" + 1");
 
@@ -1284,12 +1497,29 @@ namespace BunkFy.Modules.Inventory.Persistence.PostgreSqlMigrations.Migrations
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.Aggregates.ManualInventoryBlock", b =>
                 {
+                    b.HasOne("BunkFy.Modules.Inventory.Domain.Aggregates.ManualInventoryBlockGroup", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "PropertyId", "BlockGroupId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_inventory_manual_blocks_group");
+
                     b.HasOne("BunkFy.Modules.Inventory.Persistence.InventoryUnit", null)
                         .WithMany()
-                        .HasForeignKey("ScopeId", "InventoryUnitId")
-                        .HasPrincipalKey("ScopeId", "Id")
+                        .HasForeignKey("ScopeId", "PropertyId", "InventoryUnitId")
+                        .HasPrincipalKey("ScopeId", "PropertyId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_inventory_manual_blocks_inventory_unit");
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.Aggregates.ManualInventoryBlockGroup", b =>
+                {
+                    b.HasOne("BunkFy.Modules.Inventory.Domain.Aggregates.ManualInventoryBlockGroup", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "PropertyId", "ReplacesGroupId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_inventory_manual_block_groups_replaces");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Inventory.Domain.DataRights.InventoryAllocationAnonymisationReceipt", b =>

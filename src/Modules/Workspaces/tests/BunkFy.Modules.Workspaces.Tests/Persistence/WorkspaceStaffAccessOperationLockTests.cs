@@ -11,7 +11,7 @@ using Xunit;
 public sealed class WorkspaceStaffAccessOperationLockTests
 {
     [Fact]
-    public async Task Non_relational_process_lock_reports_exact_existence()
+    public async Task Non_relational_coordinate_locks_report_exact_existence()
     {
         await using WorkspacesDbContext dbContext = CreateDbContext();
         WorkspaceStaffAccessProcess process = CreateProcess();
@@ -25,9 +25,26 @@ public sealed class WorkspaceStaffAccessOperationLockTests
         bool missing = await operationLock.TryAcquireProcessAsync(
             Guid.NewGuid(),
             CancellationToken.None);
+        bool existingVersion = await operationLock.TryAcquireStaffVersionAsync(
+            process.StaffMemberId,
+            process.TargetStaffVersion,
+            CancellationToken.None);
+        bool missingVersion = await operationLock.TryAcquireStaffVersionAsync(
+            process.StaffMemberId,
+            process.TargetStaffVersion + 1,
+            CancellationToken.None);
+        await operationLock.AcquireSubjectAsync(
+            process.SubjectId,
+            CancellationToken.None);
+        await operationLock.AcquireCoordinatesAsync(
+            process.StaffMemberId,
+            process.SubjectId,
+            CancellationToken.None);
 
         Assert.True(existing);
         Assert.False(missing);
+        Assert.True(existingVersion);
+        Assert.False(missingVersion);
     }
 
     [Fact]
@@ -37,12 +54,40 @@ public sealed class WorkspaceStaffAccessOperationLockTests
         WorkspaceStaffAccessOperationLock operationLock = new(dbContext);
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
+            operationLock.AcquireSubjectAsync(
+                " ",
+                CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            operationLock.AcquireSubjectAsync(
+                new string('s', WorkspaceStaffAccessProcess.SubjectIdMaxLength + 1),
+                CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             operationLock.AcquireStaffAsync(
                 Guid.Empty,
                 CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentException>(() =>
+            operationLock.AcquireCoordinatesAsync(
+                Guid.Empty,
+                "subject-a",
+                CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            operationLock.AcquireCoordinatesAsync(
+                Guid.NewGuid(),
+                " ",
+                CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             operationLock.TryAcquireProcessAsync(
                 Guid.Empty,
+                CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            operationLock.TryAcquireStaffVersionAsync(
+                Guid.Empty,
+                targetStaffVersion: 2,
+                CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            operationLock.TryAcquireStaffVersionAsync(
+                Guid.NewGuid(),
+                targetStaffVersion: 0,
                 CancellationToken.None));
     }
 

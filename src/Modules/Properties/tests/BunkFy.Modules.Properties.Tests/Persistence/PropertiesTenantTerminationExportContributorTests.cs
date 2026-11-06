@@ -13,6 +13,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 using DomainPropertyGovernanceAcknowledgement =
     BunkFy.Modules.Properties.Domain.ValueObjects.PropertyGovernanceAcknowledgement;
@@ -41,6 +42,10 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
         Guid.Parse("53000000-0000-0000-0000-000000000001");
     private static readonly Guid BedBatchMutationOperationId =
         Guid.Parse("54000000-0000-0000-0000-000000000001");
+    private static readonly Guid TimeZoneOperationId =
+        Guid.Parse("55000000-0000-0000-0000-000000000001");
+    private static readonly Guid TimeZoneRevisionId =
+        Guid.Parse("56000000-0000-0000-0000-000000000001");
     private static readonly Guid RoomId =
         Guid.Parse("60000000-0000-0000-0000-000000000001");
     private static readonly Guid BedId =
@@ -114,7 +119,7 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("properties.termination.exported", result.ResultCode);
-        Assert.Equal(11, result.AffectedCount);
+        Assert.Equal(12, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(1, result.ResultingProofRevision);
         Assert.Equal(
@@ -128,6 +133,8 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
                     .PropertyMutationOperationRecordType,
                 PropertiesTenantTerminationMetadata
                     .PropertyMutationOperationRecordType,
+                PropertiesTenantTerminationMetadata
+                    .PropertyTimeZoneOperationRecordType,
                 PropertiesTenantTerminationMetadata
                     .GovernanceAcknowledgementRecordType,
                 PropertiesTenantTerminationMetadata.RoomRecordType,
@@ -184,9 +191,39 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
         Assert.Equal(
             2,
             batchOperation.GetProperty("resultAffectedBedCount").GetInt32());
+        JsonElement timeZoneOperation = Field(
+            first.Records[5],
+            "properties.property-time-zone-operation");
+        Assert.Equal(
+            "unchanged",
+            timeZoneOperation.GetProperty("changeKind").GetString());
+        Assert.Equal(
+            "user:owner",
+            Field(
+                    first.Records[5],
+                    "properties.staff-actor-reference")
+                .GetString());
         Assert.Equal(
             PropertiesTenantTerminationMetadata.ExportSchemaId,
             contributor.ExportDescriptor.ExportSchemaId);
+        Assert.Equal(8, contributor.ExportDescriptor.CatalogVersion);
+        Assert.Equal(7, contributor.ExportDescriptor.ExportSchemaVersion);
+        Assert.Equal(5,
+            PropertiesTenantTerminationMetadata.PersonalDataCatalogVersion);
+        Assert.Contains(
+            PropertiesTenantTerminationMetadata.PropertyTimeZoneOperationRecordType,
+            PropertiesTenantTerminationMetadata.RecordTypes);
+        Assert.Contains(
+            "properties.property-time-zone-operation",
+            contributor.ExportDescriptor.FieldIds);
+        Assert.DoesNotContain(
+            "catalog=7",
+            PropertiesTenantTerminationMetadata.CatalogManifest,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "export-schema=properties.tenant-termination-export:6",
+            PropertiesTenantTerminationMetadata.CatalogManifest,
+            StringComparison.Ordinal);
         Assert.Equal(
             PropertiesTenantTerminationMetadata.ExportFieldIds
                 .OrderBy(field => field, StringComparer.Ordinal),
@@ -355,6 +392,29 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
             failure.Message);
     }
 
+    [Theory]
+    [InlineData(EntityState.Modified)]
+    [InlineData(EntityState.Deleted)]
+    public async Task Property_time_zone_operations_are_append_only(
+        EntityState attemptedState)
+    {
+        MutableFenceReader fences = new();
+        await using PropertiesDbContext context = CreateContext(fences);
+        SeedGraph(context);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        PropertyTimeZoneOperation operation =
+            await context.PropertyTimeZoneOperations.SingleAsync();
+        context.Entry(operation).State = attemptedState;
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<
+            InvalidOperationException>(() => context.SaveChangesAsync());
+
+        Assert.Equal(
+            "Property time-zone operations are append-only.",
+            failure.Message);
+    }
+
     private static void SeedGraph(PropertiesDbContext context)
     {
         Property property = CreateProperty(PropertyId);
@@ -509,6 +569,22 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
                         AffectedBedCount: 2,
                         RoomVersion: 5),
                     FrozenAtUtc.AddDays(-3))));
+        context.PropertyTimeZoneOperations.Add(
+            new PropertyTimeZoneOperation(
+                new PropertyTimeZoneRevisionWriteModel(
+                    TimeZoneRevisionId,
+                    TenantId,
+                    PropertyId,
+                    TimeZoneOperationId,
+                    PropertyTimeZoneChangeKind.Unchanged,
+                    "Europe/London",
+                    "Europe/London",
+                    "Europe/London",
+                    "TZDB: 2026c",
+                    property.Version,
+                    property.Version,
+                    "user:owner",
+                    FrozenAtUtc.AddDays(-2))));
         context.Rooms.Add(room);
         context.PropertyOperationLocks.Add(
             new PropertyOperationLock(property.Id, property.ScopeId));
@@ -568,13 +644,24 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
         $"{record.RecordType}|{record.RecordId:N}|{record.RecordVersion}";
 
     private static PropertiesDbContext CreateContext(
-        IWorkspaceTerminationFenceReader fences)
+        IWorkspaceTerminationFenceReader fences) =>
+        CreateContext(
+            fences,
+            TenantId,
+            Guid.NewGuid().ToString("N"),
+            new InMemoryDatabaseRoot());
+
+    private static PropertiesDbContext CreateContext(
+        IWorkspaceTerminationFenceReader fences,
+        string tenantId,
+        string databaseName,
+        InMemoryDatabaseRoot databaseRoot)
     {
         DbContextOptions<PropertiesDbContext> options =
             new DbContextOptionsBuilder<PropertiesDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+                .UseInMemoryDatabase(databaseName, databaseRoot)
                 .Options;
-        return new(options, new TestScopeContext(), fences);
+        return new(options, new TestScopeContext(tenantId), fences);
     }
 
     private sealed class CollectingSink : IDataRightsExportSink
@@ -612,10 +699,11 @@ public sealed partial class PropertiesTenantTerminationExportContributorTests
             throw new InvalidOperationException("Fence store unavailable.");
     }
 
-    private sealed class TestScopeContext : IScopeContext
+    private sealed class TestScopeContext(string scopeId = TenantId)
+        : IScopeContext
     {
         public bool IsEnabled => true;
-        public string ScopeId => TenantId;
+        public string ScopeId => scopeId;
     }
 
     private sealed class TestClock : ISystemClock

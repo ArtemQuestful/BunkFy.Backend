@@ -25,7 +25,10 @@ public sealed class RetentionDbContext(
         this.Set<RetentionPropertyProjection>();
     public DbSet<RetentionScheduleState> ScheduleStates =>
         this.Set<RetentionScheduleState>();
+    public DbSet<RetentionRunRetryRequest> RunRetryRequests =>
+        this.Set<RetentionRunRetryRequest>();
     public DbSet<InboxMessage> InboxMessages => this.Set<InboxMessage>();
+    public DbSet<OutboxMessage> OutboxMessages => this.Set<OutboxMessage>();
     internal DbSet<RetentionTenantRevision> TenantRevisions =>
         this.Set<RetentionTenantRevision>();
     internal DbSet<RetentionTenantDestroyOperation> TenantDestroyOperations =>
@@ -228,6 +231,7 @@ public sealed class RetentionDbContext(
                 EntityState.Modified or EntityState.Deleted) &&
             entry.Entity is not (
                 InboxMessage or
+                OutboxMessage or
                 RetentionTenantRevision or
                 RetentionTenantDestroyOperation or
                 RetentionTenantDestroyReceipt));
@@ -239,6 +243,10 @@ public sealed class RetentionDbContext(
             entry.Entity switch
             {
                 InboxMessage message =>
+                    entry.State == EntityState.Added &&
+                    !string.IsNullOrWhiteSpace(message.ScopeId),
+                OutboxMessage message =>
+                    entry.State == EntityState.Added &&
                     !string.IsNullOrWhiteSpace(message.ScopeId),
                 RetentionTenantRevision or
                 RetentionTenantDestroyOperation or

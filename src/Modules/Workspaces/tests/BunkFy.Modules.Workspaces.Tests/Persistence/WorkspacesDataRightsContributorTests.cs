@@ -205,6 +205,214 @@ public sealed class WorkspacesDataRightsContributorTests
     }
 
     [Fact]
+    public async Task Recovery_receipt_is_discoverable_for_every_personal_actor_and_exports_shaped_proof()
+    {
+        await using WorkspacesDbContext context = CreateContext();
+        Guid applicationId = Guid.Parse(
+            "51000000-0000-0000-0000-000000000001");
+        Guid sourceId = Guid.Parse(
+            "41000000-0000-0000-0000-000000000001");
+        Guid receiptId = Guid.Parse(
+            "61000000-0000-0000-0000-000000000001");
+        const string applicant = "recovery-applicant";
+        const string planCreator = "recovery-plan-creator";
+        const string recoveryActor = "recovery-operator";
+        string digest = new('b', 64);
+        WorkspaceStaffOnboarding onboarding =
+            WorkspaceStaffOnboarding.Create(
+                applicationId,
+                TenantId,
+                WorkspaceStaffOnboardingSource.Invitation,
+                sourceId,
+                applicant,
+                "recovery@example.test",
+                "Recovery Applicant",
+                legalName: null,
+                workEmail: null,
+                workPhone: null,
+                employeeNumber: null,
+                jobTitle: "Manager",
+                department: null,
+                Now).Value;
+        Assert.True(onboarding.Fail(
+            "Workspaces.TestInducedFailure",
+            Now.AddSeconds(30)).IsSuccess);
+        WorkspaceStaffOnboardingRecoveryReceipt receipt =
+            WorkspaceStaffOnboardingRecoveryReceipt.Create(new(
+                receiptId,
+                TenantId,
+                Guid.Parse(
+                    "71000000-0000-0000-0000-000000000001"),
+                applicationId,
+                sourceId,
+                StaffMemberId,
+                WorkspaceStaffOnboardingRecoveryTriggerKind.ManualOperator,
+                Guid.Parse(
+                    "81000000-0000-0000-0000-000000000099"),
+                applicant,
+                planCreator,
+                recoveryActor,
+                "system:workspace-staff-onboarding",
+                digest,
+                onboarding.Version,
+                onboarding.Version,
+                onboarding.Status,
+                onboarding.Version,
+                onboarding.Status,
+                Guid.Parse(
+                    "91000000-0000-0000-0000-000000000099"),
+                CurrentProfileVersion: 4,
+                PropertyCount: 2,
+                TargetSetSha256: digest,
+                OrganizationRevision: 9,
+                MembershipId: Guid.Parse(
+                    "a1000000-0000-0000-0000-000000000099"),
+                MembershipVersion: 5,
+                MembershipStatus: 1,
+                StaffTenantRevision: 12,
+                StaffMemberVersion: 4,
+                StaffStateProofSha256: digest,
+                StaffPropertySetSha256: digest,
+                AccessManagementRevision: null,
+                AccessFactsSha256: null,
+                WorkspaceRecoveryVerification.Equivalent,
+                WorkspaceRecoveryVerification.ReviewRequired,
+                WorkspaceRecoveryVerification.Unknown,
+                WorkspaceStaffOnboardingRecoveryOutcome.ReviewRequired,
+                WorkspaceStaffOnboardingRecoveryReason.StaffConflict,
+                AccessMutationPerformed: false,
+                OrganizationObservedAtUtc: Now.AddMinutes(1),
+                StaffObservedAtUtc: Now.AddMinutes(1),
+                AccessObservedAtUtc: null,
+                RecordedAtUtc: Now.AddMinutes(1))).Value;
+        context.AddRange(onboarding, receipt);
+        await context.SaveChangesAsync();
+
+        WorkspacesDataRightsDiscoveryContributor discovery =
+            new(context, new TestScopeContext());
+        foreach (string actor in new[]
+                 {
+                     applicant,
+                     planCreator,
+                     recoveryActor
+                 })
+        {
+            DataRightsSubjectDiscoveryResult result =
+                await discovery.DiscoverAsync(
+                    DiscoveryRequest(AccountSubjectId: actor),
+                    CancellationToken.None);
+            Assert.Contains(
+                result.Candidates,
+                candidate => candidate.Coordinate.RecordType ==
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecoveryReceiptRecordType &&
+                    candidate.Coordinate.RecordId == receiptId);
+        }
+
+        WorkspacesDataRightsExportContributor exporter =
+            CreateExportContributor(context);
+        CollectingSink sink = new();
+        DataRightsSubjectExportResult exported = await exporter.ExportAsync(
+            ExportRequest(
+                WorkspacesDataRightsCoordinates
+                    .StaffOnboardingRecoveryReceiptRecordType,
+                receiptId,
+                receipt.ContractVersion),
+            sink,
+            CancellationToken.None);
+
+        Assert.Equal(DataRightsSubjectExportStatus.Succeeded, exported.Status);
+        DataRightsExportRecord record = Assert.Single(sink.Records);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                record,
+                "workspaces.onboarding-recovery.applicant-subject-id")
+                .ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                record,
+                "workspaces.onboarding-recovery.plan-creator-actor-id")
+                .ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                record,
+                "workspaces.onboarding-recovery.recovery-actor-id")
+                .ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                record,
+                "workspaces.onboarding-recovery.effective-system-actor-id")
+                .ValueKind);
+        Assert.Equal(
+            digest,
+            Field(
+                record,
+                "workspaces.onboarding-recovery.target-set-sha256")
+                .GetString());
+        Assert.DoesNotContain(
+            record.Fields,
+            field => field.FieldId.Contains(
+                "property-id",
+                StringComparison.Ordinal) ||
+                field.FieldId.Contains(
+                "permission",
+                StringComparison.Ordinal));
+
+        CollectingSink applicantSink = new();
+        DataRightsSubjectExportResult applicantExport =
+            await exporter.ExportAsync(
+                ExportRequest(
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecordType,
+                    onboarding.Id,
+                    onboarding.Version),
+                applicantSink,
+                CancellationToken.None);
+        Assert.Equal(
+            DataRightsSubjectExportStatus.Succeeded,
+            applicantExport.Status);
+        Assert.Equal(
+            [
+                WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
+                WorkspacesDataRightsCoordinates
+                    .StaffOnboardingRecoveryReceiptRecordType
+            ],
+            applicantSink.Records
+                .Select(candidate => candidate.RecordType)
+                .ToArray());
+        DataRightsExportRecord applicantReceipt =
+            applicantSink.Records[1];
+        Assert.Equal(
+            applicant,
+            Field(
+                applicantReceipt,
+                "workspaces.onboarding-recovery.applicant-subject-id")
+                .GetString());
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                applicantReceipt,
+                "workspaces.onboarding-recovery.plan-creator-actor-id")
+                .ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                applicantReceipt,
+                "workspaces.onboarding-recovery.recovery-actor-id")
+                .ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(
+                applicantReceipt,
+                "workspaces.onboarding-recovery.effective-system-actor-id")
+                .ValueKind);
+    }
+
+    [Fact]
     public async Task Export_writes_each_selected_owner_shape_in_deterministic_order()
     {
         await using WorkspacesDbContext context = CreateContext();

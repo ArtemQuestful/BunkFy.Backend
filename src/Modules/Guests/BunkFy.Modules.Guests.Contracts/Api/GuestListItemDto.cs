@@ -10,4 +10,7 @@ public sealed record GuestListItemDto(
     string? PreferredLanguageTag,
     GuestStatus Status,
     string LastChangedBy,
-    DateTimeOffset LastChangedAtUtc);
+    DateTimeOffset LastChangedAtUtc)
+{
+    public string[] LanguageTags { get; init; } = [];
+}

@@ -180,6 +180,29 @@ public sealed class DataRightsExportArtifactProtectionTests
         CryptographicOperations.ZeroMemory(content);
     }
 
+    [Fact]
+    public async Task Storage_return_after_cancellation_deletes_the_unverified_object()
+    {
+        byte[] content = Encoding.UTF8.GetBytes("""{"subject":"confidential"}""");
+        using CancellationTokenSource source = new();
+        InMemoryFileStorage storage = new()
+        {
+            CancelAfterPut = source
+        };
+        ProtectedDataRightsExportArtifactGenerator generator = Generator(
+            storage,
+            content);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            generator.GenerateAsync(Request(), source.Token));
+
+        Assert.Equal(1, storage.DeleteCount);
+        Assert.False(storage.LastDeleteToken.CanBeCanceled);
+        Assert.Null(storage.Properties);
+        Assert.Empty(storage.Content);
+        CryptographicOperations.ZeroMemory(content);
+    }
+
     private static ProtectedDataRightsExportArtifactGenerator Generator(
         InMemoryFileStorage storage,
         byte[] content)
@@ -269,6 +292,9 @@ public sealed class DataRightsExportArtifactProtectionTests
         public byte[] Content { get; private set; } = [];
         public FileStorageObjectProperties? Properties { get; private set; }
         public bool TamperReads { get; init; }
+        public CancellationTokenSource? CancelAfterPut { get; init; }
+        public int DeleteCount { get; private set; }
+        public CancellationToken LastDeleteToken { get; private set; }
 
         public async Task<FileStorageObjectProperties> PutAsync(
             FileStorageWriteRequest request,
@@ -291,6 +317,7 @@ public sealed class DataRightsExportArtifactProtectionTests
                 LastModifiedUtc:
                     new DateTimeOffset(2026, 7, 27, 13, 0, 0, TimeSpan.Zero),
                 request.Metadata);
+            this.CancelAfterPut?.Cancel();
             return this.Properties;
         }
 
@@ -327,6 +354,8 @@ public sealed class DataRightsExportArtifactProtectionTests
             FileStorageObjectKey key,
             CancellationToken cancellationToken = default)
         {
+            this.DeleteCount++;
+            this.LastDeleteToken = cancellationToken;
             bool deleted = this.Properties?.Key == key;
             this.Properties = null;
             CryptographicOperations.ZeroMemory(this.Content);

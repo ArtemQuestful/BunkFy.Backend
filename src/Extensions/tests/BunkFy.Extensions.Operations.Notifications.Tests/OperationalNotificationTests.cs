@@ -15,6 +15,7 @@ using Gma.Framework.Tenancy;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Organizations.Contracts;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 using ContractNotificationSeverity =
     Gma.Modules.Notifications.Contracts.NotificationSeverity;
@@ -712,15 +713,21 @@ public sealed class OperationalNotificationTests
     [Fact]
     public async Task Staff_event_carries_the_known_staff_history_reference()
     {
+        Guid staffMemberId = Guid.NewGuid();
+        var recipientResolver = new TestRecipientResolver(
+            staffMemberIds: new Dictionary<string, Guid>
+            {
+                ["user-a"] = staffMemberId
+            });
         var notifications = new CapturingProjector();
         var projector = CreateProjector(
             new TestAudienceReader([], staffAuthSubjectId: "user-a"),
             new TestWorkspaceOwnerAudienceReader([]),
             new TestOrganizationAccessCandidateFilter(),
-            notifications);
+            notifications,
+            recipientResolver);
         var handler =
             new StaffMemberLifecycleChangedNotificationHandler(projector);
-        Guid staffMemberId = Guid.NewGuid();
 
         await handler.HandleAsync(
             new StaffMemberLifecycleChangedIntegrationEvent(
@@ -728,7 +735,7 @@ public sealed class OperationalNotificationTests
                 ScopeId,
                 Now,
                 staffMemberId,
-                StaffStatus.Suspended,
+                StaffStatus.Active,
                 new DateOnly(2026, 7, 13),
                 2),
             CancellationToken.None);
@@ -744,10 +751,45 @@ public sealed class OperationalNotificationTests
                     ScopeId)
             ],
             projected.References);
+        Assert.Equal([["user-a"]], recipientResolver.Requests);
     }
 
     [Fact]
-    public async Task Property_event_fails_when_an_authorized_recipient_has_no_staff_correlation()
+    public async Task Property_event_skips_a_missing_current_staff_correlation_without_suppressing_valid_recipients()
+    {
+        var logger = new CapturingLogger<OperationalNotificationProjector>();
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a", "user-b"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(["user-a"]),
+            logger: logger);
+
+        await new ReservationCancelledNotificationHandler(projector)
+            .HandleAsync(
+                new ReservationCancelledIntegrationEvent(
+                    Guid.NewGuid(),
+                    ScopeId,
+                    Now,
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    3),
+                CancellationToken.None);
+
+        Assert.Equal(["user-b"], notifications.Events.Select(item => item.UserId));
+        CapturedLog warning = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Equal(7101, warning.EventId.Id);
+        Assert.Contains("reservation-cancelled", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("skipped 1 candidate", warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("user-a", warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(ScopeId, warning.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Property_event_is_quiet_when_every_authorized_candidate_lacks_a_current_staff_correlation()
     {
         var notifications = new CapturingProjector();
         var projector = CreateProjector(
@@ -757,20 +799,210 @@ public sealed class OperationalNotificationTests
             notifications,
             new TestRecipientResolver(["user-a"]));
 
+        await new ReservationCancelledNotificationHandler(projector)
+            .HandleAsync(
+                new ReservationCancelledIntegrationEvent(
+                    Guid.NewGuid(),
+                    ScopeId,
+                    Now,
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    3),
+                CancellationToken.None);
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Property_event_fails_when_the_recipient_resolver_returns_an_unexpected_subject()
+    {
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(
+                resolve: _ =>
+                [
+                    new StaffNotificationRecipient(
+                        Guid.NewGuid(),
+                        "unexpected-user")
+                ]));
+
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new ReservationCancelledNotificationHandler(projector)
+            HandleReservationCancellationAsync(projector));
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Property_event_fails_when_the_recipient_resolver_returns_a_malformed_subject()
+    {
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(
+                resolve: _ =>
+                [new StaffNotificationRecipient(Guid.NewGuid(), " ")]));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            HandleReservationCancellationAsync(projector));
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Property_event_fails_when_the_recipient_resolver_returns_a_duplicate_subject()
+    {
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(
+                resolve: _ =>
+                [
+                    new StaffNotificationRecipient(Guid.NewGuid(), "user-a"),
+                    new StaffNotificationRecipient(Guid.NewGuid(), "user-a")
+                ]));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            HandleReservationCancellationAsync(projector));
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Property_event_fails_when_the_recipient_resolver_returns_a_duplicate_staff_id()
+    {
+        Guid staffMemberId = Guid.NewGuid();
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a", "user-b"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(
+                resolve: _ =>
+                [
+                    new StaffNotificationRecipient(staffMemberId, "user-a"),
+                    new StaffNotificationRecipient(staffMemberId, "user-b")
+                ]));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            HandleReservationCancellationAsync(projector));
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Property_event_fails_when_the_recipient_resolver_returns_an_empty_staff_id()
+    {
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(
+                resolve: _ =>
+                [new StaffNotificationRecipient(Guid.Empty, "user-a")]));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            HandleReservationCancellationAsync(projector));
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Recipient_resolver_failure_propagates_without_projecting_notifications()
+    {
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader(["user-a"]),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(
+                failure: new InvalidOperationException(
+                    "recipient authority unavailable")));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            HandleReservationCancellationAsync(projector));
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Staff_event_is_quiet_when_the_current_recipient_correlation_disappears()
+    {
+        Guid staffMemberId = Guid.NewGuid();
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader([], staffAuthSubjectId: "user-a"),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications,
+            new TestRecipientResolver(["user-a"]));
+
+        await new StaffMemberLifecycleChangedNotificationHandler(projector)
+            .HandleAsync(
+                new StaffMemberLifecycleChangedIntegrationEvent(
+                    Guid.NewGuid(),
+                    ScopeId,
+                    Now,
+                    staffMemberId,
+                    StaffStatus.Suspended,
+                    new DateOnly(2026, 7, 13),
+                    2),
+                CancellationToken.None);
+
+        Assert.Empty(notifications.Events);
+    }
+
+    [Fact]
+    public async Task Staff_event_fails_when_the_recipient_correlation_points_to_another_staff_member()
+    {
+        var notifications = new CapturingProjector();
+        var projector = CreateProjector(
+            new TestAudienceReader([], staffAuthSubjectId: "user-a"),
+            new TestWorkspaceOwnerAudienceReader([]),
+            new TestOrganizationAccessCandidateFilter(),
+            notifications);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new StaffMemberLifecycleChangedNotificationHandler(projector)
                 .HandleAsync(
-                    new ReservationCancelledIntegrationEvent(
+                    new StaffMemberLifecycleChangedIntegrationEvent(
                         Guid.NewGuid(),
                         ScopeId,
                         Now,
                         Guid.NewGuid(),
-                        Guid.NewGuid(),
-                        3),
+                        StaffStatus.Active,
+                        new DateOnly(2026, 7, 13),
+                        2),
                     CancellationToken.None));
 
         Assert.Empty(notifications.Events);
     }
+
+    private static Task HandleReservationCancellationAsync(
+        OperationalNotificationProjector projector) =>
+        new ReservationCancelledNotificationHandler(projector)
+            .HandleAsync(
+                new ReservationCancelledIntegrationEvent(
+                    Guid.NewGuid(),
+                    ScopeId,
+                    Now,
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    3),
+                CancellationToken.None);
 
     private static OperationalNotificationProjector CreateProjector(
         IStaffPropertyAudienceReader audience,
@@ -778,14 +1010,16 @@ public sealed class OperationalNotificationTests
         IOrganizationAccessCandidateFilter access,
         IUserNotificationRequestProjectorV3 notifications,
         IStaffNotificationRecipientResolver? recipientResolver = null,
-        IAccessAuthorizationService? authorization = null) =>
+        IAccessAuthorizationService? authorization = null,
+        ILogger<OperationalNotificationProjector>? logger = null) =>
         new(
             audience,
             recipientResolver ?? new TestRecipientResolver(),
             workspaceOwners,
             access,
             authorization ?? new TestAuthorizationService(),
-            notifications);
+            notifications,
+            logger ?? new CapturingLogger<OperationalNotificationProjector>());
 
     private static Guid StaffMemberIdFor(string authSubjectId) =>
         OperationalNotificationProjector.CreateNotificationId(
@@ -863,7 +1097,11 @@ public sealed class OperationalNotificationTests
     }
 
     private sealed class TestRecipientResolver(
-        IReadOnlyCollection<string>? missingSubjects = null)
+        IReadOnlyCollection<string>? missingSubjects = null,
+        IReadOnlyDictionary<string, Guid>? staffMemberIds = null,
+        Func<IReadOnlyList<string>, IReadOnlyList<StaffNotificationRecipient>>?
+            resolve = null,
+        Exception? failure = null)
         : IStaffNotificationRecipientResolver
     {
         private readonly HashSet<string> missing =
@@ -880,14 +1118,54 @@ public sealed class OperationalNotificationTests
             Assert.Equal(ScopeId, scopeId);
             string[] subjects = authSubjectIds.ToArray();
             this.Requests.Add(subjects);
-            IReadOnlyList<StaffNotificationRecipient> result = subjects
-                .Where(subject => !this.missing.Contains(subject))
-                .Select(subject => new StaffNotificationRecipient(
-                    StaffMemberIdFor(subject),
-                    subject))
-                .ToArray();
+            if (failure is not null)
+            {
+                return Task.FromException<
+                    IReadOnlyList<StaffNotificationRecipient>>(failure);
+            }
+
+            IReadOnlyList<StaffNotificationRecipient> result = resolve is null
+                ? subjects
+                    .Where(subject => !this.missing.Contains(subject))
+                    .Select(subject => new StaffNotificationRecipient(
+                        staffMemberIds is not null &&
+                        staffMemberIds.TryGetValue(
+                            subject,
+                            out Guid staffMemberId)
+                                ? staffMemberId
+                                : StaffMemberIdFor(subject),
+                        subject))
+                    .ToArray()
+                : resolve(subjects);
             return Task.FromResult(result);
         }
+    }
+
+    private sealed record CapturedLog(
+        LogLevel Level,
+        EventId EventId,
+        string Message);
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<CapturedLog> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            this.Entries.Add(
+                new CapturedLog(
+                    logLevel,
+                    eventId,
+                    formatter(state, exception)));
     }
 
     private sealed class TestAuthorizationService(

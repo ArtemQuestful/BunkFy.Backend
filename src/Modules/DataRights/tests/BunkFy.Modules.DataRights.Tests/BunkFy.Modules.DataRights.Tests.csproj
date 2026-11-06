@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\BunkFy.Modules.DataRights.Persistence\BunkFy.Modules.DataRights.Persistence.csproj" />
     <ProjectReference Include="..\..\..\Properties\BunkFy.Modules.Properties.Contracts\BunkFy.Modules.Properties.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\Shared\BunkFy.DataGovernance\BunkFy.DataGovernance.csproj" />
+    <ProjectReference Include="..\..\..\..\Shared\BunkFy.TimeZones\BunkFy.TimeZones.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)FileManagement\Gma.Framework.FileManagement\Gma.Framework.FileManagement.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Modules\Gma.Framework.ModuleComposition\Gma.Framework.ModuleComposition.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Observability\Gma.Framework.Observability\Gma.Framework.Observability.csproj" />

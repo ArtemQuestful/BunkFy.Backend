@@ -27,7 +27,16 @@ public static class DataRightsCaseMappings
         dataRightsCase.CreatedAtUtc,
         dataRightsCase.LastChangedAtUtc,
         dataRightsCase.ToApprovalEvidence(),
-        dataRightsCase.ToResponseDeadlineEvidence());
+        dataRightsCase.ToResponseDeadlineEvidence(),
+        dataRightsCase.RestrictionTargetingContractVersion,
+        dataRightsCase.RestrictionReleaseTarget is null
+            ? null
+            : new DataRightsRestrictionReleaseTargetDto(
+                dataRightsCase.RestrictionReleaseTarget.OwnerKey,
+                dataRightsCase.RestrictionReleaseTarget.OwnerOperationId,
+                dataRightsCase.RestrictionReleaseTarget.OwnerOperationVersion,
+                dataRightsCase.RestrictionReleaseTarget.SelectedAtUtc),
+        dataRightsCase.RestrictionExecutionProof?.ToDto());
 
     public static DataRightsResponseDeadlineEvidence? ToResponseDeadlineEvidence(
         this DataRightsCase dataRightsCase) =>

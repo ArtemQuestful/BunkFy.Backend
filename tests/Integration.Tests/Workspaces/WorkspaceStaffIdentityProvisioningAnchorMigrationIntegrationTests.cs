@@ -13,13 +13,13 @@ using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
 
-public sealed class
+public sealed partial class
     WorkspaceStaffIdentityProvisioningAnchorMigrationIntegrationTests
 {
     private const string PreviousMigration =
-        "20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals";
+        "20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals";
     private const string CurrentMigration =
-        "20260811205004_AddWorkspaceStaffIdentityProvisioningAnchors";
+        "20261102220200_AddWorkspaceStaffIdentityProvisioningAnchors";
     private const string TenantId =
         "10000000-0000-0000-0000-000000000001";
     private const string OtherTenantId =
@@ -149,7 +149,7 @@ public sealed class
     [Trait("Category", "Docker")]
     [Trait("Category", "Integration")]
     public async Task
-        Down_rejects_active_new_stages_and_maps_only_completed_stage_to_legacy_completion()
+        Down_rejects_new_active_stages_and_preserves_canonical_completion()
     {
         await using PostgreSqlContainer postgreSql =
             new PostgreSqlBuilder("postgres:16-alpine")
@@ -188,7 +188,7 @@ public sealed class
             VALUES (
                 '65000000-0000-0000-0000-000000000001', '{{TenantId}}',
                 repeat('d', 64),
-                '61000000-0000-0000-0000-000000000001', 1, 3, 500, 20, 0,
+                '61000000-0000-0000-0000-000000000001', 1, 3, 500, 22, 0,
                 0, 1, repeat('e', 64), '2026-08-11T21:02:00Z',
                 '2026-08-11T21:02:00Z', 1)
             """).ConfigureAwait(false);
@@ -206,7 +206,7 @@ public sealed class
             connectionString,
             """
             UPDATE workspaces.tenant_destroy_operations
-            SET "Stage" = 21
+            SET "Stage" = 23
             WHERE "OperationId" =
                 '65000000-0000-0000-0000-000000000001'
             """).ConfigureAwait(false);
@@ -223,7 +223,7 @@ public sealed class
             connectionString,
             """
             UPDATE workspaces.tenant_destroy_operations
-            SET "Stage" = 22
+            SET "Stage" = 21
             WHERE "OperationId" =
                 '65000000-0000-0000-0000-000000000001'
             """).ConfigureAwait(false);
@@ -264,7 +264,7 @@ public sealed class
             .ConfigureAwait(false);
 
         Assert.Equal(
-            20,
+            21,
             await ExecuteScalarAsync<int>(
                 connectionString,
                 """
@@ -399,7 +399,7 @@ public sealed class
         }
 
         Assert.Equal(
-            22,
+            20,
             await ExecuteScalarAsync<int>(
                 connectionString,
                 """
@@ -1947,7 +1947,7 @@ public sealed class
             connectionString,
             """
             UPDATE workspaces.tenant_destroy_operations
-            SET "Stage" = 20
+            SET "Stage" = 22
             WHERE "OperationId" =
                 '5a000000-0000-0000-0000-000000000001'
             """).ConfigureAwait(false);
@@ -1956,7 +1956,7 @@ public sealed class
             await ExecuteDestroyDeleteAsync(
                 connectionString,
                 "5a000000-0000-0000-0000-000000000001",
-                attemptedStage: 20,
+                attemptedStage: 22,
                 """
                 DELETE FROM
                     workspaces.workspace_staff_identity_anchor_sweep_checkpoints
@@ -1968,7 +1968,7 @@ public sealed class
             connectionString,
             """
             UPDATE workspaces.tenant_destroy_operations
-            SET "Stage" = 21
+            SET "Stage" = 23
             WHERE "OperationId" =
                 '5a000000-0000-0000-0000-000000000001'
             """).ConfigureAwait(false);
@@ -1977,7 +1977,7 @@ public sealed class
                 ExecuteDestroyDeleteAsync(
                     connectionString,
                     "5a000000-0000-0000-0000-000000000099",
-                    attemptedStage: 21,
+                    attemptedStage: 23,
                     """
                     DELETE FROM
                         workspaces.staff_historical_no_provision_receipts
@@ -1990,7 +1990,7 @@ public sealed class
             await ExecuteDestroyDeleteAsync(
                 connectionString,
                 "5a000000-0000-0000-0000-000000000001",
-                attemptedStage: 21,
+                attemptedStage: 23,
                 """
                 DELETE FROM
                     workspaces.staff_historical_no_provision_receipts

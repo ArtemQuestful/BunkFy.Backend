@@ -14,11 +14,45 @@ internal sealed class PropertiesMutationCoordinator(
 {
     public Task<Property?> AcquirePropertyAsync(
         Guid propertyId,
-        CancellationToken cancellationToken) => this.AcquireAndReloadAsync(
-        propertyId,
-        operationLock.TryAcquirePropertyAsync,
-        properties.GetAsync,
-        cancellationToken);
+        CancellationToken cancellationToken) =>
+        this.AcquirePropertyAndReloadAsync(propertyId, cancellationToken);
+
+    public async Task<bool> AcquirePropertyOperationAsync(
+        Guid propertyId,
+        CancellationToken cancellationToken)
+    {
+        if (!this.TryGetTenantId(propertyId, out string tenantId))
+        {
+            return false;
+        }
+
+        return await operationLock.TryAcquirePropertyAsync(
+            tenantId,
+            propertyId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<Property?> ReloadPropertyAsync(
+        Guid propertyId,
+        CancellationToken cancellationToken)
+    {
+        if (!this.TryGetTenantId(propertyId, out string tenantId))
+        {
+            return null;
+        }
+
+        Property? property = await properties.GetAsync(
+            propertyId,
+            cancellationToken).ConfigureAwait(false);
+        return property is not null &&
+               property.Id == propertyId &&
+               string.Equals(
+                   property.ScopeId,
+                   tenantId,
+                   StringComparison.Ordinal)
+            ? property
+            : null;
+    }
 
     public Task<Room?> AcquireRoomAsync(
         Guid roomId,
@@ -102,6 +136,17 @@ internal sealed class PropertiesMutationCoordinator(
             _ => null
         };
     }
+
+    private async Task<Property?> AcquirePropertyAndReloadAsync(
+        Guid propertyId,
+        CancellationToken cancellationToken) =>
+        await this.AcquirePropertyOperationAsync(
+            propertyId,
+            cancellationToken).ConfigureAwait(false)
+            ? await this.ReloadPropertyAsync(
+                propertyId,
+                cancellationToken).ConfigureAwait(false)
+            : null;
 
     private string GetRequiredTenantId()
     {

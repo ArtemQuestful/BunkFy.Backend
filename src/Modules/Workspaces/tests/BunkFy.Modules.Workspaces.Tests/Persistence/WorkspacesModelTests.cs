@@ -589,7 +589,7 @@ public sealed class WorkspacesModelTests
                 restricted.SubjectId,
                 CancellationToken.None));
 
-        WorkspaceStaffOnboardingListResponse firstPage =
+        WorkspaceStaffOnboardingSummaryListResponse firstPage =
             await repository.ListActionableAsync(
                 new Gma.Framework.Pagination.PageRequest(1, 1),
                 CancellationToken.None);
@@ -598,7 +598,7 @@ public sealed class WorkspacesModelTests
         Assert.Equal(unrestricted.Id, first.ApplicationId);
         Assert.True(firstPage.HasMore);
 
-        WorkspaceStaffOnboardingListResponse secondPage =
+        WorkspaceStaffOnboardingSummaryListResponse secondPage =
             await repository.ListActionableAsync(
                 new Gma.Framework.Pagination.PageRequest(2, 1),
                 CancellationToken.None);

@@ -215,6 +215,14 @@ public static class DependencyInjection
             GenerateTenantTerminationExportArtifactTaskHandler>(
                 DataRightsModuleMetadata.Name);
         services.AddTaskHandler<
+            DeleteExpiredTenantTerminationExportArtifactPayload,
+            DeleteExpiredTenantTerminationExportArtifactTaskHandler>(
+                DataRightsModuleMetadata.Name);
+        services.AddTaskHandler<
+            DeleteExpiredTenantTerminationExportFragmentPayload,
+            DeleteExpiredTenantTerminationExportFragmentTaskHandler>(
+                DataRightsModuleMetadata.Name);
+        services.AddTaskHandler<
             VerifyTenantTerminationPayload,
             VerifyTenantTerminationTaskHandler>(
                 DataRightsModuleMetadata.Name,
@@ -236,6 +244,9 @@ public static class DependencyInjection
         services.TryAddScoped<
             ITenantTerminationTaskScheduler,
             TenantTerminationTaskScheduler>();
+        services.TryAddScoped<
+            ITenantTerminationExportRetentionScheduler,
+            TenantTerminationExportRetentionScheduler>();
         return services;
     }
 
@@ -247,6 +258,9 @@ public static class DependencyInjection
         services.TryAddScoped<
             ITenantTerminationTaskScheduler,
             UnavailableTenantTerminationTaskScheduler>();
+        services.TryAddScoped<
+            ITenantTerminationExportRetentionScheduler,
+            UnavailableTenantTerminationExportRetentionScheduler>();
         return services;
     }
 }

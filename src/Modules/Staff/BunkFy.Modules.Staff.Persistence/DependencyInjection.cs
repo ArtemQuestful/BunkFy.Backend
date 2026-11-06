@@ -26,6 +26,8 @@ public static class DependencyInjection
             builder.Configuration, StaffMigrations.SqlServerAssembly, StaffMigrations.PostgreSqlAssembly,
             StaffMigrations.Schema, StaffMigrations.HistoryTable));
         builder.Services.TryAddScoped<IStaffMemberRepository, StaffMemberRepository>();
+        builder.Services.TryAddScoped<IStaffStationEligibilitySource, StaffStationEligibilitySource>();
+        builder.Services.TryAddScoped<IStaffStationLabelReader, StaffStationLabelReader>();
         builder.Services.TryAddScoped<
             IStaffIdentityProvisioningAnchorRepository,
             StaffIdentityProvisioningAnchorRepository>();
@@ -53,6 +55,12 @@ public static class DependencyInjection
         builder.Services.TryAddScoped<
             IStaffDataRightsAuthorityReader,
             StaffDataRightsAuthorityReader>();
+        builder.Services.TryAddScoped<
+            IStaffOperationalIdentityReader,
+            StaffOperationalIdentityReader>();
+        builder.Services.TryAddScoped<
+            IStaffOnboardingStateVerifier,
+            StaffOnboardingStateVerifier>();
         builder.Services.TryAddScoped<
             IStaffProcessingRestrictionRepository,
             StaffProcessingRestrictionRepository>();

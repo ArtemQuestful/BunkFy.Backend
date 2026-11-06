@@ -119,7 +119,33 @@ public sealed class TenantTerminationVerificationExecutionTests
             stale.Process.Status);
     }
 
-    private static async Task<VerificationFixture> ArrangeAsync()
+    [Fact]
+    public async Task Normal_verification_return_at_deadline_cannot_seal_receipt()
+    {
+        MutableClock clock = new(Now.AddMinutes(8));
+        VerificationFixture fixture = await ArrangeAsync(clock);
+        fixture.Reservations.OnExecute = request =>
+            clock.UtcNow = request.DeadlineUtc;
+
+        TimeoutException failure = await Assert.ThrowsAsync<TimeoutException>(
+            () => fixture.Task.HandleAsync(
+                fixture.Payload,
+                fixture.Context,
+                CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.TenantTerminationVerificationDeadlineExceeded",
+            failure.Message);
+        Assert.Empty(fixture.Receipts.Items);
+        Assert.Equal(1, fixture.Reservations.ExecutionCount);
+        Assert.Equal(0, fixture.Workspaces.ExecutionCount);
+        Assert.Equal(
+            TenantTerminationProcessPhase.Verify,
+            fixture.Process.Phase);
+    }
+
+    private static async Task<VerificationFixture> ArrangeAsync(
+        ISystemClock? executionClock = null)
     {
         StubContributor reservations = new(
             "reservations",
@@ -251,7 +277,7 @@ public sealed class TenantTerminationVerificationExecutionTests
             new VerificationCommandDispatcher(prepare, complete),
             replayStore,
             contributors,
-            new FixedClock(Now.AddMinutes(8)),
+            executionClock ?? new FixedClock(Now.AddMinutes(8)),
             new FixedScopeContext(TenantId));
         VerifyTenantTerminationPayload payload = new(
             process.Id,
@@ -392,6 +418,11 @@ public sealed class TenantTerminationVerificationExecutionTests
                 CatalogSha256: Digest,
                 RecordedAtUtc: Now.AddMinutes(6));
         public TenantTerminationContributionResult? LiveResult { get; set; }
+        public Action<TenantTerminationContributionRequest>? OnExecute
+        {
+            get;
+            set;
+        }
         public int ExecutionCount { get; private set; }
 
         public Task<TenantTerminationContributionResult> ExecuteAsync(
@@ -399,6 +430,7 @@ public sealed class TenantTerminationVerificationExecutionTests
             CancellationToken cancellationToken)
         {
             this.ExecutionCount++;
+            this.OnExecute?.Invoke(request);
             Assert.Equal(
                 TenantTerminationContributionPhase.Destroy,
                 request.Phase);
@@ -626,6 +658,11 @@ public sealed class TenantTerminationVerificationExecutionTests
     private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock
     {
         public DateTimeOffset UtcNow { get; } = utcNow;
+    }
+
+    private sealed class MutableClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
     }
 
     private sealed class FixedScopeContext(string scopeId) : IScopeContext

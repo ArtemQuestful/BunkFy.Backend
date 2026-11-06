@@ -22,6 +22,8 @@ public static class RetentionModuleMetadata
         "property-processing-policy-activated";
     public const string PropertyProcessingSuspendedHandlerName =
         "property-processing-suspended";
+    public const string RunRetryRequestedHandlerName =
+        "retention-run-retry-requested";
 
     public static ModuleDescriptor Descriptor { get; } = ModuleDescriptor
         .Create(Name)
@@ -50,6 +52,10 @@ public static class RetentionModuleMetadata
         .WithSubscription<PropertyProcessingSuspendedIntegrationEvent>(
             PropertiesModuleMetadata.Name,
             PropertyProcessingSuspendedHandlerName)
+        .WithPublishedEvent<RetentionRunRetryRequestedIntegrationEvent>()
+        .WithSubscription<RetentionRunRetryRequestedIntegrationEvent>(
+            Name,
+            RunRetryRequestedHandlerName)
         .WithTask<ExecuteRetentionSchedulePayload>()
         .WithProfile(RetentionProfiles.Default)
         .Build();

@@ -3,12 +3,13 @@ namespace BunkFy.Modules.Guests.Application.Tasks;
 using Gma.Framework.ProjectionRebuild;
 using Gma.Framework.ProjectionRebuild.Tasks;
 using Gma.Framework.Tasks;
+using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Properties.Contracts;
 
 internal sealed class RebuildGuestsPropertiesTaskHandler(
     IPropertiesTopologyProjectionExportSource source,
-    IProjectionRebuildWriter<PropertyTopologyProjectionExport> writer,
+    IGuestsPropertiesProjectionRebuildWriter writer,
     TaskProjectionRebuildRunner<PropertyTopologyProjectionExport> runner)
     : ITaskHandler<RebuildGuestsPropertiesPayload>
 {

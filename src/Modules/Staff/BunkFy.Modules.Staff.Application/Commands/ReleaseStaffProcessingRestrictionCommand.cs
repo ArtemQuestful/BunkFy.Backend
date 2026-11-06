@@ -12,5 +12,6 @@ public sealed record ReleaseStaffProcessingRestrictionCommand(
     long ExpectedStaffVersion,
     long ExpectedRestrictionVersion,
     long ExpectedProjectionRevision,
-    string ActorId)
+    string ActorId,
+    bool LegacyUnboundTarget = false)
     : ITransactionalCommand<StaffProcessingRestrictionReceiptDto>;

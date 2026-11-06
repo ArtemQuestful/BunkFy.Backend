@@ -1,8 +1,9 @@
 namespace BunkFy.Modules.Reservations.Persistence;
 
 using BunkFy.Modules.Reservations.Application.Ports;
+using Gma.Framework.Domain;
 
-internal sealed class ReservationManagementOperation
+internal sealed class ReservationManagementOperation : IScopedEntity
 {
     private ReservationManagementOperation() { }
 

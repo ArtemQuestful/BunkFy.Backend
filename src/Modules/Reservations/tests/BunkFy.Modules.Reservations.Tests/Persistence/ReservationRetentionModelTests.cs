@@ -15,7 +15,7 @@ using Xunit;
 public sealed class ReservationRetentionModelTests
 {
     [Fact]
-    public void Model_enforces_terminal_cursor_and_proof_shape()
+    public void Model_enforces_complete_retention_control_and_proof_shape()
     {
         using ReservationsDbContext dbContext = CreateDbContext();
         IModel designModel =
@@ -38,43 +38,92 @@ public sealed class ReservationRetentionModelTests
         Assert.True(execution.FindProperty(
             nameof(ReservationRetentionExecution.Version))!
             .IsConcurrencyToken);
+        AssertConstraintNames(
+            execution,
+            "CK_reservation_retention_executions_coordinates",
+            "CK_reservation_retention_executions_policy",
+            "CK_reservation_retention_executions_cursor",
+            "CK_reservation_retention_executions_key",
+            "CK_reservation_retention_executions_version",
+            "CK_reservation_retention_executions_timestamp",
+            "CK_reservation_retention_executions_counts",
+            "CK_reservation_retention_executions_state");
+        Assert.Equal(2, execution.GetKeys().Count());
         Assert.Contains(
-            execution.GetCheckConstraints(),
-            constraint => constraint.Name ==
-                "CK_reservation_retention_executions_state");
+            execution.GetIndexes(),
+            index => index.GetDatabaseName() ==
+                "IX_reservation_retention_executions_history");
+
+        Assert.True(checkpoint.FindProperty(
+            nameof(ReservationRetentionSweepCheckpoint.Version))!
+            .IsConcurrencyToken);
+        AssertConstraintNames(
+            checkpoint,
+            "CK_reservation_retention_checkpoints_coordinates",
+            "CK_reservation_retention_checkpoints_cursor",
+            "CK_reservation_retention_checkpoints_key",
+            "CK_reservation_retention_checkpoints_policy",
+            "CK_reservation_retention_checkpoints_version",
+            "CK_reservation_retention_checkpoints_lifecycle",
+            "CK_reservation_retention_checkpoints_timestamp");
+        Assert.Single(checkpoint.GetKeys());
+        Assert.Empty(checkpoint.GetForeignKeys());
         Assert.Contains(
             checkpoint.GetIndexes(),
             index => index.IsUnique &&
-                index.Properties.Select(property => property.Name)
-                    .SequenceEqual(
-                    [
-                        nameof(
-                            ReservationRetentionSweepCheckpoint
-                                .ScopeId),
-                        nameof(
-                            ReservationRetentionSweepCheckpoint
-                                .DataClassKey),
-                        nameof(
-                            ReservationRetentionSweepCheckpoint
-                                .ExecutionPolicyVersion)
-                    ]));
+                index.GetDatabaseName() ==
+                    "UX_reservation_retention_checkpoints_data_class_policy");
+        Assert.Contains(
+            checkpoint.GetIndexes(),
+            index => index.IsUnique &&
+                index.GetDatabaseName() ==
+                    "UX_reservation_retention_checkpoints_last_execution" &&
+                index.GetFilter() == "\"LastExecutionId\" IS NOT NULL");
+
+        AssertConstraintNames(
+            receipt,
+            "CK_reservation_retention_receipts_coordinates",
+            "CK_reservation_retention_receipts_contract",
+            "CK_reservation_retention_receipts_actor",
+            "CK_reservation_retention_receipts_versions",
+            "CK_reservation_retention_receipts_counts",
+            "CK_reservation_retention_receipts_digests",
+            "CK_reservation_retention_receipts_timestamps");
+        Assert.Single(receipt.GetKeys());
         Assert.Equal(
-            2,
+            3,
             receipt.GetForeignKeys().Count(foreignKey =>
                 foreignKey.PrincipalEntityType.ClrType is not null));
-        Assert.Contains(
-            receipt.GetIndexes(),
-            index => index.IsUnique &&
-                index.Properties.Select(property => property.Name)
-                    .SequenceEqual(
-                    [
-                        nameof(
-                            ReservationRetentionAnonymisationReceipt
-                                .ScopeId),
-                        nameof(
-                            ReservationRetentionAnonymisationReceipt
-                                .ReservationId)
-                    ]));
+        AssertForeignKey(
+            receipt,
+            typeof(ReservationRetentionExecution),
+            "FK_reservation_retention_receipts_execution");
+        AssertForeignKey(
+            receipt,
+            typeof(Reservation),
+            "FK_reservation_retention_receipts_reservation");
+        AssertForeignKey(
+            receipt,
+            typeof(ReservationAnonymisationTombstone),
+            "FK_reservation_retention_receipts_tombstone");
+        AssertIndex(
+            receipt,
+            "UX_reservation_retention_receipts_reservation",
+            isUnique: true,
+            nameof(ReservationRetentionAnonymisationReceipt.ScopeId),
+            nameof(ReservationRetentionAnonymisationReceipt.ReservationId));
+        AssertIndex(
+            receipt,
+            "IX_reservation_retention_receipts_execution",
+            isUnique: false,
+            nameof(ReservationRetentionAnonymisationReceipt.ScopeId),
+            nameof(ReservationRetentionAnonymisationReceipt.ExecutionId));
+        AssertIndex(
+            receipt,
+            "UX_reservation_retention_receipts_event",
+            isUnique: true,
+            nameof(ReservationRetentionAnonymisationReceipt.ScopeId),
+            nameof(ReservationRetentionAnonymisationReceipt.EventId));
         Assert.False(tombstone.FindProperty(
             nameof(ReservationAnonymisationTombstone.Authority))!
             .IsNullable);
@@ -229,6 +278,43 @@ public sealed class ReservationRetentionModelTests
                     $"reservation-retention-model-{Guid.NewGuid():N}")
                 .Options;
         return new(options, new TestScopeContext("tenant-a"));
+    }
+
+    private static void AssertConstraintNames(
+        IEntityType entityType,
+        params string[] expectedNames)
+    {
+        string[] actualNames = entityType.GetCheckConstraints()
+            .Select(constraint => constraint.Name!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            expectedNames.Order(StringComparer.Ordinal),
+            actualNames);
+    }
+
+    private static void AssertIndex(
+        IEntityType entityType,
+        string databaseName,
+        bool isUnique,
+        params string[] propertyNames) => Assert.Contains(
+        entityType.GetIndexes(),
+        index => index.GetDatabaseName() == databaseName &&
+            index.IsUnique == isUnique &&
+            index.Properties.Select(property => property.Name)
+                .SequenceEqual(propertyNames));
+
+    private static void AssertForeignKey(
+        IEntityType dependent,
+        Type principalType,
+        string constraintName)
+    {
+        IForeignKey foreignKey = Assert.Single(
+            dependent.GetForeignKeys(),
+            candidate => candidate.PrincipalEntityType.ClrType ==
+                principalType);
+        Assert.Equal(constraintName, foreignKey.GetConstraintName());
+        Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior);
     }
 
     internal sealed class TestScopeContext(string scopeId)

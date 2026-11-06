@@ -165,6 +165,92 @@ public sealed class WorkspaceTerminationTaskAdmissionTests
     }
 
     [Fact]
+    public async Task Global_export_retention_context_is_established_and_cleared()
+    {
+        RecordingTenantContext tenant = new();
+        TenantTerminationGlobalTaskExecutionContextContributor contributor =
+            new(tenant);
+        TaskExecutionContextPreparationContext[] contexts =
+        [
+            CreateArtifactCleanupContext(ProcessId),
+            CreateFragmentCleanupContext(ProcessId)
+        ];
+
+        foreach (TaskExecutionContextPreparationContext context in contexts)
+        {
+            Assert.False(context.Registration.IsTenantScoped());
+            Assert.Null(context.Lease.ScopeId);
+            Assert.True((await contributor.PrepareAsync(
+                context,
+                default)).IsSuccess);
+            Assert.True(tenant.IsEnabled);
+            Assert.Equal(TenantId, tenant.TenantId);
+
+            await contributor.CleanupAsync(context, default);
+
+            Assert.False(tenant.IsEnabled);
+            Assert.Null(tenant.TenantId);
+        }
+    }
+
+    [Fact]
+    public async Task Invalid_global_export_retention_context_is_denied()
+    {
+        RecordingTenantContext tenant = new();
+        TenantTerminationGlobalTaskExecutionContextContributor contributor =
+            new(tenant);
+
+        TaskExecutionContextPreparationResult invalidTenant =
+            await contributor.PrepareAsync(
+                CreateArtifactCleanupContext(
+                    ProcessId,
+                    tenantId: "tenant-a"),
+                default);
+        TaskExecutionContextPreparationResult scopedLease =
+            await contributor.PrepareAsync(
+                CreateFragmentCleanupContext(
+                    ProcessId,
+                    scopeId: TenantId),
+                default);
+        TaskExecutionContextPreparationResult wrongCorrelation =
+            await contributor.PrepareAsync(
+                CreateArtifactCleanupContext(
+                    ProcessId,
+                    correlationId: Guid.NewGuid()),
+                default);
+        TaskExecutionContextPreparationResult wrongWorkerGroup =
+            await contributor.PrepareAsync(
+                CreateArtifactCleanupContext(
+                    ProcessId,
+                    workerGroup: "ordinary-work"),
+                default);
+
+        Assert.True(invalidTenant.IsFailure);
+        Assert.True(scopedLease.IsFailure);
+        Assert.True(wrongCorrelation.IsFailure);
+        Assert.True(wrongWorkerGroup.IsFailure);
+        Assert.False(tenant.IsEnabled);
+    }
+
+    [Fact]
+    public async Task Export_retention_cleanup_survives_closed_tenant_task_admission()
+    {
+        WorkspaceTerminationTaskExecutionContextContributor contributor =
+            new(
+                new ThrowingReader(),
+                NullLogger<
+                    WorkspaceTerminationTaskExecutionContextContributor>
+                    .Instance);
+
+        Assert.True((await contributor.PrepareAsync(
+            CreateArtifactCleanupContext(ProcessId),
+            default)).IsSuccess);
+        Assert.True((await contributor.PrepareAsync(
+            CreateFragmentCleanupContext(ProcessId),
+            default)).IsSuccess);
+    }
+
+    [Fact]
     public async Task Invalid_fence_snapshot_denies_termination_task()
     {
         WorkspaceTerminationTaskExecutionContextContributor contributor =
@@ -265,6 +351,93 @@ public sealed class WorkspaceTerminationTaskAdmissionTests
             lease.CreateExecutionContext());
     }
 
+    private static TaskExecutionContextPreparationContext
+        CreateArtifactCleanupContext(
+            Guid processId,
+            string tenantId = TenantId,
+            string? scopeId = null,
+            Guid? correlationId = null,
+            string workerGroup =
+                DataRightsModuleMetadata.TenantTerminationWorkerGroup)
+    {
+        DeleteExpiredTenantTerminationExportArtifactPayload payload = new(
+            tenantId,
+            processId,
+            Guid.NewGuid(),
+            ExportOperationRevision: 8,
+            DateTimeOffset.UtcNow.AddHours(1));
+        TaskHandlerRegistration registration =
+            TaskHandlerRegistration.Create<
+                DeleteExpiredTenantTerminationExportArtifactPayload,
+                StubArtifactCleanupHandler>(DataRightsModuleMetadata.Name);
+        return CreateCleanupContext(
+            processId,
+            payload,
+            registration,
+            scopeId,
+            correlationId,
+            workerGroup);
+    }
+
+    private static TaskExecutionContextPreparationContext
+        CreateFragmentCleanupContext(
+            Guid processId,
+            string tenantId = TenantId,
+            string? scopeId = null,
+            Guid? correlationId = null,
+            string workerGroup =
+                DataRightsModuleMetadata.TenantTerminationWorkerGroup)
+    {
+        DeleteExpiredTenantTerminationExportFragmentPayload payload = new(
+            tenantId,
+            processId,
+            Guid.NewGuid(),
+            ExportOperationRevision: 8,
+            DateTimeOffset.UtcNow.AddHours(1));
+        TaskHandlerRegistration registration =
+            TaskHandlerRegistration.Create<
+                DeleteExpiredTenantTerminationExportFragmentPayload,
+                StubFragmentCleanupHandler>(DataRightsModuleMetadata.Name);
+        return CreateCleanupContext(
+            processId,
+            payload,
+            registration,
+            scopeId,
+            correlationId,
+            workerGroup);
+    }
+
+    private static TaskExecutionContextPreparationContext CreateCleanupContext<
+        TPayload>(
+            Guid processId,
+            TPayload payload,
+            TaskHandlerRegistration registration,
+            string? scopeId,
+            Guid? correlationId,
+            string workerGroup)
+        where TPayload : ITaskPayload
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        TaskRunLease lease = new(
+            Guid.NewGuid(),
+            DataRightsModuleMetadata.Name,
+            registration.TaskName,
+            workerGroup,
+            "worker-1",
+            "node-1",
+            JsonSerializer.Serialize(payload, JsonOptions),
+            attempt: 1,
+            now,
+            now.AddMinutes(1),
+            scopeId,
+            correlationId: correlationId ?? processId,
+            payloadVersion: registration.PayloadVersion);
+        return new(
+            lease,
+            registration,
+            lease.CreateExecutionContext());
+    }
+
     private sealed class StubReader(
         WorkspaceTerminationFenceSnapshot? snapshot)
         : IWorkspaceTerminationFenceReader
@@ -312,6 +485,26 @@ public sealed class WorkspaceTerminationTaskAdmissionTests
     {
         public Task HandleAsync(
             ExecuteGlobalTenantTerminationOwnerWorkPayload payload,
+            TaskExecutionContext context,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class StubArtifactCleanupHandler
+        : ITaskHandler<DeleteExpiredTenantTerminationExportArtifactPayload>
+    {
+        public Task HandleAsync(
+            DeleteExpiredTenantTerminationExportArtifactPayload payload,
+            TaskExecutionContext context,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class StubFragmentCleanupHandler
+        : ITaskHandler<DeleteExpiredTenantTerminationExportFragmentPayload>
+    {
+        public Task HandleAsync(
+            DeleteExpiredTenantTerminationExportFragmentPayload payload,
             TaskExecutionContext context,
             CancellationToken cancellationToken) =>
             Task.CompletedTask;

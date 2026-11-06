@@ -91,6 +91,7 @@ public sealed class ReservationDataRightsDiscoveryContributorTests
             Now.AddMinutes(1)).IsSuccess);
         Assert.True(reservation.BeginAllocationAmendment(
             Guid.NewGuid(),
+            Guid.NewGuid(),
             new string('a', Reservation.RequestFingerprintLength),
             reservation.Arrival,
             reservation.Departure.AddDays(1),

@@ -26,7 +26,7 @@ internal sealed class RetentionTenantDestroyOperation : IScopedEntity
         this.SelectedRevision = selectedRevision;
         this.ResultingRevision = selectedRevision + 1;
         this.BatchSize = batchSize;
-        this.Stage = RetentionTenantDestroyStage.InboxMessages;
+        this.Stage = RetentionTenantDestroyStage.OutboxMessages;
         this.RemovalProofSha256 = InitialRemovalProofSha256;
         this.StartedAtUtc = startedAtUtc;
         this.UpdatedAtUtc = startedAtUtc;
@@ -140,7 +140,7 @@ internal sealed class RetentionTenantDestroyOperation : IScopedEntity
     private static RetentionTenantDestroyStage Next(
         RetentionTenantDestroyStage stage)
     {
-        if (stage is < RetentionTenantDestroyStage.InboxMessages or
+        if (stage is < RetentionTenantDestroyStage.OutboxMessages or
             >= RetentionTenantDestroyStage.Completed)
         {
             throw new InvalidOperationException(
@@ -154,10 +154,12 @@ internal sealed class RetentionTenantDestroyOperation : IScopedEntity
 internal enum RetentionTenantDestroyStage
 {
     Unknown = 0,
-    InboxMessages = 1,
-    ScheduleStates = 2,
-    Executions = 3,
-    PropertyProjections = 4,
-    TenantProjections = 5,
-    Completed = 6
+    OutboxMessages = 1,
+    InboxMessages = 2,
+    RunRetryRequests = 3,
+    ScheduleStates = 4,
+    Executions = 5,
+    PropertyProjections = 6,
+    TenantProjections = 7,
+    Completed = 8
 }

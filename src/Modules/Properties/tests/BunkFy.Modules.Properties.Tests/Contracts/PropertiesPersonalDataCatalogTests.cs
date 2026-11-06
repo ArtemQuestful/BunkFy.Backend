@@ -26,6 +26,8 @@ public sealed class PropertiesPersonalDataCatalogTests
 {
     private const string AuthorizationFieldId = "properties.authorization-subject-reference";
     private const string ActorFieldId = "properties.staff-actor-reference";
+    private const string TimeZoneFieldId =
+        "properties.time-zone.management-coordinate";
     private const string TerminationProofFieldId =
         "properties.tenant-destruction.owner-proof";
 
@@ -97,26 +99,39 @@ public sealed class PropertiesPersonalDataCatalogTests
     public void Catalogue_contains_current_person_and_owner_proof_coordinates()
     {
         Assert.Equal(
-            [AuthorizationFieldId, ActorFieldId, TerminationProofFieldId],
+            [AuthorizationFieldId, ActorFieldId, TerminationProofFieldId, TimeZoneFieldId],
             Catalogue.Fields.Select(field => field.Id).Order(StringComparer.Ordinal));
 
         List<string> expectedBindings =
         [
             BindingKey(typeof(ListVisiblePropertiesQuery), nameof(ListVisiblePropertiesQuery.Subject), PersonalDataSurface.ApplicationQuery),
+            BindingKey(typeof(CreatePropertyCommand), nameof(CreatePropertyCommand.ActorId), PersonalDataSurface.ApplicationCommand),
+            BindingKey(typeof(CreatePropertyCommand), nameof(CreatePropertyCommand.ActorId), PersonalDataSurface.AdminInput),
             BindingKey(typeof(ActivatePropertyProcessingCommand), nameof(ActivatePropertyProcessingCommand.ActorId), PersonalDataSurface.ApplicationCommand),
             BindingKey(typeof(SuspendPropertyProcessingCommand), nameof(SuspendPropertyProcessingCommand.ActorId), PersonalDataSurface.ApplicationCommand),
             BindingKey(typeof(RetirePropertyCommand), nameof(RetirePropertyCommand.ActorId), PersonalDataSurface.ApplicationCommand),
             BindingKey(typeof(PropertyGovernanceRevisionWriteModel), nameof(PropertyGovernanceRevisionWriteModel.ActorId), PersonalDataSurface.ApplicationCommand),
+            BindingKey(typeof(PropertyTimeZoneRevisionWriteModel), nameof(PropertyTimeZoneRevisionWriteModel.ActorId), PersonalDataSurface.ApplicationCommand),
+            BindingKey(typeof(PropertyTimeZoneRevisionReadModel), nameof(PropertyTimeZoneRevisionReadModel.ActorId), PersonalDataSurface.ApplicationQuery),
+            BindingKey(typeof(SetPropertyTimeZoneCommand), nameof(SetPropertyTimeZoneCommand.ActorId), PersonalDataSurface.AdminInput),
             BindingKey(typeof(PropertyProcessingPolicyActivatedDomainEvent), nameof(PropertyProcessingPolicyActivatedDomainEvent.ActorId), PersonalDataSurface.DomainEvent),
             BindingKey(typeof(PropertyProcessingSuspendedDomainEvent), nameof(PropertyProcessingSuspendedDomainEvent.ActorId), PersonalDataSurface.DomainEvent),
             BindingKey(typeof(PropertyRetiredDomainEvent), nameof(PropertyRetiredDomainEvent.ActorId), PersonalDataSurface.DomainEvent),
             BindingKey(typeof(PropertyRetiredIntegrationEvent), nameof(PropertyRetiredIntegrationEvent.ActorId), PersonalDataSurface.IntegrationEvent),
             BindingKey(typeof(PropertyGovernanceRevision), nameof(PropertyGovernanceRevision.ActorId), PersonalDataSurface.Persistence),
+            BindingKey(typeof(PropertyTimeZoneOperation), nameof(PropertyTimeZoneOperation.ActorId), PersonalDataSurface.Persistence),
             BindingKey(
                 typeof(PropertiesGovernanceRevisionTenantExport),
                 nameof(PropertiesGovernanceRevisionTenantExport.ActorId),
+                PersonalDataSurface.DataRightsExport),
+            BindingKey(
+                typeof(PropertiesPropertyTimeZoneOperationTenantExport),
+                nameof(PropertiesPropertyTimeZoneOperationTenantExport.ActorId),
                 PersonalDataSurface.DataRightsExport)
         ];
+        expectedBindings.AddRange(TimeZoneBoundaryMembers()
+            .SelectMany(entry => entry.Members.Select(member =>
+                BindingKey(entry.Type, member, entry.Surface))));
         foreach (Type proofType in new[]
                  {
                      typeof(PropertiesTenantDestroyOperation),
@@ -153,6 +168,22 @@ public sealed class PropertiesPersonalDataCatalogTests
     }
 
     [Fact]
+    public void Time_zone_public_admin_and_cli_boundaries_are_explicitly_classified()
+    {
+        List<string> missing = [];
+        foreach ((PersonalDataSurface surface, Type type, string[] members) in
+                 TimeZoneBoundaryMembers())
+        {
+            foreach (string member in members)
+            {
+                AddMissing(missing, type, member, surface);
+            }
+        }
+
+        Assert.True(missing.Count == 0, string.Join(Environment.NewLine, missing));
+    }
+
+    [Fact]
     public void Facility_topology_has_no_person_linked_persistence_or_catalogue_bindings()
     {
         using PropertiesDbContext dbContext = CreateDbContext();
@@ -175,16 +206,20 @@ public sealed class PropertiesPersonalDataCatalogTests
         }
 
         Assert.True(candidates.Count == 0, string.Join(Environment.NewLine, candidates));
-        PersonalDataMemberBinding persistedActor = Assert.Single(
-            Bindings(),
-            binding =>
+        string[] persistedActors = Bindings()
+            .Where(binding =>
                 binding.Surface == PersonalDataSurface.Persistence &&
-                string.Equals(
-                    binding.Type,
-                    typeof(PropertyGovernanceRevision).FullName,
-                    StringComparison.Ordinal));
-        Assert.Equal(typeof(PropertyGovernanceRevision).FullName, persistedActor.Type);
-        Assert.Equal(nameof(PropertyGovernanceRevision.ActorId), persistedActor.Member);
+                binding.Member == nameof(PropertyGovernanceRevision.ActorId))
+            .Select(binding => binding.Type)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            new[]
+            {
+                typeof(PropertyGovernanceRevision).FullName!,
+                typeof(PropertyTimeZoneOperation).FullName!
+            }.Order(StringComparer.Ordinal),
+            persistedActors);
     }
 
     [Fact]
@@ -211,14 +246,11 @@ public sealed class PropertiesPersonalDataCatalogTests
     }
 
     [Fact]
-    public void Person_coordinates_do_not_enter_broad_or_operational_outputs()
+    public void Person_coordinates_enter_only_the_explicit_admin_inputs_and_receipt_outputs()
     {
         HashSet<PersonalDataSurface> prohibited =
         [
             PersonalDataSurface.ApiInput,
-            PersonalDataSurface.ApiResponse,
-            PersonalDataSurface.AdminInput,
-            PersonalDataSurface.AdminOutput,
             PersonalDataSurface.SearchIndex,
             PersonalDataSurface.ProjectionExport,
             PersonalDataSurface.IntegrationCommand,
@@ -232,7 +264,51 @@ public sealed class PropertiesPersonalDataCatalogTests
             PersonalDataSurface.FileIngress
         ];
 
-        Assert.DoesNotContain(Bindings(), binding => prohibited.Contains(binding.Surface));
+        Assert.DoesNotContain(
+            PersonBindings(),
+            binding => prohibited.Contains(binding.Surface));
+        Assert.Equal(
+            new[]
+            {
+                BindingKey(
+                    typeof(CreatePropertyCommand),
+                    nameof(CreatePropertyCommand.ActorId),
+                    PersonalDataSurface.AdminInput),
+                BindingKey(
+                    typeof(SetPropertyTimeZoneCommand),
+                    nameof(SetPropertyTimeZoneCommand.ActorId),
+                    PersonalDataSurface.AdminInput)
+            }.Order(StringComparer.Ordinal),
+            PersonBindings()
+                .Where(binding => binding.Surface == PersonalDataSurface.AdminInput)
+                .Select(BindingKey)
+                .Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new[]
+            {
+                BindingKey(
+                    typeof(SetPropertyTimeZoneReceiptDto),
+                    nameof(SetPropertyTimeZoneReceiptDto.ActorId),
+                    PersonalDataSurface.ApiResponse),
+                BindingKey(
+                    typeof(SetPropertyTimeZoneReceiptDto),
+                    nameof(SetPropertyTimeZoneReceiptDto.ActorId),
+                    PersonalDataSurface.AdminOutput),
+                BindingKey(
+                    typeof(PropertyTimeZoneRecoveryDto),
+                    nameof(PropertyTimeZoneRecoveryDto.Receipt),
+                    PersonalDataSurface.ApiResponse),
+                BindingKey(
+                    typeof(PropertyTimeZoneRecoveryDto),
+                    nameof(PropertyTimeZoneRecoveryDto.Receipt),
+                    PersonalDataSurface.AdminOutput)
+            }.Order(StringComparer.Ordinal),
+            PersonBindings()
+                .Where(binding => binding.Surface is
+                    PersonalDataSurface.ApiResponse or
+                    PersonalDataSurface.AdminOutput)
+                .Select(BindingKey)
+                .Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -261,6 +337,118 @@ public sealed class PropertiesPersonalDataCatalogTests
 
         Assert.Equal(expected, PersonalDataInventoryRenderer.RenderMarkdown(Catalogue));
     }
+
+    private static IEnumerable<(
+        PersonalDataSurface Surface,
+        Type Type,
+        string[] Members)> TimeZoneBoundaryMembers()
+    {
+        yield return (
+            PersonalDataSurface.ApiInput,
+            typeof(PropertiesModule.PropertyCreateRequest),
+            [nameof(PropertiesModule.PropertyCreateRequest.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.ApiInput,
+            typeof(PropertiesModule.PropertyUpdateRequest),
+            [nameof(PropertiesModule.PropertyUpdateRequest.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.ApiInput,
+            typeof(PropertiesModule.SetPropertyTimeZoneRequest),
+            PublicMemberNames(typeof(PropertiesModule.SetPropertyTimeZoneRequest)));
+        yield return (
+            PersonalDataSurface.AdminInput,
+            typeof(PropertiesAdminApiModule.PropertyCreateRequest),
+            [nameof(PropertiesAdminApiModule.PropertyCreateRequest.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.AdminInput,
+            typeof(PropertiesAdminApiModule.PropertyUpdateRequest),
+            [nameof(PropertiesAdminApiModule.PropertyUpdateRequest.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.AdminInput,
+            typeof(PropertiesAdminApiModule.SetPropertyTimeZoneRequest),
+            PublicMemberNames(typeof(PropertiesAdminApiModule.SetPropertyTimeZoneRequest)));
+
+        yield return (
+            PersonalDataSurface.ApplicationCommand,
+            typeof(CreatePropertyCommand),
+            [nameof(CreatePropertyCommand.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.AdminInput,
+            typeof(CreatePropertyCommand),
+            [nameof(CreatePropertyCommand.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.ApplicationCommand,
+            typeof(UpdatePropertyCommand),
+            [nameof(UpdatePropertyCommand.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.AdminInput,
+            typeof(UpdatePropertyCommand),
+            [nameof(UpdatePropertyCommand.TimeZoneId)]);
+        yield return (
+            PersonalDataSurface.ApplicationCommand,
+            typeof(SetPropertyTimeZoneCommand),
+            PublicMemberNames(typeof(SetPropertyTimeZoneCommand)));
+        yield return (
+            PersonalDataSurface.AdminInput,
+            typeof(SetPropertyTimeZoneCommand),
+            PublicMemberNames(typeof(SetPropertyTimeZoneCommand))
+                .Where(member => member != nameof(SetPropertyTimeZoneCommand.ActorId))
+                .ToArray());
+        yield return (
+            PersonalDataSurface.ApiInput,
+            typeof(SetPropertyTimeZoneCommand),
+            [nameof(SetPropertyTimeZoneCommand.PropertyId)]);
+
+        foreach (Type type in new[]
+                 {
+                     typeof(ListPropertyTimeZoneCatalogQuery),
+                     typeof(ListPropertyTimeZoneComplianceQuery),
+                     typeof(GetPropertyTimeZoneRecoveryQuery)
+                 })
+        {
+            string[] members = PublicMemberNames(type);
+            yield return (PersonalDataSurface.ApplicationQuery, type, members);
+            yield return (PersonalDataSurface.ApiInput, type, members);
+            yield return (PersonalDataSurface.AdminInput, type, members);
+        }
+
+        foreach (Type type in new[]
+                 {
+                     typeof(PropertyTimeZoneCountryDto),
+                     typeof(PropertyTimeZoneCatalogItemDto),
+                     typeof(PropertyTimeZoneCatalogPageDto),
+                     typeof(PropertyTimeZoneComplianceItemDto),
+                     typeof(PropertyTimeZoneCompliancePageDto),
+                     typeof(SetPropertyTimeZoneReceiptDto),
+                     typeof(PropertyTimeZoneRecoveryDto)
+                 })
+        {
+            string[] members = PublicMemberNames(type);
+            yield return (PersonalDataSurface.ApiResponse, type, members);
+            yield return (PersonalDataSurface.AdminOutput, type, members);
+        }
+
+        string[] propertyTimeZoneMembers =
+        [
+            nameof(PropertyDto.TimeZoneId),
+            nameof(PropertyDto.TimeZoneStatus),
+            nameof(PropertyDto.CanonicalTimeZoneId),
+            nameof(PropertyDto.TimeZoneCatalogVersion),
+            nameof(PropertyDto.TimeZoneObservedAtUtc),
+            nameof(PropertyDto.TimeZoneCorrectionAllowed)
+        ];
+        foreach (Type type in new[] { typeof(PropertyDto), typeof(PropertyListItemDto) })
+        {
+            yield return (PersonalDataSurface.ApiResponse, type, propertyTimeZoneMembers);
+            yield return (PersonalDataSurface.AdminOutput, type, propertyTimeZoneMembers);
+        }
+    }
+
+    private static string[] PublicMemberNames(Type type) => type
+        .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+        .Select(property => property.Name)
+        .Order(StringComparer.Ordinal)
+        .ToArray();
 
     private static IEnumerable<(PersonalDataSurface Surface, Type Type)> BoundaryTypes()
     {
@@ -360,6 +548,11 @@ public sealed class PropertiesPersonalDataCatalogTests
 
     private static IEnumerable<PersonalDataMemberBinding> Bindings() =>
         Catalogue.Fields.SelectMany(field => field.Bindings);
+
+    private static IEnumerable<PersonalDataMemberBinding> PersonBindings() =>
+        Catalogue.Fields
+            .Where(field => field.Id is AuthorizationFieldId or ActorFieldId)
+            .SelectMany(field => field.Bindings);
 
     private static string[] PersistedMembers(Type type)
     {

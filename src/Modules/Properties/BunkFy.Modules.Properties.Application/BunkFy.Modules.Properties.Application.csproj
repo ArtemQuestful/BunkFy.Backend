@@ -3,6 +3,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\BunkFy.TimeZones\BunkFy.TimeZones.csproj" />
     <ProjectReference Include="..\..\..\Shared\BunkFy.DataGovernance\BunkFy.DataGovernance.csproj" />
     <ProjectReference Include="..\BunkFy.Modules.Properties.Contracts\BunkFy.Modules.Properties.Contracts.csproj" />
     <ProjectReference Include="..\BunkFy.Modules.Properties.Domain\BunkFy.Modules.Properties.Domain.csproj" />

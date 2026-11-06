@@ -12,12 +12,11 @@ internal static class DataRightsSubjectContributorSet
         if (contributors is null || caseType == DataRightsCaseType.Unknown)
         {
             return Result.Failure<IReadOnlyCollection<IDataRightsSubjectDiscoveryContributor>>(
-                DataRightsApplicationErrors.SubjectOwnerUnavailable);
+                DataRightsApplicationErrors.SubjectOwnerCatalogInvalid);
         }
 
         IDataRightsSubjectDiscoveryContributor[] supplied = contributors.ToArray();
-        if (supplied.Length == 0 ||
-            supplied.Any(contributor =>
+        if (supplied.Any(contributor =>
                 contributor is null ||
                 string.IsNullOrWhiteSpace(contributor.OwnerKey) ||
                 contributor.OwnerKey.Trim().Length >
@@ -29,7 +28,7 @@ internal static class DataRightsSubjectContributorSet
                 .Any(group => group.Count() != 1))
         {
             return Result.Failure<IReadOnlyCollection<IDataRightsSubjectDiscoveryContributor>>(
-                DataRightsApplicationErrors.SubjectOwnerUnavailable);
+                DataRightsApplicationErrors.SubjectOwnerCatalogInvalid);
         }
 
         IDataRightsSubjectDiscoveryContributor[] ordered = supplied
@@ -53,10 +52,11 @@ internal static class DataRightsSubjectContributorSet
         DataRightsCaseType caseType)
     {
         string normalizedOwner = ownerKey?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (normalizedOwner.Length == 0)
+        if (normalizedOwner.Length is 0 or >
+            DataRightsSubjectDiscoveryLimits.OwnerKeyMaxLength)
         {
             return Result.Failure<IDataRightsSubjectDiscoveryContributor>(
-                DataRightsApplicationErrors.SubjectOwnerUnavailable);
+                DataRightsApplicationErrors.SubjectCoordinateInvalid);
         }
 
         Result<IReadOnlyCollection<IDataRightsSubjectDiscoveryContributor>> ordered =

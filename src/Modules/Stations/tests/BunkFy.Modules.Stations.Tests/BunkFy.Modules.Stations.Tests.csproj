@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../BunkFy.Modules.Stations.Api/BunkFy.Modules.Stations.Api.csproj" />
+  </ItemGroup>
+  <PropertyGroup><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../Workspaces/BunkFy.Modules.Workspaces.Contracts/BunkFy.Modules.Workspaces.Contracts.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio"><PrivateAssets>all</PrivateAssets></PackageReference>
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="SSH.NET"><PrivateAssets>all</PrivateAssets></PackageReference>
+    <ProjectReference Include="../../BunkFy.Modules.Stations.Application/BunkFy.Modules.Stations.Application.csproj" />
+    <ProjectReference Include="../../BunkFy.Modules.Stations.Persistence/BunkFy.Modules.Stations.Persistence.csproj" />
+    <ProjectReference Include="../../BunkFy.Modules.Stations.Persistence.PostgreSqlMigrations/BunkFy.Modules.Stations.Persistence.PostgreSqlMigrations.csproj" />
+  </ItemGroup>
+</Project>

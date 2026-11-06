@@ -96,13 +96,17 @@ internal static class DataRightsExportSchemaValidator
                 normalizedOwner,
                 StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(descriptor.CatalogId) ||
+            descriptor.CatalogId.Trim().Length >
+                DataRightsExportLimits.SchemaIdentifierMaxLength ||
             descriptor.CatalogSchemaVersion <= 0 ||
             descriptor.CatalogVersion <= 0 ||
             string.IsNullOrWhiteSpace(descriptor.ExportSchemaId) ||
+            descriptor.ExportSchemaId.Trim().Length >
+                DataRightsExportLimits.SchemaIdentifierMaxLength ||
             descriptor.ExportSchemaVersion <= 0 ||
             descriptor.FieldIds is null ||
             descriptor.FieldIds.Count is <= 0 or >
-                DataRightsExportLimits.MaxFieldsPerRecord ||
+                DataRightsExportLimits.MaxFieldsPerSchema ||
             descriptor.FieldIds.Any(field =>
                 string.IsNullOrWhiteSpace(field) ||
                 field.Trim().Length >

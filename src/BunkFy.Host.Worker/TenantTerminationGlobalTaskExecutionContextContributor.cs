@@ -20,18 +20,17 @@ internal sealed class TenantTerminationGlobalTaskExecutionContextContributor(
     {
         ArgumentNullException.ThrowIfNull(context);
         this.established = false;
-        if (!IsGlobalTerminationRegistration(context))
+        if (!IsSupportedRegistration(context))
         {
             return ValueTask.FromResult(
                 TaskExecutionContextPreparationResult.Success());
         }
 
-        if (!TryReadPayload(
-                context,
-                out ExecuteGlobalTenantTerminationOwnerWorkPayload? payload) ||
-            !TryTenantId(payload.TenantId, out string tenantId) ||
+        if (!MatchesLease(context) ||
+            !TryReadCoordinates(context, out GlobalTenantCoordinates coordinates) ||
+            !TryTenantId(coordinates.TenantId, out string tenantId) ||
             context.Lease.ScopeId is not null ||
-            context.Lease.CorrelationId != payload.ProcessId)
+            context.Lease.CorrelationId != coordinates.ProcessId)
         {
             return ValueTask.FromResult(
                 TaskExecutionContextPreparationResult.Failure(
@@ -57,24 +56,31 @@ internal sealed class TenantTerminationGlobalTaskExecutionContextContributor(
         return ValueTask.CompletedTask;
     }
 
-    private static bool IsGlobalTerminationRegistration(
+    private static bool IsSupportedRegistration(
         TaskExecutionContextPreparationContext context) =>
-        context.Registration.PayloadType ==
-            typeof(ExecuteGlobalTenantTerminationOwnerWorkPayload) &&
         !context.Registration.IsTenantScoped() &&
         string.Equals(
             context.Registration.ModuleName,
             DataRightsModuleMetadata.Name,
             StringComparison.Ordinal) &&
         string.Equals(
-            context.Registration.TaskName,
-            ExecuteGlobalTenantTerminationOwnerWorkPayload.TaskName,
+            context.Registration.WorkerGroup,
+            DataRightsModuleMetadata.TenantTerminationWorkerGroup,
             StringComparison.Ordinal) &&
-        context.Registration.PayloadVersion ==
-            ExecuteGlobalTenantTerminationOwnerWorkPayload.PayloadVersion &&
+        IsSupportedPayload(
+            context.Registration.PayloadType,
+            context.Registration.TaskName,
+            context.Registration.PayloadVersion);
+
+    private static bool MatchesLease(
+        TaskExecutionContextPreparationContext context) =>
         string.Equals(
             context.Lease.ModuleName,
             context.Registration.ModuleName,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            context.Lease.WorkerGroup,
+            context.Registration.WorkerGroup,
             StringComparison.Ordinal) &&
         string.Equals(
             context.Lease.TaskName,
@@ -82,33 +88,116 @@ internal sealed class TenantTerminationGlobalTaskExecutionContextContributor(
             StringComparison.Ordinal) &&
         context.Lease.PayloadVersion == context.Registration.PayloadVersion;
 
-    private static bool TryReadPayload(
+    private static bool IsSupportedPayload(
+        Type payloadType,
+        string taskName,
+        int payloadVersion) =>
+        MatchesPayload<ExecuteGlobalTenantTerminationOwnerWorkPayload>(
+            payloadType,
+            taskName,
+            payloadVersion,
+            ExecuteGlobalTenantTerminationOwnerWorkPayload.TaskName,
+            ExecuteGlobalTenantTerminationOwnerWorkPayload.PayloadVersion) ||
+        MatchesPayload<DeleteExpiredTenantTerminationExportArtifactPayload>(
+            payloadType,
+            taskName,
+            payloadVersion,
+            DeleteExpiredTenantTerminationExportArtifactPayload.TaskName,
+            DeleteExpiredTenantTerminationExportArtifactPayload
+                .PayloadVersion) ||
+        MatchesPayload<DeleteExpiredTenantTerminationExportFragmentPayload>(
+            payloadType,
+            taskName,
+            payloadVersion,
+            DeleteExpiredTenantTerminationExportFragmentPayload.TaskName,
+            DeleteExpiredTenantTerminationExportFragmentPayload
+                .PayloadVersion);
+
+    private static bool MatchesPayload<TPayload>(
+        Type payloadType,
+        string taskName,
+        int payloadVersion,
+        string expectedTaskName,
+        int expectedPayloadVersion) =>
+        payloadType == typeof(TPayload) &&
+        string.Equals(
+            taskName,
+            expectedTaskName,
+            StringComparison.Ordinal) &&
+        payloadVersion == expectedPayloadVersion;
+
+    private static bool TryReadCoordinates(
         TaskExecutionContextPreparationContext context,
-        out ExecuteGlobalTenantTerminationOwnerWorkPayload payload)
+        out GlobalTenantCoordinates coordinates)
     {
-        payload = null!;
+        coordinates = default;
         try
         {
-            ExecuteGlobalTenantTerminationOwnerWorkPayload? candidate =
-                JsonSerializer.Deserialize<
-                    ExecuteGlobalTenantTerminationOwnerWorkPayload>(
+            if (context.Registration.PayloadType ==
+                typeof(ExecuteGlobalTenantTerminationOwnerWorkPayload))
+            {
+                ExecuteGlobalTenantTerminationOwnerWorkPayload? payload =
+                    JsonSerializer.Deserialize<
+                        ExecuteGlobalTenantTerminationOwnerWorkPayload>(
+                            context.Lease.PayloadJson,
+                            JsonOptions);
+                if (payload is null ||
+                    payload.ProcessId == Guid.Empty ||
+                    payload.WorkItemId == Guid.Empty ||
+                    payload.OperationRevision <= 0 ||
+                    payload.Phase !=
+                        TenantTerminationContributionPhase.Destroy ||
+                    string.IsNullOrWhiteSpace(payload.OwnerKey))
+                {
+                    return false;
+                }
+
+                coordinates = new(payload.TenantId, payload.ProcessId);
+                return true;
+            }
+
+            if (context.Registration.PayloadType ==
+                typeof(DeleteExpiredTenantTerminationExportArtifactPayload))
+            {
+                DeleteExpiredTenantTerminationExportArtifactPayload? payload =
+                    JsonSerializer.Deserialize<
+                        DeleteExpiredTenantTerminationExportArtifactPayload>(
+                            context.Lease.PayloadJson,
+                            JsonOptions);
+                if (payload is null ||
+                    payload.ProcessId == Guid.Empty ||
+                    payload.ArtifactId == Guid.Empty ||
+                    payload.ExportOperationRevision <= 0 ||
+                    payload.ExpiresAtUtc == default)
+                {
+                    return false;
+                }
+
+                coordinates = new(payload.TenantId, payload.ProcessId);
+                return true;
+            }
+
+            DeleteExpiredTenantTerminationExportFragmentPayload?
+                fragmentPayload = JsonSerializer.Deserialize<
+                    DeleteExpiredTenantTerminationExportFragmentPayload>(
                         context.Lease.PayloadJson,
                         JsonOptions);
-            if (candidate is null ||
-                candidate.ProcessId == Guid.Empty ||
-                candidate.WorkItemId == Guid.Empty ||
-                candidate.OperationRevision <= 0 ||
-                candidate.Phase !=
-                    TenantTerminationContributionPhase.Destroy ||
-                string.IsNullOrWhiteSpace(candidate.OwnerKey))
+            if (fragmentPayload is null ||
+                fragmentPayload.ProcessId == Guid.Empty ||
+                fragmentPayload.FragmentId == Guid.Empty ||
+                fragmentPayload.ExportOperationRevision <= 0 ||
+                fragmentPayload.ExpiresAtUtc == default)
             {
                 return false;
             }
 
-            payload = candidate;
+            coordinates = new(
+                fragmentPayload.TenantId,
+                fragmentPayload.ProcessId);
             return true;
         }
-        catch (JsonException)
+        catch (Exception exception)
+            when (exception is JsonException or NotSupportedException)
         {
             return false;
         }
@@ -132,4 +221,8 @@ internal sealed class TenantTerminationGlobalTaskExecutionContextContributor(
         tenantId = normalized;
         return true;
     }
+
+    private readonly record struct GlobalTenantCoordinates(
+        string TenantId,
+        Guid ProcessId);
 }

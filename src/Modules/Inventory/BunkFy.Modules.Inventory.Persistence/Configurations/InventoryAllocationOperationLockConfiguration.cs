@@ -8,6 +8,9 @@ internal sealed class
     : IEntityTypeConfiguration<
         InventoryAllocationOperationLock>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(
         EntityTypeBuilder<
             InventoryAllocationOperationLock> builder)
@@ -19,6 +22,10 @@ internal sealed class
                 table.HasCheckConstraint(
                     "CK_allocation_operation_locks_revision",
                     "\"Revision\" >= 1");
+                table.HasCheckConstraint(
+                    "CK_allocation_operation_locks_coordinates",
+                    $"\"Id\" <> '{EmptyGuid}' AND \"Id\" = \"AllocationId\" AND " +
+                    "length(trim(\"ScopeId\")) > 0");
             });
         builder.HasKey(resourceLock => resourceLock.Id);
         builder.HasAlternateKey(resourceLock => new

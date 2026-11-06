@@ -67,6 +67,12 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         .HasMaxLength(320)
                         .HasColumnType("character varying(320)");
 
+                    b.PrimitiveCollection<string[]>("LanguageTags")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasDefaultValueSql("ARRAY[]::text[]");
+
                     b.Property<DateTimeOffset>("LastChangedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -143,13 +149,29 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("guest_profiles", "guests", t =>
                         {
+                            t.HasCheckConstraint("CK_guest_profiles_anonymised_profile", "\"Status\" <> 3 OR (\"DisplayName\" = 'Anonymised guest' AND \"DisplayNameSearch\" = 'ANONYMISED GUEST' AND \"LegalName\" IS NULL AND \"LegalNameSearch\" IS NULL AND \"Email\" IS NULL AND \"EmailSearch\" IS NULL AND \"Phone\" IS NULL AND \"PhoneSearch\" IS NULL AND \"DateOfBirth\" IS NULL AND \"NationalityCountryCode\" IS NULL AND \"PreferredLanguageTag\" IS NULL AND cardinality(\"LanguageTags\") = 0 AND \"Notes\" IS NULL AND \"CreationConfirmationId\" IS NULL AND \"ArchivedAtUtc\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_guest_profiles_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"OriginPropertyId\" <> '00000000-0000-0000-0000-000000000000' AND (\"CreationConfirmationId\" IS NULL OR \"CreationConfirmationId\" <> '00000000-0000-0000-0000-000000000000') AND trim(\"ScopeId\") <> ''");
+
                             t.HasCheckConstraint("CK_guest_profiles_created_by", "length(trim(\"CreatedBy\")) > 0");
 
                             t.HasCheckConstraint("CK_guest_profiles_display_name", "length(trim(\"DisplayName\")) > 0");
 
+                            t.HasCheckConstraint("CK_guest_profiles_language_tags", "cardinality(\"LanguageTags\") BETWEEN 0 AND 12 AND array_position(\"LanguageTags\", NULL) IS NULL");
+
                             t.HasCheckConstraint("CK_guest_profiles_last_changed_by", "length(trim(\"LastChangedBy\")) > 0");
 
                             t.HasCheckConstraint("CK_guest_profiles_lifecycle", "(\"Status\" = 1 AND \"ArchivedAtUtc\" IS NULL AND \"AnonymisedAtUtc\" IS NULL) OR (\"Status\" = 2 AND \"ArchivedAtUtc\" IS NOT NULL AND \"ArchivedAtUtc\" >= \"CreatedAtUtc\" AND \"AnonymisedAtUtc\" IS NULL) OR (\"Status\" = 3 AND \"ArchivedAtUtc\" IS NULL AND \"AnonymisedAtUtc\" IS NOT NULL AND \"AnonymisedAtUtc\" >= \"CreatedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_guest_profiles_optional_text", "(\"NationalityCountryCode\" IS NULL OR trim(\"NationalityCountryCode\") <> '') AND (\"PreferredLanguageTag\" IS NULL OR trim(\"PreferredLanguageTag\") <> '') AND (\"Notes\" IS NULL OR trim(\"Notes\") <> '')");
+
+                            t.HasCheckConstraint("CK_guest_profiles_projection_ordinal", "\"ProjectionOrdinal\" >= 1");
+
+                            t.HasCheckConstraint("CK_guest_profiles_search_shape", "trim(\"DisplayNameSearch\") <> '' AND ((\"LegalName\" IS NULL AND \"LegalNameSearch\" IS NULL) OR (\"LegalName\" IS NOT NULL AND \"LegalNameSearch\" IS NOT NULL AND trim(\"LegalName\") <> '' AND trim(\"LegalNameSearch\") <> '')) AND ((\"Email\" IS NULL AND \"EmailSearch\" IS NULL) OR (\"Email\" IS NOT NULL AND \"EmailSearch\" IS NOT NULL AND trim(\"Email\") <> '' AND trim(\"EmailSearch\") <> '')) AND ((\"Phone\" IS NULL AND \"PhoneSearch\" IS NULL) OR (\"Phone\" IS NOT NULL AND \"PhoneSearch\" IS NOT NULL AND trim(\"Phone\") <> '' AND trim(\"PhoneSearch\") <> ''))");
+
+                            t.HasCheckConstraint("CK_guest_profiles_state_versions", "(\"Status\" = 1 AND \"Version\" >= 1) OR (\"Status\" IN (2, 3) AND \"Version\" >= 2)");
+
+                            t.HasCheckConstraint("CK_guest_profiles_timestamps", "\"LastChangedAtUtc\" >= \"CreatedAtUtc\" AND (\"ArchivedAtUtc\" IS NULL OR \"ArchivedAtUtc\" = \"LastChangedAtUtc\") AND (\"AnonymisedAtUtc\" IS NULL OR (\"AnonymisedAtUtc\" >= \"CreatedAtUtc\" AND \"AnonymisedAtUtc\" <= \"LastChangedAtUtc\"))");
 
                             t.HasCheckConstraint("CK_guest_profiles_version", "\"Version\" >= 1");
                         });
@@ -235,30 +257,39 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasAlternateKey("ScopeId", "CanonicalSha256");
 
-                    b.HasAlternateKey("ScopeId", "Id");
+                    b.HasIndex("ScopeId", "EventId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_anonymisation_receipts_event");
 
                     b.HasIndex("ScopeId", "IdempotencyKey")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_anonymisation_receipts_idempotency");
 
                     b.HasIndex("ScopeId", "GuestId", "ResultingGuestVersion")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_anonymisation_receipts_guest_version");
 
                     b.HasIndex("ScopeId", "CaseId", "ApprovalRevision", "OperationRevision", "GuestId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_anonymisation_receipts_case_operation");
 
                     b.ToTable("guest_anonymisation_receipts", "guests", t =>
                         {
-                            t.HasCheckConstraint("CK_guest_anonymisation_receipts_actor", "length(trim(\"ActorId\")) > 0");
+                            t.HasCheckConstraint("CK_guest_anonymisation_receipts_actor", "length(\"ActorId\") > 0 AND \"ActorId\" = trim(\"ActorId\")");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_receipts_contract", "\"ContractVersion\" = 1");
 
-                            t.HasCheckConstraint("CK_guest_anonymisation_receipts_digests", "char_length(\"ApprovalEvidenceSha256\") = 64 AND char_length(\"PolicySetSha256\") = 64 AND char_length(\"CanonicalSha256\") = 64");
+                            t.HasCheckConstraint("CK_guest_anonymisation_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"IdempotencyKey\" <> '00000000-0000-0000-0000-000000000000' AND \"RoutingPropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"CaseId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND \"EventId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_receipts_digests", "char_length(\"ApprovalEvidenceSha256\") = 64 AND \"ApprovalEvidenceSha256\" ~ '^[0-9a-f]+$' AND char_length(\"PolicySetSha256\") = 64 AND \"PolicySetSha256\" ~ '^[0-9a-f]+$' AND char_length(\"CanonicalSha256\") = 64 AND \"CanonicalSha256\" ~ '^[0-9a-f]+$'");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_receipts_outcome", "\"Disposition\" = 1 AND \"Reason\" = 1");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_receipts_property_count", "\"AffectedPropertyCount\" BETWEEN 1 AND 256");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_receipts_revisions", "\"ApprovalRevision\" >= 1 AND \"OperationRevision\" > \"ApprovalRevision\"");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_receipts_timestamp", "\"CompletedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_receipts_versions", "\"SelectedGuestVersion\" >= 1 AND \"ResultingGuestVersion\" = \"SelectedGuestVersion\" + 1");
                         });
@@ -312,20 +343,23 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
-
-                    b.HasIndex("ScopeId", "GuestId", "LedgerEntryId")
-                        .IsUnique();
+                    b.HasIndex("ScopeId", "GuestId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_anonymisation_restore_receipts_tombstone");
 
                     b.ToTable("guest_anonymisation_restore_receipts", "guests", t =>
                         {
                             t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_contract", "\"ContractVersion\" = 1");
 
-                            t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_digests", "char_length(\"OwnerReceiptSha256\") = 64 AND char_length(\"CanonicalSha256\") = 64");
+                            t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"LedgerEntryId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND \"OwnerReceiptId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_digests", "char_length(\"OwnerReceiptSha256\") = 64 AND \"OwnerReceiptSha256\" ~ '^[0-9a-f]+$' AND char_length(\"CanonicalSha256\") = 64 AND \"CanonicalSha256\" ~ '^[0-9a-f]+$'");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_identity", "\"LedgerEntryId\" = \"Id\"");
 
-                            t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_versions", "\"OwnerReceiptContractVersion\" >= 1 AND \"ResultingGuestVersion\" >= 1 AND \"TombstoneRevision\" >= 1");
+                            t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_timestamp", "\"ReplayedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_restore_receipts_versions", "\"OwnerReceiptContractVersion\" >= 1 AND \"ResultingGuestVersion\" >= 1 AND \"TombstoneRevision\" BETWEEN 1 AND 2");
                         });
                 });
 
@@ -369,6 +403,11 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ScopeId", "LedgerEntryId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_anonymisation_tombstones_ledger_entry")
+                        .HasFilter("\"LedgerEntryId\" IS NOT NULL");
+
                     b.HasIndex("ScopeId", "CompletedAtUtc", "Id");
 
                     b.ToTable("guest_anonymisation_tombstones", "guests", t =>
@@ -377,11 +416,19 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                             t.HasCheckConstraint("CK_guest_anonymisation_tombstones_contract", "\"ContractVersion\" = 2");
 
-                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_receipt_digest", "char_length(\"OwnerReceiptSha256\") = 64");
+                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
 
-                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_revision", "\"Revision\" >= 1");
+                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_lifecycle", "(\"Authority\" = 1 AND (\"Revision\" = 1 OR (\"Revision\" = 2 AND \"LedgerEntryId\" IS NOT NULL))) OR (\"Authority\" = 2 AND \"Revision\" = 1 AND \"LedgerEntryId\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_receipt_digest", "char_length(\"OwnerReceiptSha256\") = 64 AND \"OwnerReceiptSha256\" ~ '^[0-9a-f]+$'");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_restore_pair", "(\"LedgerEntryId\" IS NULL AND \"LastReplayedAtUtc\" IS NULL) OR (\"LedgerEntryId\" IS NOT NULL AND \"LedgerEntryId\" <> '00000000-0000-0000-0000-000000000000' AND \"LastReplayedAtUtc\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_revision", "\"Revision\" BETWEEN 1 AND 2");
 
                             t.HasCheckConstraint("CK_guest_anonymisation_tombstones_state", "\"State\" = 1");
+
+                            t.HasCheckConstraint("CK_guest_anonymisation_tombstones_timestamps", "\"CompletedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00' AND (\"LastReplayedAtUtc\" IS NULL OR \"LastReplayedAtUtc\" >= \"CompletedAtUtc\")");
                         });
                 });
 
@@ -431,6 +478,9 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("ScopeId", "Id", "PropertyId", "GuestId", "ReasonCode")
+                        .HasName("AK_guest_data_holds_receipt_evidence");
+
                     b.HasIndex("ScopeId", "GuestId", "State", "PropertyId", "Id");
 
                     b.HasIndex("ScopeId", "PropertyId", "GuestId", "PlacedAtUtc", "Id");
@@ -439,7 +489,13 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("data_holds", "guests", t =>
                         {
+                            t.HasCheckConstraint("CK_guest_data_holds_audit_text", "length(trim(\"ReasonCode\")) > 0 AND \"ReasonCode\" = lower(trim(\"ReasonCode\")) AND length(trim(\"PlacedBy\")) > 0 AND \"PlacedBy\" = trim(\"PlacedBy\") AND (\"ReleasedBy\" IS NULL OR (length(trim(\"ReleasedBy\")) > 0 AND \"ReleasedBy\" = trim(\"ReleasedBy\")))");
+
+                            t.HasCheckConstraint("CK_guest_data_holds_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
                             t.HasCheckConstraint("CK_guest_data_holds_lifecycle", "(\"State\" = 1 AND \"ReleasedBy\" IS NULL AND \"ReleasedAtUtc\" IS NULL AND \"Version\" = 1) OR (\"State\" = 2 AND \"ReleasedBy\" IS NOT NULL AND \"ReleasedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" >= \"PlacedAtUtc\" AND \"Version\" >= 2)");
+
+                            t.HasCheckConstraint("CK_guest_data_holds_timestamps", "\"PlacedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00' AND (\"ReleasedAtUtc\" IS NULL OR \"ReleasedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00')");
 
                             t.HasCheckConstraint("CK_guest_data_holds_version", "\"Version\" >= 1");
                         });
@@ -498,10 +554,19 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                     b.HasIndex("ScopeId", "HoldId", "Action")
                         .IsUnique();
 
+                    b.HasIndex("ScopeId", "HoldId", "PropertyId", "GuestId", "ReasonCode")
+                        .HasDatabaseName("IX_guest_data_hold_receipts_hold_evidence");
+
                     b.HasIndex("ScopeId", "PropertyId", "GuestId", "HoldId", "CompletedAtUtc");
 
                     b.ToTable("data_hold_receipts", "guests", t =>
                         {
+                            t.HasCheckConstraint("CK_guest_data_hold_receipts_audit_text", "length(trim(\"ReasonCode\")) > 0 AND \"ReasonCode\" = lower(trim(\"ReasonCode\")) AND length(trim(\"ActorId\")) > 0 AND \"ActorId\" = trim(\"ActorId\")");
+
+                            t.HasCheckConstraint("CK_guest_data_hold_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"IdempotencyKey\" <> '00000000-0000-0000-0000-000000000000' AND \"HoldId\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_data_hold_receipts_timestamp", "\"CompletedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
+
                             t.HasCheckConstraint("CK_guest_data_hold_receipts_versions", "\"SelectedGuestVersion\" >= 1 AND ((\"Action\" = 1 AND \"ResultingHoldVersion\" = 1) OR (\"Action\" = 2 AND \"ResultingHoldVersion\" >= 2))");
                         });
                 });
@@ -555,8 +620,6 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
-
                     b.HasIndex("ScopeId", "CompletionEventId")
                         .IsUnique();
 
@@ -566,17 +629,25 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                     b.HasIndex("ScopeId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("ScopeId", "GuestId", "CurrentRecordVersion");
+                    b.HasIndex("ScopeId", "GuestId", "CurrentRecordVersion")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_correction_receipts_guest_version");
 
-                    b.HasIndex("ScopeId", "PropertyId", "CaseId", "ApprovalRevision");
+                    b.HasIndex("ScopeId", "PropertyId", "CaseId", "ApprovalRevision")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_correction_receipts_case_approval");
 
                     b.ToTable("guest_data_rights_correction_receipts", "guests", t =>
                         {
                             t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_approval_revision", "\"ApprovalRevision\" >= 1");
 
-                            t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_changed_fields", "\"ChangedFieldsMask\" BETWEEN 1 AND 255");
+                            t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_changed_fields", "(\"ContractVersion\" = 1 AND \"ChangedFieldsMask\" BETWEEN 1 AND 255) OR (\"ContractVersion\" = 2 AND \"ChangedFieldsMask\" BETWEEN 1 AND 511)");
 
-                            t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_contract", "\"ContractVersion\" = 1");
+                            t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_contract", "\"ContractVersion\" IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"IdempotencyKey\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"CaseId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND \"EventId\" <> '00000000-0000-0000-0000-000000000000' AND \"CompletionEventId\" <> '00000000-0000-0000-0000-000000000000' AND \"EventId\" <> \"CompletionEventId\" AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_timestamp", "\"CompletedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
 
                             t.HasCheckConstraint("CK_guest_data_rights_correction_receipts_versions", "\"SelectedRecordVersion\" >= 1 AND \"CurrentRecordVersion\" = \"SelectedRecordVersion\" + 1");
                         });
@@ -641,7 +712,8 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
+                    b.HasAlternateKey("ScopeId", "Id", "PropertyId", "GuestId")
+                        .HasName("AK_guest_processing_restrictions_receipt_evidence");
 
                     b.HasIndex("ScopeId", "PropertyId", "GuestId", "ApplyCaseId", "ApplyApprovalRevision")
                         .IsUnique();
@@ -655,7 +727,13 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_guest_processing_restrictions_apply_approval", "\"ApplyApprovalRevision\" >= 1 AND \"ApplySelectedGuestVersion\" >= 1");
 
-                            t.HasCheckConstraint("CK_guest_processing_restrictions_lifecycle", "(\"Status\" = 1 AND \"ReleaseCaseId\" IS NULL AND \"ReleaseApprovalRevision\" IS NULL AND \"ReleaseSelectedGuestVersion\" IS NULL AND \"ReleasedBy\" IS NULL AND \"ReleasedAtUtc\" IS NULL AND \"Version\" = 1) OR (\"Status\" = 2 AND \"ReleaseCaseId\" IS NOT NULL AND \"ReleaseApprovalRevision\" >= 1 AND \"ReleaseSelectedGuestVersion\" >= 1 AND \"ReleasedBy\" IS NOT NULL AND \"ReleasedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" >= \"AppliedAtUtc\" AND \"Version\" >= 2)");
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_audit_text", "length(trim(\"AppliedBy\")) > 0 AND \"AppliedBy\" = trim(\"AppliedBy\") AND (\"ReleasedBy\" IS NULL OR (length(trim(\"ReleasedBy\")) > 0 AND \"ReleasedBy\" = trim(\"ReleasedBy\")))");
+
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND \"ApplyCaseId\" <> '00000000-0000-0000-0000-000000000000' AND (\"ReleaseCaseId\" IS NULL OR \"ReleaseCaseId\" <> '00000000-0000-0000-0000-000000000000') AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_lifecycle", "(\"Status\" = 1 AND \"ReleaseCaseId\" IS NULL AND \"ReleaseApprovalRevision\" IS NULL AND \"ReleaseSelectedGuestVersion\" IS NULL AND \"ReleasedBy\" IS NULL AND \"ReleasedAtUtc\" IS NULL AND \"Version\" = 1) OR (\"Status\" = 2 AND \"ReleaseCaseId\" IS NOT NULL AND \"ReleaseCaseId\" <> \"ApplyCaseId\" AND \"ReleaseApprovalRevision\" >= 1 AND \"ReleaseSelectedGuestVersion\" >= 1 AND \"ReleasedBy\" IS NOT NULL AND \"ReleasedAtUtc\" IS NOT NULL AND \"ReleasedAtUtc\" >= \"AppliedAtUtc\" AND \"Version\" = 2)");
+
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_timestamps", "\"AppliedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00' AND (\"ReleasedAtUtc\" IS NULL OR \"ReleasedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00')");
                         });
                 });
 
@@ -704,9 +782,15 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_guest_processing_restrictions_contract_version", "\"ContractVersion\" >= 1");
 
-                            t.HasCheckConstraint("CK_guest_processing_restrictions_effective_state", "(\"ActiveRestrictionCount\" = 0 AND NOT \"IsRestricted\") OR (\"ActiveRestrictionCount\" > 0 AND \"IsRestricted\")");
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_effective_state", "\"ActiveRestrictionCount\" >= 0 AND \"Revision\" >= \"ActiveRestrictionCount\" AND MOD(\"Revision\" - \"ActiveRestrictionCount\", 2) = 0 AND ((\"ActiveRestrictionCount\" = 0 AND NOT \"IsRestricted\") OR (\"ActiveRestrictionCount\" > 0 AND \"IsRestricted\"))");
+
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_projection_coordinates", "\"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_projection_ordinal", "\"ProjectionOrdinal\" >= 1");
 
                             t.HasCheckConstraint("CK_guest_processing_restrictions_revision", "\"Revision\" >= 0");
+
+                            t.HasCheckConstraint("CK_guest_processing_restrictions_transition_timestamp", "\"LastTransitionAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
                         });
                 });
 
@@ -767,8 +851,6 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
-
                     b.HasIndex("ScopeId", "IdempotencyKey")
                         .IsUnique();
 
@@ -776,9 +858,18 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasIndex("ScopeId", "PropertyId", "GuestId", "CompletedAtUtc");
 
+                    b.HasIndex("ScopeId", "RestrictionId", "PropertyId", "GuestId")
+                        .HasDatabaseName("IX_guest_processing_restriction_receipts_restriction_evidence");
+
                     b.ToTable("guest_processing_restriction_receipts", "guests", t =>
                         {
-                            t.HasCheckConstraint("CK_guest_processing_restriction_receipts_versions", "\"ApprovalRevision\" >= 1 AND \"SelectedGuestVersion\" >= 1 AND \"ResultingProjectionRevision\" >= 1 AND ((\"Action\" = 1 AND \"ResultingRestrictionVersion\" = 1 AND \"EffectiveRestricted\") OR (\"Action\" = 2 AND \"ResultingRestrictionVersion\" >= 2))");
+                            t.HasCheckConstraint("CK_guest_processing_restriction_receipts_audit_text", "length(trim(\"ActorId\")) > 0 AND \"ActorId\" = trim(\"ActorId\")");
+
+                            t.HasCheckConstraint("CK_guest_processing_restriction_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"IdempotencyKey\" <> '00000000-0000-0000-0000-000000000000' AND \"RestrictionId\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND \"CaseId\" <> '00000000-0000-0000-0000-000000000000' AND \"EventId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
+                            t.HasCheckConstraint("CK_guest_processing_restriction_receipts_timestamp", "\"CompletedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
+
+                            t.HasCheckConstraint("CK_guest_processing_restriction_receipts_versions", "\"ApprovalRevision\" >= 1 AND \"SelectedGuestVersion\" >= 1 AND \"ResultingProjectionRevision\" >= 1 AND ((\"Action\" = 1 AND \"ResultingRestrictionVersion\" = 1 AND \"EffectiveRestricted\") OR (\"Action\" = 2 AND \"ResultingRestrictionVersion\" = 2))");
                         });
                 });
 
@@ -837,27 +928,36 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<long>("SelectedGuestVersion")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("TimeZoneCatalogVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
+                    b.HasIndex("ScopeId", "EventId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_retention_receipts_event");
+
+                    b.HasIndex("ScopeId", "ExecutionId")
+                        .HasDatabaseName("IX_guest_retention_receipts_execution");
 
                     b.HasIndex("ScopeId", "GuestId")
-                        .IsUnique();
-
-                    b.HasIndex("ScopeId", "ExecutionId", "GuestId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_retention_receipts_guest");
 
                     b.ToTable("guest_retention_anonymisation_receipts", "guests", t =>
                         {
-                            t.HasCheckConstraint("CK_guest_retention_receipts_actor", "length(trim(\"ActorId\")) > 0");
+                            t.HasCheckConstraint("CK_guest_retention_receipts_actor", "\"ActorId\" = 'system:retention'");
 
-                            t.HasCheckConstraint("CK_guest_retention_receipts_contract", "\"ContractVersion\" = 1");
+                            t.HasCheckConstraint("CK_guest_retention_receipts_contract", "\"ContractVersion\" BETWEEN 1 AND 2 AND ((\"ContractVersion\" = 1 AND \"TimeZoneCatalogVersion\" IS NULL) OR (\"ContractVersion\" = 2 AND char_length(\"TimeZoneCatalogVersion\") > 0 AND \"TimeZoneCatalogVersion\" = btrim(\"TimeZoneCatalogVersion\") AND \"TimeZoneCatalogVersion\" !~ '[[:cntrl:]]'))");
 
-                            t.HasCheckConstraint("CK_guest_retention_receipts_deadline", "\"CompletedAtUtc\" >= \"RetentionDeadlineUtc\"");
+                            t.HasCheckConstraint("CK_guest_retention_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"ExecutionId\" <> '00000000-0000-0000-0000-000000000000' AND \"GuestId\" <> '00000000-0000-0000-0000-000000000000' AND \"EventId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
 
-                            t.HasCheckConstraint("CK_guest_retention_receipts_digests", "char_length(\"PolicySetSha256\") = 64 AND char_length(\"CanonicalSha256\") = 64");
+                            t.HasCheckConstraint("CK_guest_retention_receipts_digests", "char_length(\"PolicySetSha256\") = 64 AND \"PolicySetSha256\" ~ '^[0-9a-f]+$' AND char_length(\"CanonicalSha256\") = 64 AND \"CanonicalSha256\" ~ '^[0-9a-f]+$'");
 
                             t.HasCheckConstraint("CK_guest_retention_receipts_properties", "\"AffectedPropertyCount\" BETWEEN 1 AND 256");
+
+                            t.HasCheckConstraint("CK_guest_retention_receipts_timestamps", "\"RetentionDeadlineUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00' AND \"CompletedAtUtc\" >= \"RetentionDeadlineUtc\"");
 
                             t.HasCheckConstraint("CK_guest_retention_receipts_versions", "\"SelectedGuestVersion\" >= 1 AND \"ResultingGuestVersion\" = \"SelectedGuestVersion\" + 1");
                         });
@@ -922,21 +1022,26 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ScopeId", "DataClassKey", "CompletedAtUtc", "Id");
+                    b.HasIndex("ScopeId", "DataClassKey", "CompletedAtUtc", "Id")
+                        .HasDatabaseName("IX_guest_retention_executions_history");
 
                     b.ToTable("guest_retention_executions", "guests", t =>
                         {
+                            t.HasCheckConstraint("CK_guest_retention_executions_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
                             t.HasCheckConstraint("CK_guest_retention_executions_counts", "\"AffectedCount\" >= 0 AND (\"ScannedCount\" IS NULL OR \"ScannedCount\" >= 0) AND (\"RemainingCount\" IS NULL OR \"RemainingCount\" >= 0) AND (\"ScannedCount\" IS NULL OR \"AffectedCount\" <= \"ScannedCount\")");
 
                             t.HasCheckConstraint("CK_guest_retention_executions_cursor", "\"StartingProjectionOrdinal\" >= 0");
 
-                            t.HasCheckConstraint("CK_guest_retention_executions_key", "length(trim(\"DataClassKey\")) > 0");
+                            t.HasCheckConstraint("CK_guest_retention_executions_key", "\"DataClassKey\" ~ '^[a-z0-9.-]+$'");
 
-                            t.HasCheckConstraint("CK_guest_retention_executions_policy", "\"ExecutionPolicyVersion\" >= 1 AND \"Attempt\" >= 1 AND \"DeadlineUtc\" > \"StartedAtUtc\"");
+                            t.HasCheckConstraint("CK_guest_retention_executions_policy", "\"ExecutionPolicyVersion\" >= 1 AND \"Attempt\" >= 1 AND \"DeadlineUtc\" > \"StartedAtUtc\" AND (\"State\" <> 1 OR \"ExecutionPolicyVersion\" >= 2)");
 
-                            t.HasCheckConstraint("CK_guest_retention_executions_state", "(\"State\" = 1 AND \"CompletedAtUtc\" IS NULL AND \"ScannedCount\" IS NULL AND \"RemainingCount\" IS NULL AND \"OutcomeCode\" IS NULL AND \"HoldReviewDueAtUtc\" IS NULL) OR (\"State\" IN (2, 3, 4) AND \"CompletedAtUtc\" BETWEEN \"StartedAtUtc\" AND \"DeadlineUtc\" AND \"ScannedCount\" IS NOT NULL AND \"RemainingCount\" IS NOT NULL AND length(trim(\"OutcomeCode\")) > 0 AND ((\"State\" = 3 AND \"HoldReviewDueAtUtc\" IS NOT NULL) OR (\"State\" <> 3 AND \"HoldReviewDueAtUtc\" IS NULL)))");
+                            t.HasCheckConstraint("CK_guest_retention_executions_state", "(\"State\" = 1 AND \"CompletedAtUtc\" IS NULL AND \"ScannedCount\" IS NULL AND \"RemainingCount\" IS NULL AND \"OutcomeCode\" IS NULL AND \"HoldReviewDueAtUtc\" IS NULL) OR (\"State\" IN (2, 3, 4) AND \"CompletedAtUtc\" BETWEEN \"StartedAtUtc\" AND \"DeadlineUtc\" AND \"ScannedCount\" IS NOT NULL AND \"RemainingCount\" IS NOT NULL AND \"OutcomeCode\" ~ '^[A-Za-z0-9.-]+$' AND ((\"State\" = 3 AND \"HoldReviewDueAtUtc\" IS NOT NULL) OR (\"State\" <> 3 AND \"HoldReviewDueAtUtc\" IS NULL)))");
 
-                            t.HasCheckConstraint("CK_guest_retention_executions_version", "\"Version\" >= 1");
+                            t.HasCheckConstraint("CK_guest_retention_executions_timestamp", "\"StartedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
+
+                            t.HasCheckConstraint("CK_guest_retention_executions_version", "\"Version\" >= 1 AND (\"State\" = 1 OR \"Version\" >= 2)");
                         });
                 });
 
@@ -971,16 +1076,26 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
-
                     b.HasIndex("ScopeId", "DataClassKey")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_retention_checkpoints_data_class");
+
+                    b.HasIndex("ScopeId", "LastExecutionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_guest_retention_checkpoints_last_execution")
+                        .HasFilter("\"LastExecutionId\" IS NOT NULL");
 
                     b.ToTable("guest_retention_sweep_checkpoints", "guests", t =>
                         {
+                            t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
                             t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_cursor", "\"AfterProjectionOrdinal\" >= 0");
 
-                            t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_key", "length(trim(\"DataClassKey\")) > 0");
+                            t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_key", "\"DataClassKey\" ~ '^[a-z0-9.-]+$'");
+
+                            t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_lifecycle", "(\"LastExecutionId\" IS NULL AND ((\"Version\" = 1 AND \"AfterProjectionOrdinal\" = 0) OR \"Version\" >= 3)) OR (\"LastExecutionId\" IS NOT NULL AND \"LastExecutionId\" <> '00000000-0000-0000-0000-000000000000' AND \"Version\" >= 2)");
+
+                            t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_timestamp", "\"UpdatedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
 
                             t.HasCheckConstraint("CK_guest_retention_sweep_checkpoints_version", "\"Version\" >= 1");
                         });
@@ -1043,6 +1158,10 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CanonicalTimeZoneId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<bool>("IsKnown")
                         .HasColumnType("boolean");
 
@@ -1062,9 +1181,22 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TimeZoneCatalogVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("TimeZoneEvidenceSource")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("TimeZoneEvidenceSourceVersion")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("TimeZoneId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<int>("TimeZoneStatus")
+                        .HasColumnType("integer");
 
                     b.Property<long>("TopologySourceVersion")
                         .IsConcurrencyToken()
@@ -1080,7 +1212,11 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
 
                             t.HasCheckConstraint("CK_guests_property_projection_processing_status", "\"ProcessingStatus\" BETWEEN 1 AND 3");
 
-                            t.HasCheckConstraint("CK_guests_property_projection_versions", "\"TopologySourceVersion\" >= 0 AND \"PolicySourceVersion\" >= 0");
+                            t.HasCheckConstraint("CK_guests_property_projection_time_zone_evidence", "(\"TimeZoneEvidenceSource\" = 0 AND \"TimeZoneStatus\" = 0 AND \"CanonicalTimeZoneId\" IS NULL AND \"TimeZoneCatalogVersion\" IS NULL AND \"TimeZoneEvidenceSourceVersion\" = 0) OR (\"TimeZoneEvidenceSource\" = 1 AND \"TimeZoneStatus\" = 0 AND \"CanonicalTimeZoneId\" IS NULL AND \"TimeZoneCatalogVersion\" IS NULL) OR (\"TimeZoneEvidenceSource\" IN (2, 4) AND \"TimeZoneId\" IS NOT NULL AND \"TimeZoneEvidenceSourceVersion\" >= 1 AND ((\"TimeZoneStatus\" = 1 AND \"CanonicalTimeZoneId\" = \"TimeZoneId\" AND \"TimeZoneCatalogVersion\" IS NOT NULL) OR (\"TimeZoneStatus\" = 2 AND \"CanonicalTimeZoneId\" IS NOT NULL AND \"CanonicalTimeZoneId\" <> \"TimeZoneId\" AND \"TimeZoneCatalogVersion\" IS NOT NULL) OR (\"TimeZoneStatus\" IN (3, 4, 5) AND \"CanonicalTimeZoneId\" IS NULL AND \"TimeZoneCatalogVersion\" IS NULL))) OR (\"TimeZoneEvidenceSource\" = 3 AND \"TimeZoneStatus\" = 1 AND \"TimeZoneId\" IS NOT NULL AND \"CanonicalTimeZoneId\" = \"TimeZoneId\" AND \"TimeZoneCatalogVersion\" IS NOT NULL AND \"TimeZoneEvidenceSourceVersion\" >= 1)");
+
+                            t.HasCheckConstraint("CK_guests_property_projection_time_zone_text", "\"TimeZoneEvidenceSource\" NOT IN (2, 3, 4) OR (char_length(\"TimeZoneId\") > 0 AND \"TimeZoneId\" = btrim(\"TimeZoneId\") AND \"TimeZoneId\" !~ '[[:cntrl:]]' AND (\"CanonicalTimeZoneId\" IS NULL OR (char_length(\"CanonicalTimeZoneId\") > 0 AND \"CanonicalTimeZoneId\" = btrim(\"CanonicalTimeZoneId\") AND \"CanonicalTimeZoneId\" !~ '[[:cntrl:]]')) AND (\"TimeZoneCatalogVersion\" IS NULL OR (char_length(\"TimeZoneCatalogVersion\") > 0 AND \"TimeZoneCatalogVersion\" = btrim(\"TimeZoneCatalogVersion\") AND \"TimeZoneCatalogVersion\" !~ '[[:cntrl:]]')))");
+
+                            t.HasCheckConstraint("CK_guests_property_projection_versions", "\"TopologySourceVersion\" >= 0 AND \"PolicySourceVersion\" >= 0 AND \"TimeZoneEvidenceSourceVersion\" >= 0");
                         });
                 });
 
@@ -1529,7 +1665,8 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         .HasForeignKey("ScopeId", "GuestId")
                         .HasPrincipalKey("ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_anonymisation_receipts_guest_profile");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Guests.Domain.DataRights.GuestAnonymisationRestoreReceipt", b =>
@@ -1539,7 +1676,8 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         .HasForeignKey("ScopeId", "GuestId")
                         .HasPrincipalKey("ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_anonymisation_restore_receipts_tombstone");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Guests.Domain.DataRights.GuestAnonymisationTombstone", b =>
@@ -1549,17 +1687,51 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         .HasForeignKey("BunkFy.Modules.Guests.Domain.DataRights.GuestAnonymisationTombstone", "ScopeId", "Id")
                         .HasPrincipalKey("BunkFy.Modules.Guests.Domain.Aggregates.GuestProfile", "ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_anonymisation_tombstones_guest_profile");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Guests.Domain.DataRights.GuestDataHoldReceipt", b =>
                 {
                     b.HasOne("BunkFy.Modules.Guests.Domain.DataRights.GuestDataHold", null)
                         .WithMany()
-                        .HasForeignKey("ScopeId", "HoldId")
+                        .HasForeignKey("ScopeId", "HoldId", "PropertyId", "GuestId", "ReasonCode")
+                        .HasPrincipalKey("ScopeId", "Id", "PropertyId", "GuestId", "ReasonCode")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_data_hold_receipts_hold_evidence");
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Guests.Domain.DataRights.GuestDataRightsCorrectionReceipt", b =>
+                {
+                    b.HasOne("BunkFy.Modules.Guests.Domain.Aggregates.GuestProfile", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "GuestId")
                         .HasPrincipalKey("ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_data_rights_correction_receipts_guest_profile");
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Guests.Domain.DataRights.GuestProcessingRestriction", b =>
+                {
+                    b.HasOne("BunkFy.Modules.Guests.Domain.DataRights.GuestProcessingRestrictionProjection", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "PropertyId", "GuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_processing_restrictions_effective_projection");
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Guests.Domain.DataRights.GuestProcessingRestrictionReceipt", b =>
+                {
+                    b.HasOne("BunkFy.Modules.Guests.Domain.DataRights.GuestProcessingRestriction", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "RestrictionId", "PropertyId", "GuestId")
+                        .HasPrincipalKey("ScopeId", "Id", "PropertyId", "GuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_processing_restriction_receipts_restriction_evidence");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Guests.Domain.Retention.GuestRetentionAnonymisationReceipt", b =>
@@ -1569,14 +1741,24 @@ namespace BunkFy.Modules.Guests.Persistence.PostgreSqlMigrations.Migrations
                         .HasForeignKey("ScopeId", "ExecutionId")
                         .HasPrincipalKey("ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_retention_receipts_execution");
 
                     b.HasOne("BunkFy.Modules.Guests.Domain.Aggregates.GuestProfile", null)
                         .WithOne()
                         .HasForeignKey("BunkFy.Modules.Guests.Domain.Retention.GuestRetentionAnonymisationReceipt", "ScopeId", "GuestId")
                         .HasPrincipalKey("BunkFy.Modules.Guests.Domain.Aggregates.GuestProfile", "ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_retention_receipts_guest_profile");
+
+                    b.HasOne("BunkFy.Modules.Guests.Domain.DataRights.GuestAnonymisationTombstone", null)
+                        .WithOne()
+                        .HasForeignKey("BunkFy.Modules.Guests.Domain.Retention.GuestRetentionAnonymisationReceipt", "ScopeId", "GuestId")
+                        .HasPrincipalKey("BunkFy.Modules.Guests.Domain.DataRights.GuestAnonymisationTombstone", "ScopeId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_guest_retention_receipts_tombstone");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Guests.Persistence.GuestManagementOperation", b =>

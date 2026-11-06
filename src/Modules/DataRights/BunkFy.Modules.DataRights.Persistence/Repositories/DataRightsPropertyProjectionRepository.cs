@@ -2,17 +2,27 @@ namespace BunkFy.Modules.DataRights.Persistence.Repositories;
 
 using BunkFy.Modules.DataRights.Application.Ports;
 using BunkFy.Modules.Properties.Contracts;
+using Gma.Framework.Persistence.EntityFrameworkCore;
+using Gma.Framework.Naming;
 using Microsoft.EntityFrameworkCore;
 
 internal sealed class DataRightsPropertyProjectionRepository(DataRightsDbContext dbContext)
     : IDataRightsPropertyProjectionRepository
 {
+    private const string PropertyProjectionLockPrefix =
+        "bunkfy:data-rights:property-projection:";
+
     public async Task ApplyTopologyAsync(
         DataRightsPropertyTopologyWriteModel property,
         CancellationToken cancellationToken)
     {
+        string scopeId = this.RequireCurrentScope(property.ScopeId, property.PropertyId);
+        await this.AcquirePropertyProjectionLockAsync(
+            scopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         DataRightsPropertyProjection current = await this.GetOrCreateAsync(
-            property.ScopeId,
+            scopeId,
             property.PropertyId,
             cancellationToken).ConfigureAwait(false);
         current.ApplyTopology(
@@ -26,8 +36,13 @@ internal sealed class DataRightsPropertyProjectionRepository(DataRightsDbContext
         DataRightsPropertyPolicyWriteModel property,
         CancellationToken cancellationToken)
     {
+        string scopeId = this.RequireCurrentScope(property.ScopeId, property.PropertyId);
+        await this.AcquirePropertyProjectionLockAsync(
+            scopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         DataRightsPropertyProjection current = await this.GetOrCreateAsync(
-            property.ScopeId,
+            scopeId,
             property.PropertyId,
             cancellationToken).ConfigureAwait(false);
         current.ApplyPolicy(
@@ -40,6 +55,7 @@ internal sealed class DataRightsPropertyProjectionRepository(DataRightsDbContext
         Guid propertyId,
         CancellationToken cancellationToken)
     {
+        _ = this.RequireCurrentScope(dbContext.CurrentScopeId, propertyId);
         DataRightsPropertyProjection? property = await dbContext.PropertyProjections
             .AsNoTracking()
             .Include(item => item.GovernancePolicy)
@@ -82,6 +98,56 @@ internal sealed class DataRightsPropertyProjectionRepository(DataRightsDbContext
             0);
         dbContext.PropertyProjections.Add(current);
         return current;
+    }
+
+    private async Task AcquirePropertyProjectionLockAsync(
+        string scopeId,
+        Guid propertyId,
+        CancellationToken cancellationToken)
+    {
+        if (!dbContext.Database.IsRelational())
+        {
+            return;
+        }
+
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                "A Data Rights property projection lock requires an active database transaction.");
+        }
+
+        await EfTransactionKeyLock.AcquireAsync(
+            dbContext,
+            PropertyProjectionLockPrefix + scopeId + ':' + propertyId.ToString("N"),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private string RequireCurrentScope(string tenantId, Guid propertyId)
+    {
+        string scopeId;
+        try
+        {
+            scopeId = TenantIds.Normalize(tenantId);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidOperationException(
+                "A Data Rights property projection requires valid scoped coordinates.",
+                exception);
+        }
+
+        if (propertyId == Guid.Empty ||
+            !dbContext.ScopeFilterEnabled ||
+            !string.Equals(
+                scopeId,
+                dbContext.CurrentScopeId,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A Data Rights property projection requires valid scoped coordinates.");
+        }
+
+        return scopeId;
     }
 
     private static PropertyGovernancePolicyBinding? MapPolicy(

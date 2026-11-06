@@ -1,8 +1,8 @@
 namespace BunkFy.Modules.Retention.AdminApi;
 
-using System.Security.Claims;
 using BunkFy.Modules.Retention.Admin.Contracts;
 using BunkFy.Modules.Retention.Application;
+using BunkFy.Modules.Retention.Application.Commands;
 using BunkFy.Modules.Retention.Application.Errors;
 using BunkFy.Modules.Retention.Application.Queries;
 using BunkFy.Modules.Retention.Contracts;
@@ -15,9 +15,7 @@ using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Pagination;
 using Gma.Framework.Results;
-using Gma.Framework.Tasks;
 using Gma.Framework.Tenancy;
-using Gma.Modules.TaskRuntime.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -72,8 +70,7 @@ public sealed class RetentionAdminApiModule : IAdminApiModule
             RetryRetentionRunRequest request,
             HttpContext context,
             AdminApiExecutor executor,
-            ITaskRunReader taskRunReader,
-            ITaskRunController taskRunController,
+            IRequestDispatcher dispatcher,
             ITenantContext tenantContext,
             CancellationToken cancellationToken) =>
             await executor.ExecuteAsync(
@@ -83,65 +80,24 @@ public sealed class RetentionAdminApiModule : IAdminApiModule
                     RetentionAdminPermissions.Retry),
                 requireTenant: true,
                 token => request.Confirmed
-                    ? RetryAsync(
-                        runId,
-                        request.ScheduledAtUtc,
-                        Actor(context),
-                        tenantContext.TenantId,
-                        taskRunReader,
-                        taskRunController,
+                    ? dispatcher.SendAsync(
+                        new RequestRetentionRunRetryCommand(
+                            runId,
+                            tenantContext.TenantId ?? string.Empty,
+                            request.ScheduledAtUtc),
                         token)
                     : Task.FromResult(
                         Result.Failure<RetentionRunRetryReceiptDto>(
                             AdminErrors.ConfirmationRequired)),
                 cancellationToken,
+                onSuccess: receipt => Results.Accepted(value: receipt),
                 errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false))
-            .Produces<RetentionRunRetryReceiptDto>(StatusCodes.Status200OK);
-    }
-
-    private static async Task<Result<RetentionRunRetryReceiptDto>> RetryAsync(
-        Guid runId,
-        DateTimeOffset? scheduledAtUtc,
-        string actor,
-        string? tenantId,
-        ITaskRunReader taskRunReader,
-        ITaskRunController taskRunController,
-        CancellationToken cancellationToken)
-    {
-        Result<TaskRunDetails> loaded = await taskRunReader.GetAsync(
-            runId,
-            cancellationToken).ConfigureAwait(false);
-        if (loaded.IsFailure)
-        {
-            return Result.Failure<RetentionRunRetryReceiptDto>(loaded.Error);
-        }
-
-        TaskRunSummary run = loaded.Value.Summary;
-        if (string.IsNullOrWhiteSpace(tenantId) ||
-            !string.Equals(run.ScopeId, tenantId, StringComparison.Ordinal) ||
-            !string.Equals(
-                run.ModuleName,
-                RetentionModuleMetadata.Name,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                run.TaskName,
-                ExecuteRetentionSchedulePayload.TaskName,
-                StringComparison.Ordinal))
-        {
-            return Result.Failure<RetentionRunRetryReceiptDto>(
-                RetentionApplicationErrors.TaskRunUnavailable);
-        }
-
-        Result retried = await taskRunController.RetryAsync(
-            runId,
-            actor,
-            scheduledAtUtc,
-            cancellationToken).ConfigureAwait(false);
-        return retried.IsFailure
-            ? Result.Failure<RetentionRunRetryReceiptDto>(retried.Error)
-            : Result.Success(new RetentionRunRetryReceiptDto(
-                runId,
-                scheduledAtUtc));
+            .Produces<RetentionRunRetryReceiptDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status423Locked)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
     }
 
     private static async ValueTask<object?> SensitiveResponseFilter(
@@ -165,26 +121,17 @@ public sealed class RetentionAdminApiModule : IAdminApiModule
                 RetentionApplicationErrors.TaskRunUnavailable.Code,
                 StatusCodes.Status404NotFound),
             new(
-                TaskRuntimeOperationErrors.RunNotFound.Code,
-                StatusCodes.Status404NotFound),
-            new(
-                TaskRuntimeOperationErrors.RunCannotBeRetried.Code,
+                RetentionApplicationErrors.ScheduleRetryEvidenceChanged.Code,
                 StatusCodes.Status409Conflict),
             new(
-                TaskRuntimeOperationErrors.ConcurrentMutation.Code,
+                "Retention.RecoveryTransitionInvalid",
                 StatusCodes.Status409Conflict),
             new(
-                TaskRuntimeOperationErrors.ScopeClosed.Code,
-                StatusCodes.Status423Locked));
-
-    private static string Actor(HttpContext context)
-    {
-        string identity = context.User.FindFirst("sub")?.Value
-            ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? context.User.Identity?.Name
-            ?? $"authenticated:{context.User.Identity?.AuthenticationType ?? "unknown"}";
-        return $"admin-api:{identity}";
-    }
+                RetentionApplicationErrors.WorkspaceProcessingRestricted.Code,
+                StatusCodes.Status423Locked),
+            new(
+                RetentionApplicationErrors.WorkspaceProcessingAdmissionUnavailable.Code,
+                StatusCodes.Status503ServiceUnavailable));
 
     public sealed record RetryRetentionRunRequest(
         bool Confirmed,

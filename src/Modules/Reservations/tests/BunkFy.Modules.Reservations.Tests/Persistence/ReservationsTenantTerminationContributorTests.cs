@@ -9,6 +9,7 @@ using BunkFy.Modules.Reservations.Domain.DataRights;
 using BunkFy.Modules.Reservations.Domain.GuestRecords;
 using BunkFy.Modules.Reservations.Domain.Models;
 using BunkFy.Modules.Reservations.Domain.Retention;
+using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using BunkFy.Modules.Reservations.Persistence;
 using BunkFy.Modules.Reservations.Persistence.Repositories;
 using BunkFy.Modules.Reservations.Persistence.TenantTermination;
@@ -39,6 +40,8 @@ public sealed class ReservationsTenantTerminationContributorTests
         Guid.Parse("50000000-0000-0000-0000-000000000001");
     private static readonly Guid OtherPropertyId =
         Guid.Parse("50000000-0000-0000-0000-000000000002");
+    private static readonly Guid StayInventoryRequestId =
+        Guid.Parse("90000000-0000-0000-0000-000000000001");
     private static readonly DateTimeOffset Now =
         ReservationsTenantTerminationTestData.Now;
     private static readonly DateTimeOffset FrozenAtUtc =
@@ -95,6 +98,18 @@ public sealed class ReservationsTenantTerminationContributorTests
                     "reservations.staff-attribution")
                 .GetProperty("lastDetailsActorId")
                 .GetString() == "user:owner");
+        DataRightsExportRecord pendingReservation = Assert.Single(
+            first.Records,
+            record => record.RecordType ==
+                    ReservationsTenantTerminationMetadata.ReservationRecordType &&
+                Field(record, "reservations.booking-state")
+                    .GetProperty("pendingInventoryAmendmentRequestId")
+                    .ValueKind != JsonValueKind.Null);
+        Assert.Equal(
+            StayInventoryRequestId,
+            Field(pendingReservation, "reservations.booking-state")
+                .GetProperty("pendingInventoryAmendmentRequestId")
+                .GetGuid());
         DataRightsExportRecord managementOperation = Assert.Single(
             first.Records,
             record => record.RecordType ==
@@ -111,11 +126,36 @@ public sealed class ReservationsTenantTerminationContributorTests
                 managementReservationId,
                 managementOperationId.ToString("N")),
             managementOperation.RecordId);
-        Assert.Equal(3, managementOperation.RecordVersion);
+        Assert.Equal(5, managementOperation.RecordVersion);
+        Assert.Equal(JsonValueKind.Null, Field(managementOperation, "reservations.staff-attribution").ValueKind);
         Assert.Equal(
             Digest,
             Field(managementOperation, "reservations.management-operation")
                 .GetProperty("requestFingerprint")
+                .GetString());
+        DataRightsExportRecord stayAmendmentOperation = Assert.Single(
+            first.Records,
+            record => record.RecordType ==
+                ReservationsTenantTerminationMetadata
+                    .StayAmendmentOperationRecordType);
+        Assert.Equal(
+            "pending",
+            Field(
+                    stayAmendmentOperation,
+                    "reservations.stay-amendment-operation")
+                .GetProperty("outcome")
+                .GetString());
+        Assert.Equal(
+            StayInventoryRequestId,
+            Field(
+                    stayAmendmentOperation,
+                    "reservations.stay-amendment-operation")
+                .GetProperty("inventoryRequestId")
+                .GetGuid());
+        Assert.Equal(
+            "user:stay-operator",
+            Field(stayAmendmentOperation, "reservations.staff-attribution")
+                .GetProperty("requestedBy")
                 .GetString());
         DataRightsExportRecord guestRecordLinkProcess = Assert.Single(
             first.Records,
@@ -134,6 +174,11 @@ public sealed class ReservationsTenantTerminationContributorTests
         Assert.Equal(
             ReservationsTenantTerminationMetadata.ExportSchemaId,
             contributor.ExportDescriptor.ExportSchemaId);
+        Assert.Equal(8, contributor.ExportDescriptor.CatalogVersion);
+        Assert.Equal(10, contributor.ExportDescriptor.ExportSchemaVersion);
+        Assert.Equal(
+            24,
+            ReservationsTenantTerminationMetadata.PersonalDataCatalogVersion);
         Assert.Equal(
             ReservationsTenantTerminationMetadata.ExportFieldIds
                 .OrderBy(field => field, StringComparer.Ordinal),
@@ -150,6 +195,112 @@ public sealed class ReservationsTenantTerminationContributorTests
         Assert.Equal(
             first.Records.Select(Identity).ToArray(),
             replay.Records.Select(Identity).ToArray());
+    }
+
+    [Fact]
+    public async Task Tenant_export_disambiguates_reservation_local_stay_amendment_ids_and_preserves_unknowns()
+    {
+        MutableFenceReader fences = new();
+        await using ReservationsDbContext context = CreateContext(fences);
+        Reservation pendingReservation =
+            ReservationsTenantTerminationTestData.CreateReservation(
+                PropertyId,
+                "Pending Guest");
+        Reservation unknownReservation =
+            ReservationsTenantTerminationTestData.CreateReservation(
+                OtherPropertyId,
+                "Legacy Guest");
+        Guid sharedOperationId = Guid.NewGuid();
+        Guid pendingInventoryRequestId = Guid.NewGuid();
+        AddStayAmendmentOperation(
+            context,
+            pendingReservation,
+            sharedOperationId,
+            pendingInventoryRequestId,
+            outcomeUnknown: false);
+        AddStayAmendmentOperation(
+            context,
+            unknownReservation,
+            sharedOperationId,
+            inventoryRequestId: null,
+            outcomeUnknown: true);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        fences.Current = FrozenFence();
+        ReservationsTenantTerminationContributor contributor = new(
+            context,
+            new TestScopeContext(),
+            new TestClock(),
+            fences);
+        CollectingSink sink = new();
+
+        TenantTerminationContributionResult result = await contributor
+            .ExportAsync(Request(), sink, CancellationToken.None);
+
+        Assert.Equal(TenantTerminationContributionStatus.Completed, result.Status);
+        DataRightsExportRecord[] records = sink.Records
+            .Where(record => record.RecordType ==
+                ReservationsTenantTerminationMetadata
+                    .StayAmendmentOperationRecordType)
+            .ToArray();
+        Assert.Equal(2, records.Length);
+        Guid[] expectedReservationOrder =
+        [pendingReservation.Id, unknownReservation.Id];
+        Array.Sort(expectedReservationOrder);
+        Assert.Equal(
+            expectedReservationOrder,
+            records
+                .Select(record =>
+                    Field(record, "reservations.reservation-id").GetGuid())
+                .ToArray());
+        Assert.Equal(
+            expectedReservationOrder
+                .Select(reservationId =>
+                    DataRightsExportRecordIds.CreateDeterministicChild(
+                        reservationId,
+                        sharedOperationId.ToString("N")))
+                .ToArray(),
+            records.Select(record => record.RecordId).ToArray());
+        Assert.Equal(2, records.Select(record => record.RecordId).Distinct().Count());
+        Assert.All(
+            records,
+            record => Assert.Equal(
+                sharedOperationId,
+                Field(record, "reservations.record-id").GetGuid()));
+        DataRightsExportRecord pending = Assert.Single(
+            records,
+            record => Field(
+                    record,
+                    "reservations.stay-amendment-operation")
+                .GetProperty("outcome")
+                .GetString() == "pending");
+        Assert.Equal(
+            pendingInventoryRequestId,
+            Field(pending, "reservations.stay-amendment-operation")
+                .GetProperty("inventoryRequestId")
+                .GetGuid());
+        DataRightsExportRecord unknown = Assert.Single(
+            records,
+            record => Field(
+                    record,
+                    "reservations.stay-amendment-operation")
+                .GetProperty("outcome")
+                .GetString() == "outcome-unknown");
+        JsonElement unknownState = Field(
+            unknown,
+            "reservations.stay-amendment-operation");
+        Assert.Equal(JsonValueKind.Null, unknownState.GetProperty("targetArrival").ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            unknownState.GetProperty("targetInventoryUnitIds").ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            unknownState.GetProperty("inventoryRequestId").ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            Field(unknown, "reservations.staff-attribution")
+                .GetProperty("requestedBy")
+                .ValueKind);
     }
 
     [Fact]
@@ -399,6 +550,56 @@ public sealed class ReservationsTenantTerminationContributorTests
     }
 
     [Fact]
+    public async Task Destroy_counts_stay_amendment_child_separately_from_its_parent()
+    {
+        MutableFenceReader fences = new();
+        await using ReservationsDbContext context = CreateContext(fences);
+        Reservation reservation =
+            ReservationsTenantTerminationTestData.CreateReservation(
+                PropertyId,
+                "Destroy Guest");
+        reservation.ClearDomainEvents();
+        AddStayAmendmentOperation(
+            context,
+            reservation,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            outcomeUnknown: false);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        fences.Current = FrozenFence();
+        ReservationsTenantTerminationContributor contributor = new(
+            context,
+            new TestScopeContext(),
+            new TestClock(Now.AddHours(1)),
+            fences);
+        TenantTerminationContributionRequest request = DestroyRequest();
+
+        TenantTerminationContributionResult result = await contributor
+            .ExecuteAsync(request, CancellationToken.None);
+        for (int attempt = 1;
+             result.Status == TenantTerminationContributionStatus.RetryRequired &&
+             attempt < 100;
+             attempt++)
+        {
+            result = await contributor.ExecuteAsync(
+                request,
+                CancellationToken.None);
+        }
+
+        Assert.Equal(TenantTerminationContributionStatus.Completed, result.Status);
+        Assert.Equal(4, result.AffectedCount);
+        Assert.Equal(
+            result.AffectedCount,
+            (await context.TenantDestroyReceipts.SingleAsync())
+                .RemovedRecordCount);
+        Assert.Empty(await context.StayAmendmentOperations.ToListAsync());
+        Assert.Empty(await context.ManagementOperations.ToListAsync());
+        Assert.Empty(await context.RequestedInventoryUnits.ToListAsync());
+        Assert.Empty(await context.Reservations.ToListAsync());
+    }
+
+    [Fact]
     public void Destroy_progress_rejects_a_batch_above_the_persisted_bound()
     {
         ReservationsTenantDestroyOperation operation = Assert.IsType<
@@ -455,6 +656,7 @@ public sealed class ReservationsTenantTerminationContributorTests
         Guid externalOperationId = Guid.NewGuid();
         Assert.True(reservation.BeginAllocationAmendment(
             Guid.NewGuid(),
+            StayInventoryRequestId,
             new string('a', Reservation.RequestFingerprintLength),
             reservation.Arrival,
             reservation.Departure.AddDays(1),
@@ -518,18 +720,38 @@ public sealed class ReservationsTenantTerminationContributorTests
                 reservation.Version,
                 ErrorCode: null,
                 Now.AddMinutes(4))));
+        Guid stayAmendmentOperationId = Guid.NewGuid();
         context.ManagementOperations.Add(new ReservationManagementOperation(
             new ReservationManagementOperationRecord(
-                Guid.NewGuid(),
+                stayAmendmentOperationId,
                 TenantId,
                 PropertyId,
                 reservation.Id,
-                ReservationManagementOperationKind.InventoryAmendment,
+                ReservationManagementOperationKind.StayAmendment,
                 ExpectedVersion: null,
                 reservation.DetailsRevision,
                 BusinessDate: null,
                 Now.AddMinutes(5),
                 Digest)));
+        context.StayAmendmentOperations.Add(
+            ReservationStayAmendmentOperation.CreatePending(
+                stayAmendmentOperationId,
+                TenantId,
+                PropertyId,
+                reservation.Id,
+                StayInventoryRequestId,
+                ReservationStayAmendmentOperation.CurrentRequestSchemaVersion,
+                Digest,
+                reservation.Arrival,
+                reservation.Departure.AddDays(1),
+                reservation.ExpectedArrivalTime,
+                reservation.ExpectedDepartureTime,
+                reservation.RequestedUnits
+                    .Select(unit => unit.InventoryUnitId)
+                    .ToArray(),
+                reservation.DetailsRevision,
+                "user:stay-operator",
+                Now.AddMinutes(5)).Value);
         context.ArrivalReminders.Add(ReservationArrivalReminder.Create(
             Guid.NewGuid(),
             TenantId,
@@ -740,6 +962,57 @@ public sealed class ReservationsTenantTerminationContributorTests
         context.RetentionAnonymisationReceipts.Add(receipt);
     }
 
+    private static void AddStayAmendmentOperation(
+        ReservationsDbContext context,
+        Reservation reservation,
+        Guid operationId,
+        Guid? inventoryRequestId,
+        bool outcomeUnknown)
+    {
+        context.Reservations.Add(reservation);
+        context.ManagementOperations.Add(new ReservationManagementOperation(
+            new ReservationManagementOperationRecord(
+                operationId,
+                TenantId,
+                reservation.PropertyId,
+                reservation.Id,
+                ReservationManagementOperationKind.StayAmendment,
+                ExpectedVersion: null,
+                reservation.DetailsRevision,
+                BusinessDate: null,
+                Now,
+                Digest)));
+        ReservationStayAmendmentOperation operation = outcomeUnknown
+            ? ReservationStayAmendmentOperation.CreateOutcomeUnknown(
+                operationId,
+                TenantId,
+                reservation.PropertyId,
+                reservation.Id,
+                ReservationStayAmendmentOperation.LegacyRequestSchemaVersion,
+                Digest,
+                reservation.DetailsRevision,
+                Now).Value
+            : ReservationStayAmendmentOperation.CreatePending(
+                operationId,
+                TenantId,
+                reservation.PropertyId,
+                reservation.Id,
+                inventoryRequestId!.Value,
+                ReservationStayAmendmentOperation.CurrentRequestSchemaVersion,
+                Digest,
+                reservation.Arrival,
+                reservation.Departure.AddDays(1),
+                reservation.ExpectedArrivalTime,
+                reservation.ExpectedDepartureTime,
+                reservation.RequestedUnits
+                    .Select(unit => unit.InventoryUnitId)
+                    .ToArray(),
+                reservation.DetailsRevision,
+                "user:stay-operator",
+                Now).Value;
+        context.StayAmendmentOperations.Add(operation);
+    }
+
     private static WorkspaceTerminationFenceSnapshot FrozenFence() =>
         new(
             ProcessId,
@@ -804,6 +1077,7 @@ public sealed class ReservationsTenantTerminationContributorTests
         await context.ReservationDetailsHistory.AnyAsync() ||
         await context.ArrivalReminders.AnyAsync() ||
         await context.ExternalOperations.AnyAsync() ||
+        await context.StayAmendmentOperations.AnyAsync() ||
         await context.ManagementOperations.AnyAsync();
 
     private static JsonElement Field(

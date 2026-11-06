@@ -21,6 +21,64 @@ public sealed class
     [DockerFact]
     [Trait("Category", "Docker")]
     [Trait("Category", "Integration")]
+    public async Task Application_lock_preserves_the_committed_tuple_and_serializes_scoped_writers()
+    {
+        await using PostgreSqlContainer postgreSql =
+            new PostgreSqlBuilder("postgres:16-alpine")
+                .WithDatabase("bunkfy_workspace_onboarding_row_lock_tests")
+                .Build();
+        await postgreSql.StartAsync().ConfigureAwait(false);
+        string connectionString = postgreSql.GetConnectionString();
+        WorkspaceStaffOnboarding seeded =
+            await SeedAsync(connectionString).ConfigureAwait(false);
+
+        await using WorkspacesDbContext firstDb = CreateDbContext(connectionString);
+        long committedTuple = await firstDb.Database.SqlQuery<long>($"""
+                SELECT xmin::text::bigint AS "Value"
+                FROM workspaces.staff_onboarding_applications
+                WHERE "Id" = {seeded.Id} AND "ScopeId" = {TenantId}
+                """).SingleAsync().ConfigureAwait(false);
+        await using IDbContextTransaction firstTransaction =
+            await firstDb.Database.BeginTransactionAsync().ConfigureAwait(false);
+        Assert.True(await new WorkspaceStaffOnboardingOperationLock(firstDb)
+            .TryAcquireAsync(seeded.Id, CancellationToken.None).ConfigureAwait(false));
+        long lockedTuple = await firstDb.Database.SqlQuery<long>($"""
+                SELECT xmin::text::bigint AS "Value"
+                FROM workspaces.staff_onboarding_applications
+                WHERE "Id" = {seeded.Id} AND "ScopeId" = {TenantId}
+                """).SingleAsync().ConfigureAwait(false);
+        Assert.Equal(committedTuple, lockedTuple);
+
+        await using (WorkspacesDbContext otherTenant = CreateDbContext(
+                         connectionString, "tenant-b"))
+        await using (IDbContextTransaction otherTransaction =
+                     await otherTenant.Database.BeginTransactionAsync()
+                         .ConfigureAwait(false))
+        {
+            Assert.False(await new WorkspaceStaffOnboardingOperationLock(otherTenant)
+                .TryAcquireAsync(seeded.Id, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false));
+            await otherTransaction.RollbackAsync().ConfigureAwait(false);
+        }
+
+        await using WorkspacesDbContext waitingDb = CreateDbContext(connectionString);
+        waitingDb.Database.SetCommandTimeout(10);
+        Task<int> waitingWriter = waitingDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE workspaces.staff_onboarding_applications
+            SET "Version" = "Version"
+            WHERE "Id" = {seeded.Id} AND "ScopeId" = {TenantId}
+            """);
+        Task completed = await Task.WhenAny(waitingWriter,
+            Task.Delay(TimeSpan.FromMilliseconds(300))).ConfigureAwait(false);
+        Assert.NotSame(waitingWriter, completed);
+        await firstTransaction.CommitAsync().ConfigureAwait(false);
+        Assert.Equal(1, await waitingWriter.WaitAsync(TimeSpan.FromSeconds(10))
+            .ConfigureAwait(false));
+    }
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
     public async Task Source_graph_waits_and_reloads_without_blocking_unrelated_coordinates()
     {
         await using PostgreSqlContainer postgreSql =
@@ -205,18 +263,19 @@ public sealed class
             new WorkspaceStaffOnboardingRepository(dbContext));
 
     private static WorkspacesDbContext CreateDbContext(
-        string connectionString) => new(
+        string connectionString,
+        string tenantId = TenantId) => new(
         new DbContextOptionsBuilder<WorkspacesDbContext>()
             .UseNpgsql(
                 connectionString,
                 options => options.MigrationsAssembly(
                     WorkspacesMigrations.PostgreSqlAssembly))
             .Options,
-        new TestScopeContext());
+        new TestScopeContext(tenantId));
 
-    private sealed class TestScopeContext : IScopeContext
+    private sealed class TestScopeContext(string tenantId) : IScopeContext
     {
         public bool IsEnabled => true;
-        public string ScopeId => TenantId;
+        public string ScopeId => tenantId;
     }
 }

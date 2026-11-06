@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Workspaces.Tests;
 
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Workspaces.Application.Contributors;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using BunkFy.Modules.Workspaces.Domain.DataRights;
@@ -71,6 +72,8 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
             [
                 WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
                 WorkspacesDataRightsExportContributor
+                    .StaffOnboardingRecoveryReceiptRecordType,
+                WorkspacesDataRightsExportContributor
                     .StaffDeferredClaimWithdrawalRecordType,
                 WorkspacesDataRightsExportContributor
                     .StaffOnboardingCorrectionReceiptRecordType,
@@ -85,16 +88,19 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 WorkspacesDataRightsExportContributor
                     .StaffAccessPlanPropertyRecordType,
                 WorkspacesDataRightsCoordinates
-                    .StaffRetentionCorrelationReceiptRecordType
+                    .StaffRetentionCorrelationReceiptRecordType,
+                WorkspacesTenantTerminationMetadata
+                    .StaffOnboardingRetentionExecutionRecordType
             ],
             first.Records.Select(record => record.RecordType).ToArray());
-        Assert.Equal(10, result.AffectedCount);
         Assert.DoesNotContain(
             first.Records,
             record => record.RecordType ==
                 WorkspacesTenantTerminationExportContributor
                     .StaffIdentityAnchorSweepCheckpointRecordType);
-        DataRightsExportRecord deferredRecord = first.Records[1];
+        Assert.Equal(12, result.AffectedCount);
+        DataRightsExportRecord deferredRecord = Assert.Single(first.Records, record =>
+            record.RecordType == WorkspacesDataRightsExportContributor.StaffDeferredClaimWithdrawalRecordType);
         Assert.Equal(
             Guid.Parse("61000000-0000-0000-0000-000000000001"),
             deferredRecord.RecordId);
@@ -211,16 +217,18 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         Assert.Equal(
             TenantTerminationContributionStatus.Completed,
             result.Status);
-        Assert.Equal(11, result.AffectedCount);
+        Assert.Equal(13, result.AffectedCount);
         Assert.Equal(
             [
                 WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
+                WorkspacesDataRightsExportContributor
+                    .StaffOnboardingRecoveryReceiptRecordType,
                 WorkspacesTenantTerminationExportContributor
                     .StaffIdentityAnchorSweepCheckpointRecordType,
                 WorkspacesDataRightsExportContributor
                     .StaffDeferredClaimWithdrawalRecordType
             ],
-            first.Records.Take(3)
+            first.Records.Take(4)
                 .Select(record => record.RecordType)
                 .ToArray());
         DataRightsExportRecord exported = Assert.Single(
@@ -546,9 +554,12 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
             Guid.Parse("74000000-0000-0000-0000-000000000001");
         Guid continuationEventId =
             Guid.Parse("75000000-0000-0000-0000-000000000001");
+        Assert.Null(onboarding.StaffMemberId);
         Assert.True(
             onboarding.ObserveInvitationAccepted(
                 FrozenAtUtc.AddHours(-23)).IsSuccess);
+        Assert.True(onboarding.BeginProvisioning(
+            FrozenAtUtc.AddHours(-23).AddMinutes(30)).IsSuccess);
         Assert.True(
             onboarding.MarkStaffReady(
                 staffMemberId,
@@ -737,6 +748,9 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 jobTitle: "Manager",
                 department: "Operations",
                 FrozenAtUtc.AddDays(-1)).Value;
+        Assert.True(onboarding.Fail(
+            "Workspaces.TestInducedFailure",
+            FrozenAtUtc.AddHours(-23)).IsSuccess);
         WorkspaceStaffOnboardingCorrectionReceipt correction =
             WorkspaceStaffOnboardingCorrectionReceipt.Create(
                 Guid.Parse(
@@ -753,6 +767,55 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 Guid.NewGuid(),
                 Guid.NewGuid(),
                 FrozenAtUtc.AddHours(-12)).Value;
+        WorkspaceStaffOnboardingRecoveryReceipt recovery =
+            WorkspaceStaffOnboardingRecoveryReceipt.Create(new(
+                Guid.Parse(
+                    "91000000-0000-0000-0000-000000000001"),
+                TenantId,
+                Guid.Parse(
+                    "92000000-0000-0000-0000-000000000001"),
+                onboarding.Id,
+                sourceId,
+                staffMemberId,
+                WorkspaceStaffOnboardingRecoveryTriggerKind.ManualOperator,
+                Guid.Parse(
+                    "93000000-0000-0000-0000-000000000001"),
+                SubjectId,
+                SubjectId,
+                "recovery-operator",
+                "system:workspace-staff-onboarding",
+                Digest,
+                onboarding.Version,
+                onboarding.Version,
+                onboarding.Status,
+                onboarding.Version,
+                onboarding.Status,
+                Guid.Parse(
+                    "94000000-0000-0000-0000-000000000001"),
+                CurrentProfileVersion: 1,
+                PropertyCount: 1,
+                Digest,
+                OrganizationRevision: null,
+                MembershipId: null,
+                MembershipVersion: null,
+                MembershipStatus: null,
+                StaffTenantRevision: null,
+                StaffMemberVersion: null,
+                StaffStateProofSha256: null,
+                StaffPropertySetSha256: null,
+                AccessManagementRevision: null,
+                AccessFactsSha256: null,
+                WorkspaceRecoveryVerification.Unknown,
+                WorkspaceRecoveryVerification.Unknown,
+                WorkspaceRecoveryVerification.Unknown,
+                WorkspaceStaffOnboardingRecoveryOutcome.ReviewRequired,
+                WorkspaceStaffOnboardingRecoveryReason
+                    .LegacyMembershipBindingMissing,
+                AccessMutationPerformed: false,
+                OrganizationObservedAtUtc: null,
+                StaffObservedAtUtc: null,
+                AccessObservedAtUtc: null,
+                FrozenAtUtc.AddHours(-11))).Value;
         WorkspaceStaffOnboardingProcessingRestriction restriction =
             WorkspaceStaffOnboardingProcessingRestriction.Create(
                 Guid.Parse(
@@ -824,6 +887,28 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
                 accessProcessRecordsScrubbed: 0,
                 accessPlanRecordsScrubbed: 0,
                 FrozenAtUtc.AddHours(-6)).Value;
+        WorkspaceStaffOnboardingRetentionExecution retentionExecution =
+            WorkspaceStaffOnboardingRetentionExecution.Start(
+                Guid.Parse(
+                    "e0000000-0000-0000-0000-000000000002"),
+                TenantId,
+                WorkspaceStaffOnboardingRetentionCoordinates.DataClassKey,
+                WorkspaceStaffOnboardingRetentionCoordinates
+                    .ExecutionPolicyVersion,
+                attempt: 1,
+                FrozenAtUtc.AddHours(-5),
+                FrozenAtUtc.AddHours(-4)).Value;
+        Assert.True(retentionExecution.RecordCandidate(
+            attempt: 1,
+            affected: true).IsSuccess);
+        Assert.True(retentionExecution.Complete(
+            WorkspaceStaffOnboardingRetentionExecutionState.Completed,
+            attempt: 1,
+            scannedCount: 1,
+            remainingCount: 0,
+            WorkspaceStaffOnboardingRetentionCoordinates.CompletedOutcome,
+            FrozenAtUtc.AddHours(-4.5)).IsSuccess);
+
         WorkspaceStaffDeferredClaimWithdrawal deferred =
             WorkspaceStaffDeferredClaimWithdrawal.Create(
                 TenantId,
@@ -836,13 +921,15 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
 
         context.AddRange(
             onboarding,
+            recovery,
             deferred,
             correction,
             restriction,
             restrictionReceipt,
             process,
             plan,
-            retention);
+            retention,
+            retentionExecution);
     }
 
     private static WorkspaceTerminationFence SeedFence(

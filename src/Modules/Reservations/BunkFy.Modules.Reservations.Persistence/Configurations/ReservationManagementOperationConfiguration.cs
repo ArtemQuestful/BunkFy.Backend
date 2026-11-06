@@ -13,21 +13,21 @@ internal sealed class ReservationManagementOperationConfiguration
         {
             table.HasCheckConstraint(
                 "CK_management_operations_business_date",
-                "(\"Kind\" IN (1, 5, 6) AND \"BusinessDate\" IS NULL) OR " +
+                "(\"Kind\" IN (1, 5, 6, 7) AND \"BusinessDate\" IS NULL) OR " +
                 "(\"Kind\" IN (2, 3, 4) AND \"BusinessDate\" IS NOT NULL)");
             table.HasCheckConstraint(
                 "CK_management_operations_kind",
-                "\"Kind\" IN (1, 2, 3, 4, 5, 6)");
+                "\"Kind\" IN (1, 2, 3, 4, 5, 6, 7)");
             table.HasCheckConstraint(
                 "CK_management_operations_expected_revision",
                 "(\"Kind\" IN (1, 2, 3, 4) AND \"ExpectedVersion\" > 0 AND " +
                 "\"ExpectedDetailsRevision\" IS NULL) OR " +
-                "(\"Kind\" IN (5, 6) AND \"ExpectedVersion\" IS NULL AND " +
+                "(\"Kind\" IN (5, 6, 7) AND \"ExpectedVersion\" IS NULL AND " +
                 "\"ExpectedDetailsRevision\" > 0)");
             table.HasCheckConstraint(
                 "CK_management_operations_request_fingerprint",
                 "(\"Kind\" IN (1, 2, 3, 4, 5) AND \"RequestFingerprint\" IS NULL) OR " +
-                "(\"Kind\" = 6 AND \"RequestFingerprint\" IS NOT NULL AND " +
+                "(\"Kind\" IN (6, 7) AND \"RequestFingerprint\" IS NOT NULL AND " +
                 "char_length(\"RequestFingerprint\") = 64 AND " +
                 "\"RequestFingerprint\" ~ '^[0-9a-f]{64}$')");
         });

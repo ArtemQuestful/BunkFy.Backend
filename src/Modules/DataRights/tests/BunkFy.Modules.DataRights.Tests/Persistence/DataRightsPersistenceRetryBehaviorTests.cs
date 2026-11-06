@@ -65,6 +65,7 @@ public sealed class DataRightsPersistenceRetryBehaviorTests
             CreateDataRightsCaseCommand,
             DataRightsCaseDto> behavior = new(dbContext, _ => true);
         CreateDataRightsCaseCommand command = new(
+            Guid.NewGuid(),
             DataRightsCaseScope.ForProperty(Guid.NewGuid()),
             DataRightsOperation.AccessExport,
             DataRightsRestrictionDirective.Unknown,

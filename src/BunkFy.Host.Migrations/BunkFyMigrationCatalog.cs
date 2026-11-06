@@ -8,6 +8,7 @@ using BunkFy.Modules.Properties.Persistence;
 using BunkFy.Modules.Reservations.Persistence;
 using BunkFy.Modules.Retention.Persistence;
 using BunkFy.Modules.Staff.Persistence;
+using BunkFy.Modules.Stations.Persistence;
 using BunkFy.Modules.Workspaces.Persistence;
 using Gma.Modules.AccessControl.Persistence;
 using Gma.Modules.Administration.Persistence;
@@ -26,7 +27,7 @@ public static class BunkFyMigrationCatalog
         IServiceProvider serviceProvider)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
-        return
+        List<BunkFyMigrationModule> modules =
         [
             Resolve<AdminDbContext>(serviceProvider, "administration"),
             Resolve<AccessControlDbContext>(serviceProvider, "access-control"),
@@ -44,6 +45,11 @@ public static class BunkFyMigrationCatalog
             Resolve<IngestionDbContext>(serviceProvider, "ingestion"),
             Resolve<RetentionDbContext>(serviceProvider, "retention")
         ];
+        if (serviceProvider.GetService<StationsDbContext>() is { } stations)
+        {
+            modules.Add(new("stations", stations));
+        }
+        return modules;
     }
 
     private static BunkFyMigrationModule Resolve<TContext>(

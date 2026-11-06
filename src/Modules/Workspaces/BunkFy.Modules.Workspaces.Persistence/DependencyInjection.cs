@@ -58,8 +58,20 @@ public static class DependencyInjection
             IWorkspaceStaffOnboardingRetentionRepository,
             WorkspaceStaffOnboardingRetentionRepository>();
         builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingRetentionExecutionRepository,
+            WorkspaceStaffOnboardingRetentionExecutionRepository>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingRetentionExecutionLock,
+            WorkspaceStaffOnboardingRetentionExecutionLock>();
+        builder.Services.TryAddScoped<
             IWorkspaceStaffOnboardingCorrectionReceiptRepository,
             WorkspaceStaffOnboardingCorrectionReceiptRepository>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingRecoveryReceiptRepository,
+            WorkspaceStaffOnboardingRecoveryReceiptRepository>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingRecoveryOperationLock,
+            WorkspaceStaffOnboardingRecoveryOperationLock>();
         builder.Services.TryAddScoped<
             IWorkspaceStaffOnboardingProcessingRestrictionRepository,
             WorkspaceStaffOnboardingProcessingRestrictionRepository>();

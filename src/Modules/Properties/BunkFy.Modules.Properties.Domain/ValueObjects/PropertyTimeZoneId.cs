@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Properties.Domain.ValueObjects;
 
 using BunkFy.Modules.Properties.Domain.Aggregates;
 using BunkFy.Modules.Properties.Domain.Errors;
+using BunkFy.TimeZones;
 using Gma.Framework.Results;
 
 public readonly record struct PropertyTimeZoneId
@@ -11,6 +12,12 @@ public readonly record struct PropertyTimeZoneId
     private PropertyTimeZoneId(string value) => this.value = value;
 
     public string Value => this.value ?? string.Empty;
+
+    internal bool IsPrimaryCanonical =>
+        TimeZoneCatalog.Default.TryResolve(
+            this.Value,
+            out TimeZoneCatalogResolution? resolution) &&
+        resolution.Kind == TimeZoneCatalogResolutionKind.Canonical;
 
     public static Result<PropertyTimeZoneId> Create(string? value)
     {
@@ -25,19 +32,38 @@ public readonly record struct PropertyTimeZoneId
             return Result.Failure<PropertyTimeZoneId>(PropertiesDomainErrors.TimeZoneTooLong);
         }
 
-        try
+        if (normalized.Any(char.IsControl) ||
+            !TimeZoneCatalog.Default.TryResolve(
+                normalized,
+                out TimeZoneCatalogResolution? resolution))
         {
-            _ = TimeZoneInfo.FindSystemTimeZoneById(normalized);
-            return Result.Success(new PropertyTimeZoneId(normalized));
+            return Result.Failure<PropertyTimeZoneId>(
+                PropertiesDomainErrors.TimeZoneInvalid);
         }
-        catch (TimeZoneNotFoundException)
+
+        return Result.Success(new PropertyTimeZoneId(
+            resolution.CanonicalTimeZoneId));
+    }
+
+    public static PropertyTimeZoneId RestorePersisted(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
         {
-            return Result.Failure<PropertyTimeZoneId>(PropertiesDomainErrors.TimeZoneInvalid);
+            throw new ArgumentException(
+                "A persisted property time zone is required.",
+                nameof(value));
         }
-        catch (InvalidTimeZoneException)
+
+        string normalized = value.Trim();
+        if (normalized.Length > Property.TimeZoneIdMaxLength ||
+            normalized.Any(char.IsControl))
         {
-            return Result.Failure<PropertyTimeZoneId>(PropertiesDomainErrors.TimeZoneInvalid);
+            throw new ArgumentException(
+                "The persisted property time zone is structurally invalid.",
+                nameof(value));
         }
+
+        return new PropertyTimeZoneId(normalized);
     }
 
     public override string ToString() => this.Value;

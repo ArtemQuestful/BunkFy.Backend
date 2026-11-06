@@ -9,6 +9,7 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
 {
     public const int DataClassKeyMaxLength = 64;
     public const int OutcomeCodeMaxLength = 100;
+    public const int MinimumRunningPolicyVersion = 2;
 
     private GuestRetentionExecution() { }
 
@@ -47,7 +48,7 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
         if (id == Guid.Empty ||
             !TenantIds.TryNormalize(tenantId, out string? scopeId) ||
             !IsKey(normalized) ||
-            executionPolicyVersion <= 0 ||
+            executionPolicyVersion < MinimumRunningPolicyVersion ||
             attempt <= 0 ||
             startingProjectionOrdinal < 0 ||
             startedAtUtc == default ||
@@ -74,21 +75,48 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
         DateTimeOffset startedAtUtc,
         DateTimeOffset deadlineUtc)
     {
-        if (this.State != GuestRetentionExecutionState.Running ||
-            attempt <= this.Attempt ||
-            startedAtUtc == default ||
-            startedAtUtc < this.StartedAtUtc ||
-            deadlineUtc <= startedAtUtc)
+        Result valid = this.ValidateRetry(
+            attempt,
+            startedAtUtc,
+            deadlineUtc);
+        if (valid.IsFailure)
         {
-            return Result.Failure(
-                GuestsDomainErrors.RetentionExecutionTransitionInvalid);
+            return valid;
         }
 
         this.Attempt = attempt;
+        this.State = GuestRetentionExecutionState.Running;
         this.StartedAtUtc = startedAtUtc;
         this.DeadlineUtc = deadlineUtc;
+        this.CompletedAtUtc = null;
+        this.ScannedCount = null;
+        this.RemainingCount = null;
+        this.OutcomeCode = null;
+        this.HoldReviewDueAtUtc = null;
         this.Version++;
         return Result.Success();
+    }
+
+    public Result ValidateRetry(
+        int attempt,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset deadlineUtc)
+    {
+        bool failedWindowInvalid =
+            this.State == GuestRetentionExecutionState.Failed &&
+            (!this.CompletedAtUtc.HasValue ||
+             startedAtUtc < this.CompletedAtUtc.Value);
+        return this.State is not (
+                   GuestRetentionExecutionState.Running or
+                   GuestRetentionExecutionState.Failed) ||
+               attempt <= this.Attempt ||
+               startedAtUtc == default ||
+               startedAtUtc < this.StartedAtUtc ||
+               deadlineUtc <= startedAtUtc ||
+               failedWindowInvalid
+            ? Result.Failure(
+                GuestsDomainErrors.RetentionExecutionTransitionInvalid)
+            : Result.Success();
     }
 
     public Result RecordAffected()
@@ -106,6 +134,7 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
 
     public Result Complete(
         GuestRetentionExecutionState state,
+        int attempt,
         int scannedCount,
         int remainingCount,
         string outcomeCode,
@@ -118,6 +147,7 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
                 GuestRetentionExecutionState.Completed or
                 GuestRetentionExecutionState.Blocked or
                 GuestRetentionExecutionState.Failed) ||
+            attempt != this.Attempt ||
             scannedCount < 0 ||
             this.AffectedCount > scannedCount ||
             remainingCount < 0 ||
@@ -133,15 +163,16 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
         if (this.State != GuestRetentionExecutionState.Running)
         {
             return this.MatchesResult(
-                    state,
-                    scannedCount,
-                    remainingCount,
-                    normalized,
-                    completedAtUtc,
-                    holdReviewDueAtUtc)
-                ? Result.Success()
-                : Result.Failure(
-                    GuestsDomainErrors.RetentionExecutionTransitionInvalid);
+                state,
+                attempt,
+                scannedCount,
+                remainingCount,
+                normalized,
+                completedAtUtc,
+                holdReviewDueAtUtc)
+            ? Result.Success()
+            : Result.Failure(
+                GuestsDomainErrors.RetentionExecutionTransitionInvalid);
         }
 
         this.State = state;
@@ -165,12 +196,14 @@ public sealed class GuestRetentionExecution : ScopedAggregateRoot<Guid>
 
     private bool MatchesResult(
         GuestRetentionExecutionState state,
+        int attempt,
         int scannedCount,
         int remainingCount,
         string outcomeCode,
         DateTimeOffset completedAtUtc,
         DateTimeOffset? holdReviewDueAtUtc) =>
         this.State == state &&
+        this.Attempt == attempt &&
         this.ScannedCount == scannedCount &&
         this.RemainingCount == remainingCount &&
         string.Equals(

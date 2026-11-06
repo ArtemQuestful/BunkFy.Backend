@@ -67,12 +67,15 @@ public sealed class MigrationsProductionAdmissionTests
             StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void Production_apply_accepts_exact_release_target_and_recovery_evidence()
+    [Theory]
+    [InlineData("ApplyCompatiblePrefix")]
+    [InlineData("ApplyInventoryConvergenceV1")]
+    public void Production_apply_accepts_exact_release_target_and_recovery_evidence(string disposition)
     {
         MigrationsHostOptions runtime = Runtime(MigrationExecutionMode.Apply);
-        MigrationsProductionAdmissionOptions admission = Admission(
-            ApprovedProductionValues());
+        Dictionary<string, string?> values = ApprovedProductionValues();
+        values["Migrations:ProductionAdmission:ExistingHistoryDisposition"] = disposition;
+        MigrationsProductionAdmissionOptions admission = Admission(values);
 
         Assert.Empty(MigrationsProductionAdmission.ValidateConfiguration(
             admission,
@@ -84,6 +87,21 @@ public sealed class MigrationsProductionAdmissionTests
             isProduction: true,
             DatabaseHash,
             CatalogHash);
+    }
+
+    [Fact]
+    public void Inventory_transition_does_not_replace_production_approval_or_recovery_evidence()
+    {
+        Dictionary<string, string?> values = BaseProductionValues();
+        values["Migrations:ProductionAdmission:ExistingHistoryDisposition"] = "ApplyInventoryConvergenceV1";
+        string[] failures = MigrationsProductionAdmission.ValidateConfiguration(
+            Admission(values), Runtime(MigrationExecutionMode.Apply), isProduction: true);
+
+        foreach (string required in new[] { "ApprovalState", "ApprovalReference", "ApprovedDatabaseTargetSha256",
+                     "ApprovedTargetCatalogSha256", "BackupEvidenceReference", "RollbackEvidenceReference" })
+        {
+            Assert.Contains(failures, failure => failure.Contains(required, StringComparison.Ordinal));
+        }
     }
 
     [Theory]

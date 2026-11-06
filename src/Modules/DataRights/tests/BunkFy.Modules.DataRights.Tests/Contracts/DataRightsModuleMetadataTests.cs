@@ -36,6 +36,8 @@ public sealed class DataRightsModuleMetadataTests
                 DataRightsAdminPermissionCodes.TenantTerminationRequest,
                 DataRightsAdminPermissionCodes.TenantTerminationApprove,
                 DataRightsAdminPermissionCodes.TenantTerminationExecute,
+                DataRightsAdminPermissionCodes.TenantTerminationExportDownload,
+                DataRightsAdminPermissionCodes.TenantTerminationExportConfirm,
                 DataRightsAdminPermissionCodes.TenantTerminationRetry,
                 DataRightsAdminPermissionCodes.TenantTerminationCancel,
                 DataRightsAdminPermissionCodes.TenantTerminationRecover,
@@ -140,7 +142,7 @@ public sealed class DataRightsModuleMetadataTests
                 subscription.HandlerName ==
                     DataRightsModuleMetadata
                         .WorkspacesCorrectionAppliedHandlerName);
-        Assert.Equal(11, DataRightsModuleMetadata.Descriptor.GetTasks().Count);
+        Assert.Equal(13, DataRightsModuleMetadata.Descriptor.GetTasks().Count);
         Assert.Contains(
             DataRightsModuleMetadata.Descriptor.GetTasks(),
             task => task.Name == ExecuteDataRightsAnonymisationPayload.TaskName);
@@ -179,6 +181,16 @@ public sealed class DataRightsModuleMetadataTests
                 GenerateTenantTerminationExportArtifactPayload.TaskName);
         Assert.Contains(
             DataRightsModuleMetadata.Descriptor.GetTasks(),
+            task =>
+                task.Name ==
+                DeleteExpiredTenantTerminationExportArtifactPayload.TaskName);
+        Assert.Contains(
+            DataRightsModuleMetadata.Descriptor.GetTasks(),
+            task =>
+                task.Name ==
+                DeleteExpiredTenantTerminationExportFragmentPayload.TaskName);
+        Assert.Contains(
+            DataRightsModuleMetadata.Descriptor.GetTasks(),
             task => task.Name == VerifyTenantTerminationPayload.TaskName);
         Assert.Contains(
             DataRightsModuleMetadata.Descriptor.GetTasks(),
@@ -207,5 +219,37 @@ public sealed class DataRightsModuleMetadataTests
         Assert.Equal(
             Enum.GetValues<DataRightsExportArtifactStatus>().Select(value => (int)value),
             Enum.GetValues<DataRightsExportArtifactState>().Select(value => (int)value));
+        Assert.Equal(
+            Enum.GetValues<TenantTerminationExportArtifactStatus>().Select(value => (int)value),
+            Enum.GetValues<TenantTerminationExportArtifactState>().Select(value => (int)value));
+    }
+
+    [Fact]
+    public void Tenant_export_handoff_contract_exposes_only_bounded_receipt_data()
+    {
+        string[] expectedProperties =
+        [
+            "ArtifactId",
+            "ArtifactVersion",
+            "AvailableAtUtc",
+            "ConfirmationRevision",
+            "Confirmed",
+            "ConfirmedArtifactVersion",
+            "ConfirmedAtUtc",
+            "ConfirmedBy",
+            "ExpiresAtUtc",
+            "ExportOperationRevision",
+            "FragmentCount",
+            "FragmentSetSha256",
+            "FrozenRevisionSha256",
+            "RecordCount",
+            "Status"
+        ];
+        Assert.Equal(
+            expectedProperties,
+            typeof(TenantTerminationExportHandoffDto)
+                .GetProperties()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal));
     }
 }

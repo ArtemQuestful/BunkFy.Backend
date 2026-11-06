@@ -57,7 +57,7 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
         string normalizedReference = sourceReference?.Trim() ?? string.Empty;
         if (linkId == Guid.Empty || propertyId == Guid.Empty || connectionId == Guid.Empty ||
             normalizedScope.Length == 0 || normalizedSystem.Length is 0 or > SourceSystemMaxLength ||
-            normalizedReference.Length is 0 or > SourceReferenceMaxLength)
+            normalizedReference.Length is 0 or > SourceReferenceMaxLength || nowUtc == default)
         {
             return Result.Failure<ReservationSourceLink>(IngestionDomainErrors.ReservationSourceLinkInvalid);
         }
@@ -83,7 +83,8 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
         string? normalizedRevision = string.IsNullOrWhiteSpace(sourceRevision) ? null : sourceRevision.Trim();
         string normalizedHash = contentHash?.Trim().ToLowerInvariant() ?? string.Empty;
         if (receiptId == Guid.Empty || normalizedRevision?.Length > SourceRevisionMaxLength || sourceSequence < 0 ||
-            normalizedHash.Length != ContentHashLength || !normalizedHash.All(Uri.IsHexDigit))
+            normalizedHash.Length != ContentHashLength || !normalizedHash.All(Uri.IsHexDigit) ||
+            nowUtc < (this.UpdatedAtUtc ?? this.CreatedAtUtc))
         {
             return Result.Failure<ReservationObservationResult>(IngestionDomainErrors.ReservationObservationInvalid);
         }
@@ -128,7 +129,7 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
 
     public Result BeginDispatch(Guid operationId, DateTimeOffset nowUtc)
     {
-        if (operationId == Guid.Empty)
+        if (operationId == Guid.Empty || nowUtc < (this.UpdatedAtUtc ?? this.CreatedAtUtc))
         {
             return Result.Failure(IngestionDomainErrors.IdRequired);
         }
@@ -168,15 +169,26 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
             return Result.Failure(IngestionDomainErrors.ReservationOperationMismatch);
         }
 
+        string? normalizedRevision = string.IsNullOrWhiteSpace(sourceRevision)
+            ? null
+            : sourceRevision.Trim();
         bool cancellation = cancellationPending || cancelled;
-        if (operationalBaseline?.Length > OperationalBaselineMaxLength ||
+        if (receiptId == Guid.Empty || normalizedRevision?.Length > SourceRevisionMaxLength ||
+            sourceSequence < 0 || reservationId == Guid.Empty || detailsRevision <= 0 ||
+            (cancellationPending && cancelled) || keepActive != cancellationPending ||
+            (cancellation && !applied) || nowUtc < (this.UpdatedAtUtc ?? this.CreatedAtUtc) ||
+            (this.ReservationId.HasValue && reservationId.HasValue &&
+                this.ReservationId != reservationId) ||
+            (!applied && !this.ReservationId.HasValue && reservationId.HasValue) ||
+            operationalBaseline?.Length > OperationalBaselineMaxLength ||
             (applied && !cancellation && string.IsNullOrWhiteSpace(operationalBaseline)) ||
-            (cancellation && operationalBaseline is not null))
+            (cancellation && operationalBaseline is not null) ||
+            (applied && (!reservationId.HasValue || !detailsRevision.HasValue)))
         {
             return Result.Failure(IngestionDomainErrors.ReservationObservationInvalid);
         }
 
-        if (reservationId.HasValue)
+        if (applied && reservationId.HasValue)
         {
             this.ReservationId = reservationId;
         }
@@ -184,7 +196,7 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
         if (applied)
         {
             this.LastAppliedReceiptId = receiptId;
-            this.LastAppliedSourceRevision = string.IsNullOrWhiteSpace(sourceRevision) ? null : sourceRevision.Trim();
+            this.LastAppliedSourceRevision = normalizedRevision;
             this.LastAppliedSourceSequence = sourceSequence;
             this.LastAppliedReservationDetailsRevision = detailsRevision;
             this.LastAppliedOperationalBaseline = operationalBaseline;
@@ -211,7 +223,8 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
     public Result CompleteAcceptedCancellation(Guid reservationId, DateTimeOffset nowUtc)
     {
         if (this.ReservationId != reservationId || this.State != ReservationSourceLinkState.CancellationPending ||
-            !this.ActiveProductOperationId.HasValue)
+            !this.ActiveProductOperationId.HasValue || reservationId == Guid.Empty ||
+            nowUtc < (this.UpdatedAtUtc ?? this.CreatedAtUtc))
         {
             return Result.Failure(IngestionDomainErrors.ReservationOperationMismatch);
         }
@@ -230,7 +243,7 @@ public sealed class ReservationSourceLink : ScopedAggregateRoot<Guid>
             this.ActiveProductOperationId.HasValue ||
             this.DeferredReceiptId.HasValue ||
             this.AnonymisedAtUtc.HasValue ||
-            nowUtc == default)
+            nowUtc < (this.UpdatedAtUtc ?? this.CreatedAtUtc))
         {
             return Result.Failure(
                 IngestionDomainErrors.AnonymisationRecordNotReducible);

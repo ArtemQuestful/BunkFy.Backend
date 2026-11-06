@@ -16,8 +16,10 @@ internal static class DataRightsMutationTestSupport
 
     public static DataRightsCaseMutationCoordinator Case(
         IDataRightsCaseRepository cases,
-        string scopeId = "tenant-a") => new(
+        string scopeId = "tenant-a",
+        IDataRightsCaseIdentityRepository? caseIdentities = null) => new(
         cases,
+        caseIdentities ?? ThrowingDataRightsCaseIdentityRepository.Instance,
         ThrowingTenantTerminationCaseRepository.Instance,
         OperationLock,
         new TestScopeContext(scopeId));
@@ -26,6 +28,7 @@ internal static class DataRightsMutationTestSupport
         ITenantTerminationCaseRepository cases,
         string scopeId = "tenant-a") => new(
         ThrowingDataRightsCaseRepository.Instance,
+        ThrowingDataRightsCaseIdentityRepository.Instance,
         cases,
         OperationLock,
         new TestScopeContext(scopeId));
@@ -115,6 +118,18 @@ internal static class DataRightsMutationTestSupport
             DataRightsCaseScope scope,
             DataRightsCaseStatus? status,
             PageRequest pageRequest,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingDataRightsCaseIdentityRepository
+        : IDataRightsCaseIdentityRepository
+    {
+        public static ThrowingDataRightsCaseIdentityRepository Instance { get; } =
+            new();
+
+        public Task<DataRightsCase?> GetByIdAsync(
+            Guid caseId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

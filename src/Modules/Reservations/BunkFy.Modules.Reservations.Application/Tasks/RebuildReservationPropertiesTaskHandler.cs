@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Reservations.Application.Tasks;
 
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Contracts;
 using Gma.Framework.ProjectionRebuild;
 using Gma.Framework.ProjectionRebuild.Tasks;
@@ -8,7 +9,7 @@ using Gma.Framework.Tasks;
 
 internal sealed class RebuildReservationPropertiesTaskHandler(
     IPropertiesTopologyProjectionExportSource source,
-    IProjectionRebuildWriter<PropertyTopologyProjectionExport> writer,
+    IReservationPropertyProjectionRebuildWriter writer,
     TaskProjectionRebuildRunner<PropertyTopologyProjectionExport> runner)
     : ITaskHandler<RebuildReservationPropertiesPayload>
 {

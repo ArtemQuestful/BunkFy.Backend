@@ -10,7 +10,7 @@ using BunkFy.Modules.DataRights.Contracts;
 internal static class GuestDataRightsExportSchema
 {
     public const string ExportSchemaId = "guests.subject-export";
-    public const int ExportSchemaVersion = 1;
+    public const int ExportSchemaVersion = 2;
 
     private const string CatalogResourceName =
         "BunkFy.Modules.Guests.Persistence.DataGovernance.personal-data-catalog.v1.json";
@@ -46,6 +46,7 @@ internal static class GuestDataRightsExportSchema
                 (nameof(profile.DateOfBirth), profile.DateOfBirth),
                 (nameof(profile.NationalityCountryCode), profile.NationalityCountryCode),
                 (nameof(profile.PreferredLanguageTag), profile.PreferredLanguageTag),
+                (nameof(profile.LanguageTags), profile.LanguageTags),
                 (nameof(profile.Notes), profile.Notes),
                 (nameof(profile.Status), profile.Status),
                 (nameof(profile.Version), profile.Version),

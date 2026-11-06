@@ -541,16 +541,22 @@ public sealed class ReservationsMigrationIntegrationTests
         Assert.Equal(1, preservedRows);
 
         string fingerprint = new('a', Reservation.RequestFingerprintLength);
-        int inserted = await upgraded.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO reservations.management_operations (
-                "Id", "ScopeId", "ReservationId", "PropertyId", "Kind",
-                "ExpectedVersion", "ExpectedDetailsRevision", "BusinessDate",
-                "CreatedAtUtc", "RequestFingerprint")
-            VALUES (
-                {Guid.NewGuid()}, {"tenant-a"}, {reservationId}, {propertyId}, {6},
-                NULL, {1L}, NULL, {createdAtUtc.AddMinutes(1)}, {fingerprint});
-            """);
-        Assert.Equal(1, inserted);
+        PostgresException orphanAmendment = await Assert.ThrowsAsync<
+            PostgresException>(() =>
+            upgraded.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO reservations.management_operations (
+                    "Id", "ScopeId", "ReservationId", "PropertyId", "Kind",
+                    "ExpectedVersion", "ExpectedDetailsRevision", "BusinessDate",
+                    "CreatedAtUtc", "RequestFingerprint")
+                VALUES (
+                    {Guid.NewGuid()}, {"tenant-a"}, {reservationId}, {propertyId}, {6},
+                    NULL, {1L}, NULL, {createdAtUtc.AddMinutes(1)}, {fingerprint});
+                """));
+        Assert.Equal(PostgresErrorCodes.RaiseException, orphanAmendment.SqlState);
+        Assert.Contains(
+            "stay-amendment parent requires exact child evidence",
+            orphanAmendment.MessageText,
+            StringComparison.Ordinal);
 
         PostgresException missingFingerprint = await Assert.ThrowsAsync<PostgresException>(() =>
             upgraded.Database.ExecuteSqlInterpolatedAsync($"""

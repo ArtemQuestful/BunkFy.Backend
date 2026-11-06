@@ -113,6 +113,7 @@ internal sealed class FinalizeDataRightsAnonymisationLedgerCommandHandler(
             await deltaStore.AppendAsync(
                 DataRightsLedgerDelta.Create(ledger, envelope.Value),
                 cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!HasMatchingDurabilityProof(receipt, ledger))
         {
             return Result.Failure<Unit>(

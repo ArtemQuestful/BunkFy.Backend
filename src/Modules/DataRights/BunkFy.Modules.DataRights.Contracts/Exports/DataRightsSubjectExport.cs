@@ -58,7 +58,8 @@ public enum DataRightsSubjectExportStatus
     Succeeded = 1,
     ScopeUnavailable = 2,
     NotFound = 3,
-    Stale = 4
+    Stale = 4,
+    RetryRequired = 5
 }
 
 public sealed record DataRightsSubjectExportResult(
@@ -76,13 +77,18 @@ public sealed record DataRightsSubjectExportResult(
 
     public static DataRightsSubjectExportResult Stale() =>
         new(DataRightsSubjectExportStatus.Stale, 0);
+
+    public static DataRightsSubjectExportResult RetryRequired() =>
+        new(DataRightsSubjectExportStatus.RetryRequired, 0);
 }
 
 public static class DataRightsExportLimits
 {
     public const int OwnerKeyMaxLength = 100;
+    public const int SchemaIdentifierMaxLength = 200;
     public const int RecordTypeMaxLength = 100;
     public const int FieldIdMaxLength = 200;
+    public const int MaxFieldsPerSchema = 512;
     public const int MaxFieldsPerRecord = 64;
     public const int MaxFieldValueBytes = 16 * 1024;
 }

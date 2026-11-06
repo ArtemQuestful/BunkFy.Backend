@@ -14,7 +14,8 @@ public sealed record GuestProfileChange(
     string? NationalityCountryCode,
     string? PreferredLanguageTag,
     string? Notes,
-    string ActorId)
+    string ActorId,
+    string[]? LanguageTags = null)
 {
     public static Result<GuestProfileChange> Create(
         string? displayName,
@@ -26,7 +27,8 @@ public sealed record GuestProfileChange(
         string? preferredLanguageTag,
         string? notes,
         string? actorId,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        string[]? languageTags = null)
     {
         string normalizedDisplayName = displayName?.Trim() ?? string.Empty;
         if (normalizedDisplayName.Length is 0 or > GuestProfile.DisplayNameMaxLength)
@@ -80,6 +82,18 @@ public sealed record GuestProfileChange(
             return Result.Failure<GuestProfileChange>(GuestsDomainErrors.LanguageTagInvalid);
         }
 
+        string[]? normalizedTags = null;
+        if (languageTags is not null)
+        {
+            Result<string[]> tags = GuestLanguageTags.Normalize(languageTags, normalizedLanguage);
+            if (tags.IsFailure)
+            {
+                return Result.Failure<GuestProfileChange>(tags.Error);
+            }
+
+            normalizedTags = tags.Value;
+        }
+
         string? normalizedNotes = NormalizeOptional(notes);
         if (normalizedNotes?.Length > GuestProfile.NotesMaxLength)
         {
@@ -95,7 +109,8 @@ public sealed record GuestProfileChange(
             normalizedCountry,
             normalizedLanguage,
             normalizedNotes,
-            normalizedActor));
+            normalizedActor,
+            normalizedTags));
     }
 
     private static string? NormalizeOptional(string? value)

@@ -245,6 +245,7 @@ public sealed class DataRightsMutationSerializationIntegrationTests
         return new(
             cases,
             cases,
+            cases,
             new DataRightsOperationLock(dbContext),
             new TestScopeContext());
     }

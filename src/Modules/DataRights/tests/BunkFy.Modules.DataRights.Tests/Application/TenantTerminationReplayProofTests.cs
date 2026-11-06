@@ -94,6 +94,26 @@ public sealed class TenantTerminationReplayProofTests
     }
 
     [Fact]
+    public void Result_requires_contribution_and_protection_before_deadline()
+    {
+        TenantTerminationReplayDispatch dispatch = CreateDispatch();
+
+        Assert.Throws<ArgumentException>(() =>
+            TenantTerminationReplayResult.Create(
+                dispatch,
+                CompletedResult() with
+                {
+                    RecordedAtUtc = dispatch.DeadlineUtc
+                },
+                dispatch.DeadlineUtc));
+        Assert.Throws<ArgumentException>(() =>
+            TenantTerminationReplayResult.Create(
+                dispatch,
+                CompletedResult(),
+                dispatch.DeadlineUtc));
+    }
+
+    [Fact]
     public void Invalid_owner_outcome_shapes_are_rejected_before_journaling()
     {
         TenantTerminationReplayDispatch dispatch = CreateDispatch();

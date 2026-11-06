@@ -6,6 +6,7 @@ using BunkFy.Modules.Retention.Application.Ports;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Retention.Persistence;
 using BunkFy.Modules.Retention.Persistence.Repositories;
+using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Scoping;
 using Integration.Tests.Support;
@@ -63,6 +64,23 @@ public sealed class RetentionMutationSerializationIntegrationTests
             .ConfigureAwait(false);
         Assert.True(first.IsSuccess, first.Error.Code);
         await firstDb.SaveChangesAsync().ConfigureAwait(false);
+        Result<Unit> completed = await CreateCompleteHandler(firstDb)
+            .HandleAsync(
+                new(
+                    firstRunId,
+                    1,
+                    new(
+                        RetentionExecutionContract.CurrentVersion,
+                        RetentionContributionStatus.Completed,
+                        0,
+                        0,
+                        0,
+                        "retention.integration.completed",
+                        Now.AddSeconds(30))),
+                CancellationToken.None)
+            .ConfigureAwait(false);
+        Assert.True(completed.IsSuccess, completed.Error.Code);
+        await firstDb.SaveChangesAsync().ConfigureAwait(false);
 
         Task<Result<RetentionExecutionStart>> waiting = CreateBeginHandler(waitingDb)
             .HandleAsync(
@@ -118,7 +136,7 @@ public sealed class RetentionMutationSerializationIntegrationTests
             .ConfigureAwait(false);
         Assert.Equal(waitingRunId, schedule.LastExecutionId);
         Assert.Equal(Now.AddMinutes(1), schedule.LastStartedAtUtc);
-        Assert.Equal(2, schedule.Version);
+        Assert.Equal(3, schedule.Version);
     }
 
     private static async Task ProveProjectionSerializationAsync(
@@ -200,9 +218,24 @@ public sealed class RetentionMutationSerializationIntegrationTests
         RetentionExecutionMutationCoordinator mutations = new(
             new RetentionMutationLock(dbContext),
             executions,
+            schedules,
             scopes,
             new TestScopeContext());
         return new(mutations, executions, schedules);
+    }
+
+    private static CompleteRetentionExecutionCommandHandler
+        CreateCompleteHandler(RetentionDbContext dbContext)
+    {
+        RetentionExecutionRepository executions = new(dbContext);
+        RetentionScheduleStateRepository schedules = new(dbContext);
+        RetentionExecutionMutationCoordinator mutations = new(
+            new RetentionMutationLock(dbContext),
+            executions,
+            schedules,
+            new RetentionScopeRepository(dbContext),
+            new TestScopeContext());
+        return new(mutations, schedules);
     }
 
     private static RetentionScopeMutationCoordinator CreateScopeCoordinator(

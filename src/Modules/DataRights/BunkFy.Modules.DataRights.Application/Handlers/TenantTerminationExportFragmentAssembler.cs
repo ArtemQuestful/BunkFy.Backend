@@ -406,7 +406,7 @@ internal sealed class TenantTerminationExportFragmentAssembler(
                 request.OwnerWork.CatalogSha256,
                 StringComparison.Ordinal) ||
             result.RecordedAtUtc < request.GeneratedAtUtc ||
-            result.RecordedAtUtc > request.DeadlineUtc)
+            result.RecordedAtUtc >= request.DeadlineUtc)
         {
             throw Failure("tenant-export-owner-result-invalid");
         }

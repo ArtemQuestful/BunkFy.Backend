@@ -89,7 +89,15 @@ internal sealed class ReleaseGuestProcessingRestrictionCommandHandler(
                 GuestsDataRightsCoordinates.GuestProfileRecordType,
                 command.GuestId,
                 command.ExpectedGuestVersion,
-                DataRightsRestrictionDirective.Release),
+                DataRightsRestrictionDirective.Release,
+                ExecutingActorId: actorId,
+                CaseType: DataRightsCaseType.GuestRights,
+                RestrictionTargetOwnerOperationId:
+                    command.LegacyUnboundTarget ? null : command.RestrictionId,
+                RestrictionTargetOwnerOperationVersion:
+                    command.LegacyUnboundTarget
+                        ? null
+                        : command.ExpectedRestrictionVersion),
             cancellationToken).ConfigureAwait(false);
         if (!approval.IsApproved)
         {

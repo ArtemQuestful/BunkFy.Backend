@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../BunkFy.Modules.Stations.Contracts/BunkFy.Modules.Stations.Contracts.csproj" />
+    <ProjectReference Include="../BunkFy.Modules.Stations.Domain/BunkFy.Modules.Stations.Domain.csproj" />
+    <ProjectReference Include="../../Staff/BunkFy.Modules.Staff.Contracts/BunkFy.Modules.Staff.Contracts.csproj" />
+    <ProjectReference Include="../../Properties/BunkFy.Modules.Properties.Contracts/BunkFy.Modules.Properties.Contracts.csproj" />
+    <ProjectReference Include="../../Reservations/BunkFy.Modules.Reservations.Contracts/BunkFy.Modules.Reservations.Contracts.csproj" />
+    <ProjectReference Include="../../Inventory/BunkFy.Modules.Inventory.Contracts/BunkFy.Modules.Inventory.Contracts.csproj" />
+    <ProjectReference Include="../../Workspaces/BunkFy.Modules.Workspaces.Contracts/BunkFy.Modules.Workspaces.Contracts.csproj" />
+    <ProjectReference Include="../../../Shared/BunkFy.TimeZones/BunkFy.TimeZones.csproj" />
+    <ProjectReference Include="$(GmaModuleOrganizationsRoot)Gma.Modules.Organizations.Contracts/Gma.Modules.Organizations.Contracts.csproj" />
+    <ProjectReference Include="$(GmaModuleAuthRoot)Gma.Modules.Auth.Contracts/Gma.Modules.Auth.Contracts.csproj" />
+    <ProjectReference Include="$(GmaModuleAccessControlRoot)Gma.Modules.AccessControl.Contracts/Gma.Modules.AccessControl.Contracts.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Security/Gma.Framework.Security/Gma.Framework.Security.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Security/Gma.Framework.AccessControl/Gma.Framework.AccessControl.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Scoping/Gma.Framework.Scoping/Gma.Framework.Scoping.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Runtime/Gma.Framework.Runtime/Gma.Framework.Runtime.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

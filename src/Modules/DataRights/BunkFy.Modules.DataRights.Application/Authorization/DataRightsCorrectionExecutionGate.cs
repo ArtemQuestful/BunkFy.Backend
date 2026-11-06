@@ -88,7 +88,7 @@ internal sealed class DataRightsCorrectionExecutionGate(
                 DataRightsCorrectionExecutionDenial.ExecutionMismatch);
         }
 
-        return clock.UtcNow > execution.ExpiresAtUtc
+        return clock.UtcNow >= execution.ExpiresAtUtc
             ? DataRightsCorrectionExecutionGateResult.Denied(
                 DataRightsCorrectionExecutionDenial.ExecutionExpired)
             : DataRightsCorrectionExecutionGateResult.Allowed(execution.ExpiresAtUtc);

@@ -46,7 +46,7 @@ public sealed class GuestDataRightsExportIntegrationTests
             "Prefers a lower bunk.",
             "user:operator",
             Guid.NewGuid(),
-            Now).Value;
+            Now, languageTags: ["en-GB", "fr", "unknown-١"]).Value;
         GuestStayHistoryEntry targetStay = CreateStay(profile.Id, targetPropertyId);
         GuestStayHistoryEntry unrelatedStay = CreateStay(profile.Id, unrelatedPropertyId);
 
@@ -89,6 +89,9 @@ public sealed class GuestDataRightsExportIntegrationTests
         Assert.Equal(
             "maya.chen@example.test",
             Field(profileRecord, "guest.profile.email").GetString());
+        Assert.Equal(["en-gb", "fr", "unknown-١"],
+            Field(profileRecord, "guest.profile.language-tags").EnumerateArray()
+                .Select(value => Assert.IsType<string>(value.GetString())).ToArray());
 
         DataRightsExportRecord stayRecord = Assert.Single(
             sink.Records,

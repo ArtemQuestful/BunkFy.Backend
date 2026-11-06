@@ -27,7 +27,8 @@ public sealed partial class DataRightsCase
                 proof.ApprovalRevision,
                 proof.Directive,
                 subject,
-                proof.ExecutedBy)
+                proof.ExecutedBy,
+                this.RestrictionReleaseTarget)
                 ? Result.Success()
                 : Result.Failure(DataRightsDomainErrors.RestrictionExecutionConflict);
         }
@@ -53,7 +54,8 @@ public sealed partial class DataRightsCase
                 proof.ApprovalRevision,
                 proof.Directive,
                 subject,
-                proof.ExecutedBy) ||
+                proof.ExecutedBy,
+                this.RestrictionReleaseTarget) ||
             proof.CompletedAtUtc > nowUtc)
         {
             return Result.Failure(DataRightsDomainErrors.RestrictionExecutionInvalid);

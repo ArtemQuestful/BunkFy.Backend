@@ -1,8 +1,9 @@
 namespace BunkFy.Modules.Reservations.Persistence;
 
 using BunkFy.Modules.Guests.Contracts;
+using Gma.Framework.Domain;
 
-public sealed class ReservationGuestProfileProjection
+public sealed class ReservationGuestProfileProjection : IScopedEntity
 {
     private ReservationGuestProfileProjection() { }
 

@@ -25,6 +25,8 @@ public sealed partial class WorkspaceStaffOnboarding : ScopedAggregateRoot<Guid>
     public string? Department { get; private set; }
     public WorkspaceStaffOnboardingState Status { get; private set; }
     public Guid? StaffMemberId { get; private set; }
+    public Guid? AcceptedMembershipId { get; private set; }
+    public long? AcceptedMembershipVersion { get; private set; }
     public string? FailureCode { get; private set; }
     public Guid? IdentityAnchorExpectedResolutionEventId { get; private set; }
     public Guid? IdentityAnchorContinuationEventId { get; private set; }
@@ -256,7 +258,6 @@ public sealed partial class WorkspaceStaffOnboarding : ScopedAggregateRoot<Guid>
         this.RaiseContinuationRequested(staffMemberId, nowUtc);
         return Result.Success();
     }
-
 
     public Result Expire(DateTimeOffset nowUtc)
     {

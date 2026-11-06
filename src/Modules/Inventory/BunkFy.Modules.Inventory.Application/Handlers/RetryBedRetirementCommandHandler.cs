@@ -14,6 +14,7 @@ internal sealed class RetryBedRetirementCommandHandler(
     InventoryManagementOperationJournal journal,
     IBedRetirementRepository retirements,
     IInventoryAvailabilityRepository availability,
+    IInventoryBusinessDateProvider businessDates,
     BedRetirementCoordinator coordinator,
     ISystemClock clock,
     IIdGenerator idGenerator)
@@ -75,10 +76,20 @@ internal sealed class RetryBedRetirementCommandHandler(
             return Result.Failure<BedRetirementDto>(InventoryApplicationErrors.BedRetirementRetryInvalid);
         }
 
+        DateOnly? businessDate = await businessDates.GetAsync(
+            command.PropertyId,
+            clock.UtcNow,
+            cancellationToken).ConfigureAwait(false);
+        if (!businessDate.HasValue)
+        {
+            return Result.Failure<BedRetirementDto>(InventoryApplicationErrors.PropertyNotFound);
+        }
+
         BedRetirementImpactSnapshot? impact = await availability.GetBedRetirementImpactAsync(
             process.PropertyId,
             process.RoomId,
             process.BedId,
+            businessDate.Value,
             excludedAllocationId: null,
             excludedBlockIds: [],
             cancellationToken).ConfigureAwait(false);

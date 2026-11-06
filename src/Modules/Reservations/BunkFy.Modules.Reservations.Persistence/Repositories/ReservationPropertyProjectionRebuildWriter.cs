@@ -10,7 +10,7 @@ internal sealed class ReservationPropertyProjectionRebuildWriter(
     IReservationPropertyPolicyRepository policies,
     ReservationsDbContext dbContext,
     ISystemClock clock)
-    : IProjectionRebuildWriter<PropertyTopologyProjectionExport>
+    : IReservationPropertyProjectionRebuildWriter
 {
     public async Task<ProjectionWriteResult> WriteAsync(
         ProjectionRebuildRequest request,

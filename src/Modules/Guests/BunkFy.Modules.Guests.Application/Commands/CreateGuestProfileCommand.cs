@@ -16,6 +16,7 @@ public sealed record CreateGuestProfileCommand(
     string? PreferredLanguageTag,
     string? Notes,
     string ActorId,
-    Guid? CreationConfirmationId = null) :
+    Guid? CreationConfirmationId = null,
+    string[]? LanguageTags = null) :
     ITransactionalCommand<GuestMutationReceiptDto>,
     IGuestsPersistenceRetryableCommand;

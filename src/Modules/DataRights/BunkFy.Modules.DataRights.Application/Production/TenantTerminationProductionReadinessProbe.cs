@@ -34,6 +34,7 @@ internal sealed class TenantTerminationProductionReadinessProbe(
         TenantTerminationReplayStoreReadiness replayReadiness =
             await replayStore.CheckReadinessAsync(cancellationToken)
                 .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         TenantTerminationProductionCatalogEvidence catalogEvidence =
             catalogResult.Value;
         return new(

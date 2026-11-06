@@ -41,6 +41,7 @@ internal sealed class CompleteStaffRetentionExecutionCommandHandler(
 
         Result completed = execution.Complete(
             command.State,
+            command.Attempt,
             command.ScannedCount,
             command.RemainingCount,
             command.OutcomeCode,
@@ -50,6 +51,13 @@ internal sealed class CompleteStaffRetentionExecutionCommandHandler(
         {
             return Result.Failure<RetentionContributionResult>(
                 completed.Error);
+        }
+
+        if (command.State == StaffRetentionExecutionState.Failed)
+        {
+            return Result.Success(
+                BeginStaffRetentionExecutionCommandHandler
+                    .ToResult(execution));
         }
 
         Result advanced = checkpoint.Advance(

@@ -1,5 +1,9 @@
 namespace BunkFy.Modules.Guests.Tests.Application;
 
+using System.Globalization;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using BunkFy.Modules.Guests.Application;
 using BunkFy.Modules.Guests.Application.Commands;
 using BunkFy.Modules.Guests.Application.Contributors;
@@ -10,6 +14,8 @@ using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Guests.Domain.Aggregates;
 using BunkFy.Modules.Guests.Domain.DataRights;
 using BunkFy.Modules.Guests.Domain.Retention;
+using BunkFy.Modules.Properties.Contracts;
+using BunkFy.TimeZones;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
@@ -25,6 +31,7 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
         Fixture fixture = CreateFixture("tenant-a");
         ApplyGuestRetentionCommand command = new(
             fixture.Execution.Id,
+            fixture.Execution.Attempt,
             fixture.Profile.Id,
             fixture.Profile.Version);
 
@@ -44,12 +51,17 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
             GuestRetentionMutationStatus.AlreadyApplied,
             replay.Value.Status);
         Assert.Equal(GuestProfileState.Anonymised, fixture.Profile.Status);
+        Assert.Empty(fixture.Profile.LanguageTags);
         Assert.Equal(1, fixture.Execution.AffectedCount);
         Assert.Equal(1, fixture.Repository.AddProofCount);
         Assert.Equal(1, fixture.Candidates.LoadCount);
         Assert.Equal(1, fixture.Boundary.CallCount);
         Assert.Equal([fixture.Profile.Id], fixture.ManagementOperations.DeletedGuestIds);
         Assert.NotNull(fixture.Repository.Receipt);
+        Assert.Equal(2, fixture.Repository.Receipt.ContractVersion);
+        Assert.Equal(
+            TimeZoneCatalog.Default.CatalogVersion,
+            fixture.Repository.Receipt.TimeZoneCatalogVersion);
         Assert.NotNull(fixture.Repository.Tombstone);
         Assert.True(fixture.Repository.Tombstone.MatchesRetention(
             fixture.Repository.Receipt));
@@ -64,6 +76,7 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    fixture.Execution.Attempt,
                     fixture.Profile.Id,
                     fixture.Profile.Version),
                 CancellationToken.None);
@@ -71,6 +84,33 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
         Assert.Equal(
             GuestsApplicationErrors.RetentionExecutionNotFound,
             result.Error);
+        Assert.Equal(0, fixture.Candidates.LoadCount);
+        Assert.Equal(0, fixture.Boundary.CallCount);
+        Assert.Equal(GuestProfileState.Active, fixture.Profile.Status);
+    }
+
+    [Fact]
+    public async Task Stale_attempt_is_rejected_before_owner_work()
+    {
+        Fixture fixture = CreateFixture("tenant-a");
+        Assert.True(fixture.Execution.BeginRetry(
+            attempt: 2,
+            GuestRetentionTestData.Now,
+            GuestRetentionTestData.Now.AddMinutes(11)).IsSuccess);
+
+        Result<GuestRetentionMutationResult> result =
+            await fixture.Handler.HandleAsync(
+                new(
+                    fixture.Execution.Id,
+                    Attempt: 1,
+                    fixture.Profile.Id,
+                    fixture.Profile.Version),
+                CancellationToken.None);
+
+        Assert.Equal(
+            GuestsApplicationErrors.RetentionExecutionNotFound,
+            result.Error);
+        Assert.Equal(0, fixture.Repository.ReceiptLookupCount);
         Assert.Equal(0, fixture.Candidates.LoadCount);
         Assert.Equal(0, fixture.Boundary.CallCount);
         Assert.Equal(GuestProfileState.Active, fixture.Profile.Status);
@@ -96,6 +136,7 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
             await fixture.Handler.HandleAsync(
                 new(
                     fixture.Execution.Id,
+                    fixture.Execution.Attempt,
                     fixture.Profile.Id,
                     fixture.Profile.Version),
                 CancellationToken.None);
@@ -106,6 +147,140 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
         Assert.Equal(GuestProfileState.Active, fixture.Profile.Status);
         Assert.Equal(0, fixture.Execution.AffectedCount);
         Assert.Equal(0, fixture.Repository.AddProofCount);
+        Assert.Equal(1, fixture.Boundary.CallCount);
+    }
+
+    [Fact]
+    public async Task Time_zone_drift_under_lock_fails_distinctly()
+    {
+        Fixture fixture = CreateFixture("tenant-a");
+        GuestRetentionCandidateSnapshot source =
+            fixture.Candidates.Snapshot;
+        GuestRetentionPropertySnapshot property =
+            Assert.Single(source.Properties);
+        fixture.Candidates.Snapshot = source with
+        {
+            Properties =
+            [
+                property with
+                {
+                    TimeZoneId = "UTC",
+                    CanonicalTimeZoneId = "Etc/UTC",
+                    TimeZoneStatus = PropertyTimeZoneStatus.Alias,
+                    TimeZoneCatalogVersion =
+                        TimeZoneCatalog.Default.CatalogVersion
+                }
+            ]
+        };
+
+        Result<GuestRetentionMutationResult> result =
+            await fixture.Handler.HandleAsync(
+                new(
+                    fixture.Execution.Id,
+                    fixture.Execution.Attempt,
+                    fixture.Profile.Id,
+                    fixture.Profile.Version),
+                CancellationToken.None);
+
+        Assert.Equal(
+            GuestRetentionMutationStatus.Failed,
+            result.Value.Status);
+        Assert.Equal(
+            GuestRetentionMutationFailure.TimeZoneUnavailable,
+            result.Value.Failure);
+        Assert.Equal(GuestProfileState.Active, fixture.Profile.Status);
+        Assert.Equal(0, fixture.Repository.AddProofCount);
+        Assert.Equal(1, fixture.Boundary.CallCount);
+    }
+
+    [Fact]
+    public async Task Completed_v2_execution_replays_immutable_proof()
+    {
+        Fixture fixture = CreateFixture("tenant-a");
+        ApplyGuestRetentionCommand command = new(
+            fixture.Execution.Id,
+            fixture.Execution.Attempt,
+            fixture.Profile.Id,
+            fixture.Profile.Version);
+
+        Assert.Equal(
+            GuestRetentionMutationStatus.Applied,
+            (await fixture.Handler.HandleAsync(
+                command,
+                CancellationToken.None)).Value.Status);
+        Assert.True(fixture.Execution.Complete(
+            GuestRetentionExecutionState.Completed,
+            attempt: fixture.Execution.Attempt,
+            scannedCount: 1,
+            remainingCount: 0,
+            GuestRetentionCoordinates.CompletedOutcome,
+            GuestRetentionTestData.Now,
+            holdReviewDueAtUtc: null).IsSuccess);
+
+        Result<GuestRetentionMutationResult> replay =
+            await fixture.Handler.HandleAsync(
+                command,
+                CancellationToken.None);
+
+        Assert.Equal(
+            GuestRetentionMutationStatus.AlreadyApplied,
+            replay.Value.Status);
+        Assert.Equal(1, fixture.Candidates.LoadCount);
+        Assert.Equal(1, fixture.Boundary.CallCount);
+    }
+
+    [Fact]
+    public async Task Terminal_v1_execution_replays_original_receipt_bytes()
+    {
+        Fixture fixture = CreateFixture("tenant-a");
+        ApplyGuestRetentionCommand command = new(
+            fixture.Execution.Id,
+            fixture.Execution.Attempt,
+            fixture.Profile.Id,
+            fixture.Profile.Version);
+        Assert.Equal(
+            GuestRetentionMutationStatus.Applied,
+            (await fixture.Handler.HandleAsync(
+                command,
+                CancellationToken.None)).Value.Status);
+        GuestRetentionAnonymisationReceipt receipt =
+            fixture.Repository.Receipt!;
+        Set(receipt, nameof(receipt.ContractVersion), 1);
+        Set(receipt, nameof(receipt.TimeZoneCatalogVersion), null);
+        string versionOneDigest =
+            ComputeVersionOneCanonicalSha256(receipt);
+        Set(
+            receipt,
+            nameof(receipt.CanonicalSha256),
+            versionOneDigest);
+        Set(
+            fixture.Repository.Tombstone!,
+            nameof(GuestAnonymisationTombstone.OwnerReceiptSha256),
+            versionOneDigest);
+        Set(
+            fixture.Execution,
+            nameof(fixture.Execution.ExecutionPolicyVersion),
+            1);
+        Assert.True(fixture.Execution.Complete(
+            GuestRetentionExecutionState.Completed,
+            attempt: fixture.Execution.Attempt,
+            scannedCount: 1,
+            remainingCount: 0,
+            GuestRetentionCoordinates.CompletedOutcome,
+            GuestRetentionTestData.Now,
+            holdReviewDueAtUtc: null).IsSuccess);
+
+        Result<GuestRetentionMutationResult> replay =
+            await fixture.Handler.HandleAsync(
+                command,
+                CancellationToken.None);
+
+        Assert.Equal(
+            GuestRetentionMutationStatus.AlreadyApplied,
+            replay.Value.Status);
+        Assert.True(
+            fixture.Repository.Tombstone!.MatchesRetention(receipt));
+        Assert.Equal(1, fixture.Candidates.LoadCount);
         Assert.Equal(1, fixture.Boundary.CallCount);
     }
 
@@ -127,7 +302,8 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
             "Prefers a lower bunk.",
             "user:creator",
             Guid.NewGuid(),
-            GuestRetentionTestData.Now.AddYears(-2)).Value;
+            GuestRetentionTestData.Now.AddYears(-2),
+            languageTags: ["en-GB", "fr", "unknown-١"]).Value;
         profile.ClearDomainEvents();
         GuestRetentionExecution execution =
             GuestRetentionExecution.Start(
@@ -223,11 +399,12 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
         }
 
         public int AddProofCount { get; private set; }
+        public int ReceiptLookupCount { get; private set; }
 
         public Task<GuestRetentionExecution?> GetExecutionAsync(
             Guid executionId,
             CancellationToken cancellationToken) =>
-            Task.FromResult<GuestRetentionExecution?>(
+            Task.FromResult(
                 execution.Id == executionId ? execution : null);
 
         public Task AddExecutionAsync(
@@ -247,11 +424,14 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
 
         public Task<GuestRetentionAnonymisationReceipt?> GetReceiptAsync(
             Guid guestId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(
+            CancellationToken cancellationToken)
+        {
+            this.ReceiptLookupCount++;
+            return Task.FromResult(
                 this.Receipt?.GuestId == guestId
                     ? this.Receipt
                     : null);
+        }
 
         public Task<GuestAnonymisationTombstone?> GetTombstoneAsync(
             Guid guestId,
@@ -264,7 +444,7 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
         public Task<GuestProfile?> GetProfileAsync(
             Guid guestId,
             CancellationToken cancellationToken) =>
-            Task.FromResult<GuestProfile?>(
+            Task.FromResult(
                 profile.Id == guestId ? profile : null);
 
         public Task AddAnonymisationProofAsync(
@@ -299,7 +479,7 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
             CancellationToken cancellationToken)
         {
             this.LoadCount++;
-            return Task.FromResult<GuestRetentionCandidateSnapshot?>(
+            return Task.FromResult(
                 this.Snapshot.GuestId == guestId
                     ? this.Snapshot
                     : null);
@@ -339,4 +519,62 @@ public sealed class ApplyGuestRetentionCommandHandlerTests
 
         public Guid NewId() => this.values.Dequeue();
     }
+
+    private static string ComputeVersionOneCanonicalSha256(
+        GuestRetentionAnonymisationReceipt receipt)
+    {
+        StringBuilder canonical = new();
+        Append(canonical, "1");
+        Append(canonical, receipt.Id.ToString("N"));
+        Append(canonical, receipt.ScopeId);
+        Append(canonical, receipt.ExecutionId.ToString("N"));
+        Append(canonical, receipt.GuestId.ToString("N"));
+        Append(
+            canonical,
+            receipt.SelectedGuestVersion.ToString(
+                CultureInfo.InvariantCulture));
+        Append(
+            canonical,
+            receipt.ResultingGuestVersion.ToString(
+                CultureInfo.InvariantCulture));
+        Append(
+            canonical,
+            receipt.AffectedPropertyCount.ToString(
+                CultureInfo.InvariantCulture));
+        Append(
+            canonical,
+            receipt.RetentionDeadlineUtc.ToString(
+                "O",
+                CultureInfo.InvariantCulture));
+        Append(canonical, receipt.PolicySetSha256);
+        Append(canonical, receipt.EventId.ToString("N"));
+        Append(canonical, receipt.ActorId);
+        Append(
+            canonical,
+            receipt.CompletedAtUtc.ToString(
+                "O",
+                CultureInfo.InvariantCulture));
+        return Convert.ToHexString(
+                SHA256.HashData(
+                    Encoding.UTF8.GetBytes(canonical.ToString())))
+            .ToLowerInvariant();
+    }
+
+    private static void Append(StringBuilder target, string value)
+    {
+        target.Append(
+            value.Length.ToString(CultureInfo.InvariantCulture));
+        target.Append(':');
+        target.Append(value);
+    }
+
+    private static void Set(
+        object target,
+        string propertyName,
+        object? value) =>
+        target.GetType()
+            .GetProperty(
+                propertyName,
+                BindingFlags.Instance | BindingFlags.Public)!
+            .SetValue(target, value);
 }

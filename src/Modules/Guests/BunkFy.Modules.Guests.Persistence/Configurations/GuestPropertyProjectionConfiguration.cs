@@ -12,7 +12,41 @@ internal sealed class GuestPropertyProjectionConfiguration : IEntityTypeConfigur
         {
             table.HasCheckConstraint(
                 "CK_guests_property_projection_versions",
-                "\"TopologySourceVersion\" >= 0 AND \"PolicySourceVersion\" >= 0");
+                "\"TopologySourceVersion\" >= 0 AND \"PolicySourceVersion\" >= 0 AND " +
+                "\"TimeZoneEvidenceSourceVersion\" >= 0");
+            table.HasCheckConstraint(
+                "CK_guests_property_projection_time_zone_evidence",
+                "(\"TimeZoneEvidenceSource\" = 0 AND \"TimeZoneStatus\" = 0 AND " +
+                "\"CanonicalTimeZoneId\" IS NULL AND \"TimeZoneCatalogVersion\" IS NULL AND " +
+                "\"TimeZoneEvidenceSourceVersion\" = 0) OR " +
+                "(\"TimeZoneEvidenceSource\" = 1 AND \"TimeZoneStatus\" = 0 AND " +
+                "\"CanonicalTimeZoneId\" IS NULL AND \"TimeZoneCatalogVersion\" IS NULL) OR " +
+                "(\"TimeZoneEvidenceSource\" IN (2, 4) AND \"TimeZoneId\" IS NOT NULL AND " +
+                "\"TimeZoneEvidenceSourceVersion\" >= 1 AND " +
+                "((\"TimeZoneStatus\" = 1 AND \"CanonicalTimeZoneId\" = \"TimeZoneId\" AND " +
+                "\"TimeZoneCatalogVersion\" IS NOT NULL) OR " +
+                "(\"TimeZoneStatus\" = 2 AND \"CanonicalTimeZoneId\" IS NOT NULL AND " +
+                "\"CanonicalTimeZoneId\" <> \"TimeZoneId\" AND " +
+                "\"TimeZoneCatalogVersion\" IS NOT NULL) OR " +
+                "(\"TimeZoneStatus\" IN (3, 4, 5) AND \"CanonicalTimeZoneId\" IS NULL AND " +
+                "\"TimeZoneCatalogVersion\" IS NULL))) OR " +
+                "(\"TimeZoneEvidenceSource\" = 3 AND \"TimeZoneStatus\" = 1 AND " +
+                "\"TimeZoneId\" IS NOT NULL AND \"CanonicalTimeZoneId\" = \"TimeZoneId\" AND " +
+                "\"TimeZoneCatalogVersion\" IS NOT NULL AND " +
+                "\"TimeZoneEvidenceSourceVersion\" >= 1)");
+            table.HasCheckConstraint(
+                "CK_guests_property_projection_time_zone_text",
+                "\"TimeZoneEvidenceSource\" NOT IN (2, 3, 4) OR " +
+                "(char_length(\"TimeZoneId\") > 0 AND \"TimeZoneId\" = btrim(\"TimeZoneId\") AND " +
+                "\"TimeZoneId\" !~ '[[:cntrl:]]' AND " +
+                "(\"CanonicalTimeZoneId\" IS NULL OR " +
+                "(char_length(\"CanonicalTimeZoneId\") > 0 AND " +
+                "\"CanonicalTimeZoneId\" = btrim(\"CanonicalTimeZoneId\") AND " +
+                "\"CanonicalTimeZoneId\" !~ '[[:cntrl:]]')) AND " +
+                "(\"TimeZoneCatalogVersion\" IS NULL OR " +
+                "(char_length(\"TimeZoneCatalogVersion\") > 0 AND " +
+                "\"TimeZoneCatalogVersion\" = btrim(\"TimeZoneCatalogVersion\") AND " +
+                "\"TimeZoneCatalogVersion\" !~ '[[:cntrl:]]')))");
             table.HasCheckConstraint(
                 "CK_guests_property_projection_processing_status",
                 "\"ProcessingStatus\" BETWEEN 1 AND 3");
@@ -41,6 +75,18 @@ internal sealed class GuestPropertyProjectionConfiguration : IEntityTypeConfigur
         builder.Property(property => property.Name).HasMaxLength(256);
         builder.Property(property => property.TimeZoneId)
             .HasMaxLength(PropertiesContractLimits.TimeZoneIdMaxLength);
+        builder.Property(property => property.CanonicalTimeZoneId)
+            .HasMaxLength(PropertiesContractLimits.TimeZoneIdMaxLength);
+        builder.Property(property => property.TimeZoneStatus)
+            .HasConversion<int>()
+            .IsRequired();
+        builder.Property(property => property.TimeZoneCatalogVersion)
+            .HasMaxLength(PropertiesContractLimits.TimeZoneCatalogVersionMaxLength);
+        builder.Property(property => property.TimeZoneEvidenceSource)
+            .HasConversion<int>()
+            .IsRequired();
+        builder.Property(property => property.TimeZoneEvidenceSourceVersion)
+            .IsRequired();
         builder.Property(property => property.Status).HasConversion<int>().IsRequired();
         builder.Property(property => property.TopologySourceVersion).IsConcurrencyToken().IsRequired();
         builder.Property(property => property.PolicySourceVersion).IsConcurrencyToken().IsRequired();

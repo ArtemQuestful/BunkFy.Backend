@@ -9,14 +9,16 @@ using Gma.Framework.AccessControl;
 using Gma.Framework.Permissions;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Organizations.Contracts;
+using Microsoft.Extensions.Logging;
 
-internal sealed class OperationalNotificationProjector(
+internal sealed partial class OperationalNotificationProjector(
     IStaffPropertyAudienceReader audienceReader,
     IStaffNotificationRecipientResolver recipientResolver,
     IWorkspaceOwnerNotificationAudienceReader workspaceOwnerAudienceReader,
     IOrganizationAccessCandidateFilter organizationAccess,
     IAccessAuthorizationService authorization,
-    IUserNotificationRequestProjectorV3 notificationProjector)
+    IUserNotificationRequestProjectorV3 notificationProjector,
+    ILogger<OperationalNotificationProjector> logger)
 {
     private const int AuthorizationCandidateBatchSize = 500;
 
@@ -61,6 +63,8 @@ internal sealed class OperationalNotificationProjector(
             await this.ResolveStaffRecipientsAsync(
                     scopeId,
                     recipients,
+                    notification.SourceModule,
+                    notification.Name,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -109,12 +113,32 @@ internal sealed class OperationalNotificationProjector(
             return;
         }
 
+        IReadOnlyList<StaffNotificationRecipient> staffRecipients =
+            await this.ResolveStaffRecipientsAsync(
+                    scopeId,
+                    recipients,
+                    notification.SourceModule,
+                    notification.Name,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        if (staffRecipients.Count == 0)
+        {
+            return;
+        }
+
+        StaffNotificationRecipient staffRecipient = staffRecipients[0];
+        if (staffRecipient.StaffMemberId != staffMemberId)
+        {
+            throw new InvalidOperationException(
+                "A direct operational notification recipient resolved to a different Staff identity.");
+        }
+
         await this.ProjectAsync(
                 sourceEventId,
                 scopeId,
                 occurredAtUtc,
-                recipients[0],
-                staffMemberId,
+                staffRecipient.AuthSubjectId,
+                staffRecipient.StaffMemberId,
                 notification,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -164,6 +188,8 @@ internal sealed class OperationalNotificationProjector(
         ResolveStaffRecipientsAsync(
             string scopeId,
             IReadOnlyList<string> recipients,
+            string sourceModule,
+            string notificationName,
             CancellationToken cancellationToken)
     {
         if (recipients.Count == 0)
@@ -188,21 +214,44 @@ internal sealed class OperationalNotificationProjector(
         HashSet<string> expected =
             recipients.ToHashSet(StringComparer.Ordinal);
         HashSet<string> actual = [];
+        HashSet<Guid> actualStaffIds = [];
         bool invalid = resolved.Any(recipient =>
+            recipient is null ||
             recipient.StaffMemberId == Guid.Empty ||
             string.IsNullOrWhiteSpace(recipient.AuthSubjectId) ||
             !expected.Contains(recipient.AuthSubjectId) ||
-            !actual.Add(recipient.AuthSubjectId));
-        if (invalid || actual.Count != expected.Count)
+            !actual.Add(recipient.AuthSubjectId) ||
+            !actualStaffIds.Add(recipient.StaffMemberId));
+        if (invalid)
         {
             throw new InvalidOperationException(
-                "An authorized operational notification recipient has no unique active Staff correlation.");
+                "An operational notification recipient resolver returned an invalid Staff correlation.");
+        }
+
+        int skippedCount = expected.Count - actual.Count;
+        if (skippedCount > 0)
+        {
+            LogSkippedRecipients(
+                logger,
+                sourceModule,
+                notificationName,
+                skippedCount);
         }
 
         return resolved
             .OrderBy(recipient => recipient.AuthSubjectId, StringComparer.Ordinal)
             .ToArray();
     }
+
+    [LoggerMessage(
+        EventId = 7101,
+        Level = LogLevel.Warning,
+        Message = "Operational notification {SourceModule}/{NotificationName} skipped {SkippedCount} candidate recipient(s) without a current active and unrestricted Staff correlation.")]
+    private static partial void LogSkippedRecipients(
+        ILogger logger,
+        string sourceModule,
+        string notificationName,
+        int skippedCount);
 
     private async Task<IReadOnlyList<string>> FilterAuthorizedRecipientsAsync(
         string scopeId,

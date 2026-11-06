@@ -1,17 +1,22 @@
 namespace Integration.Tests;
 
 using BunkFy.Modules.DataRights.Domain.Aggregates;
+using BunkFy.Modules.DataRights.Domain.Entities;
 using BunkFy.Modules.DataRights.Domain.Models;
 using BunkFy.Modules.DataRights.Domain.ValueObjects;
 using BunkFy.Modules.DataRights.Persistence;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
 
 public sealed class TenantTerminationPersistenceIntegrationTests
 {
+    private const string PreviousMigration =
+        "20260815130159_BindDataRightsRestrictionReleaseTarget";
     private static readonly string Digest = new('a', 64);
     private static readonly DateTimeOffset Now =
         new(2026, 7, 31, 10, 0, 0, TimeSpan.Zero);
@@ -31,8 +36,42 @@ public sealed class TenantTerminationPersistenceIntegrationTests
         await using DataRightsDbContext tenantA = CreateDbContext(
             connectionString,
             "tenant-a");
+        IMigrator migrator = tenantA.Database.GetService<IMigrator>();
+        await migrator.MigrateAsync(PreviousMigration);
+        DataRightsExportAuditEntry existingAudit =
+            DataRightsExportAuditEntry.Create(
+                Guid.NewGuid(),
+                "tenant-a",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                propertyId: null,
+                DataRightsCaseKind.StaffRights,
+                DataRightsExportAuditAction.Download,
+                "operator:privacy",
+                "succeeded",
+                Now).Value;
+        tenantA.ExportAuditEntries.Add(existingAudit);
+        await tenantA.SaveChangesAsync();
+
         await tenantA.Database.MigrateAsync();
         Assert.Empty(await tenantA.Database.GetPendingMigrationsAsync());
+        Assert.Equal(
+            existingAudit.Id,
+            (await tenantA.ExportAuditEntries.SingleAsync()).Id);
+        DataRightsExportAuditEntry tenantTerminationAudit =
+            DataRightsExportAuditEntry.Create(
+                Guid.NewGuid(),
+                "tenant-a",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                propertyId: null,
+                DataRightsCaseKind.TenantTermination,
+                DataRightsExportAuditAction.DeletionStarted,
+                "system:tenant-termination-export-retention",
+                "started",
+                Now.AddMinutes(1)).Value;
+        tenantA.ExportAuditEntries.Add(tenantTerminationAudit);
+        await tenantA.SaveChangesAsync();
 
         DataRightsCase firstCase = CreateCase(
             "tenant-a",

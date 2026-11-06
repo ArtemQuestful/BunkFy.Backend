@@ -36,6 +36,8 @@ public sealed partial class DataRightsCase : ScopedAggregateRoot<Guid>
     public bool? TenantTerminationExportRequested { get; private set; }
     public string? TenantTerminationPolicyEvidenceSha256 { get; private set; }
     public DataRightsRestrictionExecutionProof? RestrictionExecutionProof { get; private set; }
+    public int? RestrictionTargetingContractVersion { get; private set; }
+    public DataRightsRestrictionReleaseTarget? RestrictionReleaseTarget { get; private set; }
     public long? ExecutionRevision { get; private set; }
     public string? ExecutionStartedBy { get; private set; }
     public DateTimeOffset? ExecutionStartedAtUtc { get; private set; }
@@ -98,6 +100,11 @@ public sealed partial class DataRightsCase : ScopedAggregateRoot<Guid>
             Kind = request.Kind,
             RequestedOperations = request.RequestedOperations,
             RestrictionAction = request.RestrictionAction,
+            RestrictionTargetingContractVersion =
+                request.RequestedOperations == DataRightsCaseOperation.Restriction &&
+                request.RestrictionAction == DataRightsRestrictionAction.Release
+                    ? DataRightsRestrictionReleaseTarget.CurrentBindingVersion
+                    : null,
             RequesterRelationship = request.RequesterRelationship,
             VerificationStatus = requesterNeedsVerification
                 ? DataRightsVerificationState.Pending

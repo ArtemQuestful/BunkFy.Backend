@@ -2,6 +2,8 @@ namespace BunkFy.Modules.Reservations.Persistence.Repositories;
 
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Domain.DataRights;
+using BunkFy.Modules.Reservations.Domain.Models;
+using Gma.Framework.Pagination;
 using Microsoft.EntityFrameworkCore;
 
 internal sealed class ReservationProcessingRestrictionRepository(
@@ -55,6 +57,26 @@ internal sealed class ReservationProcessingRestrictionRepository(
                 restriction.Id == restrictionId &&
                 restriction.PropertyId == propertyId,
             cancellationToken);
+
+    public async Task<IReadOnlyCollection<ReservationProcessingRestriction>>
+        ListActiveAsync(
+            Guid propertyId,
+            Guid reservationId,
+            PageRequest pageRequest,
+            CancellationToken cancellationToken) =>
+        await dbContext.ProcessingRestrictions
+            .AsNoTracking()
+            .Where(restriction =>
+                restriction.PropertyId == propertyId &&
+                restriction.ReservationId == reservationId &&
+                restriction.Status ==
+                    ReservationProcessingRestrictionStatus.Active)
+            .OrderBy(restriction => restriction.AppliedAtUtc)
+            .ThenBy(restriction => restriction.Id)
+            .Skip(pageRequest.SkipCount)
+            .Take(pageRequest.PageSize)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
 
     public Task AddAsync(
         ReservationProcessingRestriction restriction,

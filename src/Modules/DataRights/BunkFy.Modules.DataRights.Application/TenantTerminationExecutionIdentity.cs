@@ -21,6 +21,10 @@ internal static class TenantTerminationExecutionIdentity
         "bunkfy.data-rights.tenant-termination.export-artifact-idempotency.v1";
     private const string ExportArtifactTaskRunDomain =
         "bunkfy.data-rights.tenant-termination.export-artifact-task-run.v1";
+    private const string ExportArtifactCleanupTaskRunDomain =
+        "bunkfy.data-rights.tenant-termination.export-artifact-cleanup-task-run.v1";
+    private const string ExportFragmentCleanupTaskRunDomain =
+        "bunkfy.data-rights.tenant-termination.export-fragment-cleanup-task-run.v1";
     private const string TerminalReceiptDomain =
         "bunkfy.data-rights.tenant-termination.terminal-receipt.v1";
     private const string TerminalReceiptIdempotencyDomain =
@@ -112,6 +116,12 @@ internal static class TenantTerminationExecutionIdentity
             ExportArtifactTaskRunDomain,
             processId,
             operationRevision);
+
+    public static Guid CreateExportArtifactCleanupTaskRunId(Guid artifactId) =>
+        CreateProcessGuid(ExportArtifactCleanupTaskRunDomain, artifactId);
+
+    public static Guid CreateExportFragmentCleanupTaskRunId(Guid fragmentId) =>
+        CreateProcessGuid(ExportFragmentCleanupTaskRunDomain, fragmentId);
 
     public static Guid CreateTerminalReceiptId(
         Guid processId,

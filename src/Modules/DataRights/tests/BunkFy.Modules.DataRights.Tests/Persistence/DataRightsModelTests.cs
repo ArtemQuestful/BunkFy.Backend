@@ -1,13 +1,14 @@
 namespace BunkFy.Modules.DataRights.Tests.Persistence;
 
+using BunkFy.Modules.DataRights.Application.Models;
 using BunkFy.Modules.DataRights.Domain.Aggregates;
 using BunkFy.Modules.DataRights.Domain.Entities;
 using BunkFy.Modules.DataRights.Domain.Models;
 using BunkFy.Modules.DataRights.Domain.ValueObjects;
-using BunkFy.Modules.DataRights.Application.Models;
 using BunkFy.Modules.DataRights.Persistence;
 using BunkFy.Modules.DataRights.Persistence.Repositories;
 using Gma.Framework.Pagination;
+using Gma.Framework.Persistence.EntityFrameworkCore;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -15,9 +16,9 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 using DataRightsCaseListResponse =
-    BunkFy.Modules.DataRights.Contracts.DataRightsCaseListResponse;
+    DataRights.Contracts.DataRightsCaseListResponse;
 using DataRightsRequesterRelationship =
-    BunkFy.Modules.DataRights.Contracts.DataRightsRequesterRelationship;
+    DataRights.Contracts.DataRightsRequesterRelationship;
 
 [Trait("Category", "Unit")]
 public sealed class DataRightsModelTests
@@ -90,6 +91,10 @@ public sealed class DataRightsModelTests
             designEntity.GetCheckConstraints(),
             constraint =>
                 constraint.Name == "CK_data_rights_cases_restriction_execution_proof");
+        Assert.Contains(
+            designEntity.GetCheckConstraints(),
+            constraint =>
+                constraint.Name == "CK_data_rights_cases_restriction_target");
         Assert.Equal(
             "\"Kind\" IN (1, 2, 3)",
             designEntity.GetCheckConstraints().Single(
@@ -167,12 +172,41 @@ public sealed class DataRightsModelTests
                 foreignKey.DeleteBehavior == DeleteBehavior.Restrict);
         IEntityType propertyProjection = dbContext.Model.FindEntityType(
             typeof(DataRightsPropertyProjection))!;
+        IEntityType designPropertyProjection = dbContext.GetService<IDesignTimeModel>()
+            .Model
+            .FindEntityType(typeof(DataRightsPropertyProjection))!;
+        Assert.NotNull(propertyProjection.FindDeclaredQueryFilter(
+            ScopeFilterNames.ScopeFilter));
         Assert.Equal(
-            BunkFy.Modules.Properties.Contracts.PropertiesContractLimits
+            Properties.Contracts.PropertiesContractLimits
                 .TimeZoneIdMaxLength,
             propertyProjection.FindProperty(
                 nameof(DataRightsPropertyProjection.TimeZoneId))!
                 .GetMaxLength());
+        string[] propertyProjectionConstraints =
+        [
+            "CK_data_rights_property_projection_coordinates",
+            "CK_data_rights_property_projection_versions",
+            "CK_data_rights_property_projection_topology",
+            "CK_data_rights_property_projection_topology_text",
+            "CK_data_rights_property_projection_known",
+            "CK_data_rights_property_projection_processing_status",
+            "CK_data_rights_property_projection_policy_source",
+            "CK_data_rights_property_projection_governance_policy"
+        ];
+        Assert.All(
+            propertyProjectionConstraints,
+            constraintName => Assert.Contains(
+                designPropertyProjection.GetCheckConstraints(),
+                constraint => constraint.Name == constraintName));
+        IEntityType designPropertyPolicyAcknowledgement = dbContext
+            .GetService<IDesignTimeModel>()
+            .Model
+            .FindEntityType(typeof(DataRightsPropertyPolicyAcknowledgement))!;
+        Assert.Contains(
+            designPropertyPolicyAcknowledgement.GetCheckConstraints(),
+            constraint => constraint.Name ==
+                "CK_data_rights_property_policy_acknowledgements_contract");
         IEntityType selectedSubject =
             dbContext.Model.FindEntityType(typeof(DataRightsSubjectCoordinate))!;
         IEntityType designSelectedSubject = dbContext.GetService<IDesignTimeModel>()
@@ -406,6 +440,10 @@ public sealed class DataRightsModelTests
         Assert.False(
             artifact.FindProperty(nameof(DataRightsExportArtifact.ExpiresAtUtc))!
                 .IsNullable);
+        Assert.True(
+            artifact.FindProperty(
+                nameof(DataRightsExportArtifact.LastRetryBaseVersion))!
+                .IsNullable);
         Assert.Equal(
             DataRightsExportArtifact.Sha256Length,
             artifact.FindProperty(nameof(DataRightsExportArtifact.SelectionSha256))!
@@ -452,6 +490,11 @@ public sealed class DataRightsModelTests
                 constraint.Name ==
                 "CK_data_rights_export_artifacts_failure_shape");
         Assert.Contains(
+            designArtifact.GetCheckConstraints(),
+            constraint =>
+                constraint.Name ==
+                "CK_data_rights_export_artifacts_retry_version");
+        Assert.Contains(
             designArtifact.GetForeignKeys(),
             foreignKey =>
                 foreignKey.DeleteBehavior == DeleteBehavior.Restrict &&
@@ -474,7 +517,7 @@ public sealed class DataRightsModelTests
                 Guid.NewGuid(),
                 Guid.NewGuid(),
                 propertyId: null,
-                DataRightsCaseKind.StaffRights,
+                DataRightsCaseKind.TenantTermination,
                 DataRightsExportAuditAction.Download,
                 "user:privacy",
                 "succeeded",
@@ -505,10 +548,15 @@ public sealed class DataRightsModelTests
                 DataRightsExportAuditEntry.OutcomeCodeMaxLength,
                 entity.FindProperty(nameof(DataRightsExportAuditEntry.OutcomeCode))!
                     .GetMaxLength());
-            Assert.Contains(
+            string scopeConstraint = Assert.Single(
                 designEntity.GetCheckConstraints(),
                 constraint =>
-                    constraint.Name == "CK_data_rights_export_audit_scope");
+                    constraint.Name == "CK_data_rights_export_audit_scope")
+                .Sql;
+            Assert.Contains(
+                $"\"CaseKind\" IN ({(int)DataRightsCaseKind.TenantTermination}, {(int)DataRightsCaseKind.StaffRights})",
+                scopeConstraint,
+                StringComparison.Ordinal);
             Assert.Contains(
                 designEntity.GetCheckConstraints(),
                 constraint =>
@@ -552,6 +600,9 @@ public sealed class DataRightsModelTests
             root,
             "tenant-b");
         Assert.Empty(await tenantB.Cases.ToArrayAsync());
+        Assert.Null(await new DataRightsCaseRepository(tenantB).GetByIdAsync(
+            dataRightsCase.Id,
+            CancellationToken.None));
     }
 
     [Fact]
@@ -600,6 +651,16 @@ public sealed class DataRightsModelTests
             DataRightsCaseScope.Staff,
             termination.Id,
             CancellationToken.None));
+        Assert.Same(
+            guestA,
+            await repository.GetByIdAsync(
+                guestA.Id,
+                CancellationToken.None));
+        Assert.Same(
+            termination,
+            await repository.GetByIdAsync(
+                termination.Id,
+                CancellationToken.None));
         Assert.Same(
             termination,
             await repository.GetAsync(
@@ -813,6 +874,77 @@ public sealed class DataRightsModelTests
             "tenant-a");
         DataRightsCase restored = await reader.Cases.SingleAsync();
         Assert.Equal(DataRightsRestrictionAction.Release, restored.RestrictionAction);
+    }
+
+    [Fact]
+    public async Task Restriction_release_target_round_trips_with_the_case()
+    {
+        string databaseName =
+            $"data-rights-restriction-target-{Guid.NewGuid():N}";
+        InMemoryDatabaseRoot root = new();
+        Guid propertyId = Guid.NewGuid();
+        Guid ownerOperationId = Guid.NewGuid();
+        DateTimeOffset now =
+            new(2026, 8, 15, 12, 30, 0, TimeSpan.Zero);
+        DataRightsCaseRequest request = DataRightsCaseRequest.Create(
+            propertyId,
+            DataRightsCaseKind.GuestRights,
+            DataRightsCaseOperation.Restriction,
+            DataRightsRequesterRelation.ControllerInitiated,
+            DataRightsRestrictionAction.Release).Value;
+        DataRightsCase dataRightsCase = DataRightsCase.Create(
+            Guid.NewGuid(),
+            "tenant-a",
+            request,
+            "user:privacy",
+            now.AddMinutes(-3)).Value;
+        Assert.True(dataRightsCase.BeginDiscovery(
+            dataRightsCase.Version,
+            "user:privacy",
+            now.AddMinutes(-2)).IsSuccess);
+        Assert.True(dataRightsCase.SelectSubject(
+            "guests",
+            "guest-profile",
+            Guid.NewGuid(),
+            recordVersion: 5,
+            dataRightsCase.Version,
+            "user:privacy",
+            now.AddMinutes(-1)).IsSuccess);
+        Assert.True(dataRightsCase.SelectRestrictionReleaseTarget(
+            "guests",
+            ownerOperationId,
+            ownerOperationVersion: 3,
+            dataRightsCase.Version,
+            "user:reviewer",
+            now).IsSuccess);
+
+        await using (DataRightsDbContext writer = CreateDbContext(
+            databaseName,
+            root,
+            "tenant-a"))
+        {
+            writer.Cases.Add(dataRightsCase);
+            await writer.SaveChangesAsync();
+        }
+
+        await using DataRightsDbContext reader = CreateDbContext(
+            databaseName,
+            root,
+            "tenant-a");
+        DataRightsCase restored = await reader.Cases.SingleAsync();
+        Assert.Equal(
+            DataRightsRestrictionReleaseTarget.CurrentBindingVersion,
+            restored.RestrictionTargetingContractVersion);
+        Assert.NotNull(restored.RestrictionReleaseTarget);
+        Assert.Equal(
+            ownerOperationId,
+            restored.RestrictionReleaseTarget.OwnerOperationId);
+        Assert.Equal(
+            3,
+            restored.RestrictionReleaseTarget.OwnerOperationVersion);
+        Assert.Equal("guests", restored.RestrictionReleaseTarget.OwnerKey);
+        Assert.Equal("user:reviewer", restored.RestrictionReleaseTarget.SelectedBy);
+        Assert.Equal(now, restored.RestrictionReleaseTarget.SelectedAtUtc);
     }
 
     [Fact]

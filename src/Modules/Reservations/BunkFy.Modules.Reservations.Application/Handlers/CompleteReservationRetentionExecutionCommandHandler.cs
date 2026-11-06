@@ -41,12 +41,16 @@ internal sealed class
                 ReservationsApplicationErrors.RetentionProofConflict);
         }
 
+        DateTimeOffset completedAtUtc =
+            ReservationMutationTime.Normalize(
+                command.CompletedAtUtc);
         Result completed = execution.Complete(
             command.State,
+            command.Attempt,
             command.ScannedCount,
             command.RemainingCount,
             command.OutcomeCode,
-            command.CompletedAtUtc,
+            completedAtUtc,
             command.HoldReviewDueAtUtc);
         if (completed.IsFailure)
         {
@@ -54,11 +58,19 @@ internal sealed class
                 completed.Error);
         }
 
+        if (command.State ==
+            ReservationRetentionExecutionState.Failed)
+        {
+            return Result.Success(
+                BeginReservationRetentionExecutionCommandHandler
+                    .ToResult(execution));
+        }
+
         Result advanced = checkpoint.Advance(
             command.ExpectedAfterProjectionOrdinal,
             command.NextAfterProjectionOrdinal,
             command.ExecutionId,
-            command.CompletedAtUtc);
+            completedAtUtc);
         return advanced.IsFailure
             ? Result.Failure<RetentionContributionResult>(
                 advanced.Error)

@@ -69,6 +69,7 @@
     <ProjectReference Include="..\Extensions\BunkFy.Extensions.DataRights.TaskRuntime\BunkFy.Extensions.DataRights.TaskRuntime.csproj" />
     <ProjectReference Include="..\Extensions\BunkFy.Extensions.DataRights.TenantTermination\BunkFy.Extensions.DataRights.TenantTermination.csproj" />
     <ProjectReference Include="..\Extensions\BunkFy.Extensions.Operations.Notifications\BunkFy.Extensions.Operations.Notifications.csproj" />
+    <ProjectReference Include="..\Extensions\BunkFy.Extensions.Retention.TaskRuntime\BunkFy.Extensions.Retention.TaskRuntime.csproj" />
     <ProjectReference Include="..\Extensions\BunkFy.Extensions.Workspaces\BunkFy.Extensions.Workspaces.csproj" />
     <ProjectReference Include="..\Adapters\BunkFy.Adapters.Configuration\BunkFy.Adapters.Configuration.csproj" />
     <ProjectReference Include="..\Adapters\BunkFy.Adapters.FakeHttp\BunkFy.Adapters.FakeHttp.csproj" />

@@ -25,7 +25,7 @@ internal sealed class WorkspaceTenantDestroyOperationConfiguration
             table.HasCheckConstraint(
                 "CK_workspaces_tenant_destroy_operation_progress",
                 $"\"Stage\" BETWEEN 1 AND " +
-                $"{(int)WorkspaceTenantDestroyStage.Completed} AND " +
+                $"{(int)WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts} AND " +
                 "\"RemovedRecordCount\" >= 0 AND " +
                 "\"CompletedBatchCount\" >= 0 AND " +
                 "\"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");

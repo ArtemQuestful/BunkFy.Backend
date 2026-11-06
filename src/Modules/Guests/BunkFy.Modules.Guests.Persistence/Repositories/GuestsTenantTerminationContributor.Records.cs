@@ -68,7 +68,10 @@ internal sealed partial class GuestsTenantTerminationContributor
                     profile.CreatedAtUtc,
                     profile.LastChangedAtUtc,
                     profile.ArchivedAtUtc,
-                    profile.AnonymisedAtUtc),
+                    profile.AnonymisedAtUtc)
+                {
+                    LanguageTags = profile.LanguageTags
+                },
                 new GuestProfileStaffTenantExport(
                     profile.CreatedBy,
                     profile.LastChangedBy));

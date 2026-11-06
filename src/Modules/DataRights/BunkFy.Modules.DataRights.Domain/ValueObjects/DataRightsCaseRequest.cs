@@ -55,6 +55,11 @@ public sealed class DataRightsCaseRequest
 
         bool restrictionRequested =
             (requestedOperations & DataRightsCaseOperation.Restriction) != DataRightsCaseOperation.None;
+        if (restrictionRequested && requestedOperations != DataRightsCaseOperation.Restriction)
+        {
+            return Result.Failure<DataRightsCaseRequest>(DataRightsDomainErrors.OperationsInvalid);
+        }
+
         if ((restrictionRequested &&
                 restrictionAction is not DataRightsRestrictionAction.Apply
                     and not DataRightsRestrictionAction.Release) ||

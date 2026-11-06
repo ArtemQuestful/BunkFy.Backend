@@ -17,4 +17,7 @@ public sealed record GuestProfileDto(
     DateTimeOffset CreatedAtUtc,
     string LastChangedBy,
     DateTimeOffset LastChangedAtUtc,
-    DateTimeOffset? ArchivedAtUtc);
+    DateTimeOffset? ArchivedAtUtc)
+{
+    public string[] LanguageTags { get; init; } = [];
+}

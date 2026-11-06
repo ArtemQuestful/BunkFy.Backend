@@ -4,6 +4,7 @@ using Gma.Framework.Messaging;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using BunkFy.Modules.Inventory.Contracts;
+using BunkFy.Modules.Reservations.Application.Policies;
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
@@ -29,6 +30,16 @@ internal sealed class InventoryAllocationConfirmedHandler(
         {
             throw new InvalidOperationException(
                 $"Reservation '{outcome.ReservationId}' was not found for Inventory allocation confirmation.");
+        }
+
+        if (reservation.AllocationId is null &&
+            reservation.Status is ReservationState.PendingAllocation or ReservationState.CancellationPending &&
+            reservation.AllocationRequestId == outcome.AllocationRequestId &&
+            !ReservationInventoryTruthPolicy.MatchesRequestedUnits(
+                reservation,
+                outcome.InventoryUnitIds))
+        {
+            throw new ReservationAllocationUnitMismatchException();
         }
 
         long version = reservation.Version;

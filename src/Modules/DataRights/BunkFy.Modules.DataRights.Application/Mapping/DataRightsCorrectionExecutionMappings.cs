@@ -6,7 +6,8 @@ using BunkFy.Modules.DataRights.Domain.Aggregates;
 internal static class DataRightsCorrectionExecutionMappings
 {
     public static DataRightsCorrectionExecutionDetailsDto ToDto(
-        this DataRightsCorrectionExecution execution) => new(
+        this DataRightsCorrectionExecution execution,
+        string actorId) => new(
         execution.Id,
         execution.CaseId,
         (DataRightsCaseType)execution.CaseKind,
@@ -21,6 +22,7 @@ internal static class DataRightsCorrectionExecutionMappings
             execution.SelectedRecordVersion),
         execution.FieldPolicyKey,
         execution.ExecutedBy,
+        execution.IsOwnedBy(actorId),
         execution.StartedAtUtc,
         execution.ExpiresAtUtc,
         (DataRightsCorrectionExecutionStatus)execution.State,

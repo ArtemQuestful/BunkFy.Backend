@@ -55,11 +55,6 @@ public sealed class DataRightsExportArtifactTests
             attempt: 1,
             "system:data-rights-export",
             Now.AddMinutes(1)).IsSuccess);
-        Assert.True(artifact.MarkFailed(
-            runId,
-            attempt: 1,
-            "owner-export-failed",
-            Now.AddMinutes(2)).IsSuccess);
         Assert.True(artifact.BeginGeneration(
             runId,
             attempt: 2,
@@ -68,6 +63,75 @@ public sealed class DataRightsExportArtifactTests
 
         Assert.Equal(Now.AddMinutes(1), artifact.GenerationStartedAtUtc);
         Assert.Equal(2, artifact.GenerationAttempt);
+        Assert.Equal(DataRightsExportArtifactState.Generating, artifact.State);
+    }
+
+    [Fact]
+    public void Failed_generation_requires_explicit_version_pinned_retry()
+    {
+        DataRightsExportArtifact artifact = StaffArtifact();
+        Guid runId = Guid.NewGuid();
+        _ = artifact.BeginGeneration(
+            runId,
+            attempt: 1,
+            "system:data-rights-export",
+            Now.AddMinutes(1));
+        _ = artifact.MarkFailed(
+            runId,
+            attempt: 1,
+            "owner-export-failed",
+            Now.AddMinutes(2));
+        long failedVersion = artifact.Version;
+
+        Assert.Equal(
+            "DataRights.ExportArtifactTransitionInvalid",
+            artifact.BeginGeneration(
+                runId,
+                attempt: 2,
+                "system:data-rights-export",
+                Now.AddMinutes(3)).Error.Code);
+        Assert.True(artifact.RequestRetry(
+            failedVersion,
+            Now.AddMinutes(3)).IsSuccess);
+
+        Assert.Equal(DataRightsExportArtifactState.Requested, artifact.State);
+        Assert.Equal(failedVersion, artifact.LastRetryBaseVersion);
+        Assert.Null(artifact.GenerationActor);
+        Assert.Null(artifact.GenerationRunId);
+        Assert.Null(artifact.GenerationAttempt);
+        Assert.Null(artifact.GenerationStartedAtUtc);
+        Assert.Null(artifact.FailureCode);
+        Assert.Equal(failedVersion + 1, artifact.Version);
+    }
+
+    [Fact]
+    public void Manual_retry_replay_is_idempotent_after_generation_advances()
+    {
+        DataRightsExportArtifact artifact = StaffArtifact();
+        Guid firstRunId = Guid.NewGuid();
+        _ = artifact.BeginGeneration(
+            firstRunId,
+            attempt: 1,
+            "system:data-rights-export",
+            Now.AddMinutes(1));
+        _ = artifact.MarkFailed(
+            firstRunId,
+            attempt: 1,
+            "owner-export-failed",
+            Now.AddMinutes(2));
+        long failedVersion = artifact.Version;
+        _ = artifact.RequestRetry(failedVersion, Now.AddMinutes(3));
+        _ = artifact.BeginGeneration(
+            Guid.NewGuid(),
+            attempt: 1,
+            "system:data-rights-export",
+            Now.AddMinutes(4));
+        long advancedVersion = artifact.Version;
+
+        Assert.True(artifact.RequestRetry(
+            failedVersion,
+            Now.AddMinutes(5)).IsSuccess);
+        Assert.Equal(advancedVersion, artifact.Version);
         Assert.Equal(DataRightsExportArtifactState.Generating, artifact.State);
     }
 
@@ -101,6 +165,34 @@ public sealed class DataRightsExportArtifactTests
                 attempt: 1,
                 "different-failure",
                 Now.AddMinutes(3)).Error.Code);
+    }
+
+    [Fact]
+    public void Requested_generation_can_be_rejected_with_run_bound_failure()
+    {
+        DataRightsExportArtifact artifact = StaffArtifact();
+        Guid runId = Guid.NewGuid();
+
+        Assert.True(artifact.RejectGeneration(
+            runId,
+            attempt: 1,
+            "system:data-rights-export",
+            "owner-catalog-invalid",
+            Now.AddMinutes(1)).IsSuccess);
+        long failedVersion = artifact.Version;
+        Assert.True(artifact.RejectGeneration(
+            runId,
+            attempt: 1,
+            "system:data-rights-export",
+            "owner-catalog-invalid",
+            Now.AddMinutes(2)).IsSuccess);
+
+        Assert.Equal(DataRightsExportArtifactState.Failed, artifact.State);
+        Assert.Equal(runId, artifact.GenerationRunId);
+        Assert.Equal(1, artifact.GenerationAttempt);
+        Assert.Equal(Now.AddMinutes(1), artifact.GenerationStartedAtUtc);
+        Assert.Equal("owner-catalog-invalid", artifact.FailureCode);
+        Assert.Equal(failedVersion, artifact.Version);
     }
 
     [Fact]

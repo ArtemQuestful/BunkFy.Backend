@@ -261,6 +261,125 @@ public sealed class TenantTerminationTaskSchedulerTests
         Assert.Equal(11, payload.OperationRevision);
     }
 
+    [Fact]
+    public async Task Export_retention_tasks_are_global_and_pin_tenant_identity_and_expiry()
+    {
+        RecordingTaskRunStore store = new();
+        TenantTerminationExportRetentionScheduler scheduler = new(
+            store,
+            new FixedClock(Now));
+        Guid processId = Guid.NewGuid();
+        Guid artifactId = Guid.NewGuid();
+        Guid fragmentId = Guid.NewGuid();
+        DateTimeOffset artifactExpiry = Now.AddHours(12);
+        DateTimeOffset fragmentExpiry = Now.AddHours(24);
+
+        await scheduler.EnqueueArtifactCleanupAsync(
+            TenantId,
+            processId,
+            artifactId,
+            operationRevision: 9,
+            artifactExpiry,
+            CancellationToken.None);
+        await scheduler.EnqueueFragmentCleanupAsync(
+            TenantId,
+            processId,
+            fragmentId,
+            operationRevision: 9,
+            fragmentExpiry,
+            CancellationToken.None);
+
+        Assert.Equal(2, store.Requests.Count);
+        TaskRunRequest artifactRequest = store.Requests[0];
+        Assert.Equal(
+            TenantTerminationExecutionIdentity
+                .CreateExportArtifactCleanupTaskRunId(artifactId),
+            artifactRequest.RunId);
+        Assert.Equal(
+            DeleteExpiredTenantTerminationExportArtifactPayload.TaskName,
+            artifactRequest.TaskName);
+        Assert.Equal(artifactExpiry, artifactRequest.ScheduledAtUtc);
+        Assert.Null(artifactRequest.ScopeId);
+        Assert.Equal(processId, artifactRequest.CorrelationId);
+        DeleteExpiredTenantTerminationExportArtifactPayload artifactPayload =
+            JsonSerializer.Deserialize<
+                DeleteExpiredTenantTerminationExportArtifactPayload>(
+                    artifactRequest.PayloadJson,
+                    SerializerOptions)!;
+        Assert.Equal(artifactId, artifactPayload.ArtifactId);
+        Assert.Equal(TenantId, artifactPayload.TenantId);
+        Assert.Equal(artifactExpiry, artifactPayload.ExpiresAtUtc);
+
+        TaskRunRequest fragmentRequest = store.Requests[1];
+        Assert.Equal(
+            TenantTerminationExecutionIdentity
+                .CreateExportFragmentCleanupTaskRunId(fragmentId),
+            fragmentRequest.RunId);
+        Assert.Equal(
+            DeleteExpiredTenantTerminationExportFragmentPayload.TaskName,
+            fragmentRequest.TaskName);
+        Assert.Equal(fragmentExpiry, fragmentRequest.ScheduledAtUtc);
+        Assert.Null(fragmentRequest.ScopeId);
+        Assert.Equal(processId, fragmentRequest.CorrelationId);
+        DeleteExpiredTenantTerminationExportFragmentPayload fragmentPayload =
+            JsonSerializer.Deserialize<
+                DeleteExpiredTenantTerminationExportFragmentPayload>(
+                    fragmentRequest.PayloadJson,
+                    SerializerOptions)!;
+        Assert.Equal(fragmentId, fragmentPayload.FragmentId);
+        Assert.Equal(TenantId, fragmentPayload.TenantId);
+        Assert.Equal(fragmentExpiry, fragmentPayload.ExpiresAtUtc);
+    }
+
+    [Fact]
+    public async Task Export_retention_rejects_a_noncanonical_tenant_before_enqueue()
+    {
+        RecordingTaskRunStore store = new();
+        TenantTerminationExportRetentionScheduler scheduler = new(
+            store,
+            new FixedClock(Now));
+
+        InvalidOperationException failure =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                scheduler.EnqueueArtifactCleanupAsync(
+                    $" {TenantId}",
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    operationRevision: 9,
+                    Now.AddHours(12),
+                    CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.TenantTerminationTaskScheduleInvalid",
+            failure.Message);
+        Assert.Empty(store.Requests);
+    }
+
+    [Fact]
+    public async Task Export_retention_replay_rejects_a_conflicting_schedule()
+    {
+        RecordingTaskRunStore store = new(request => Details(
+            request,
+            scheduledAtUtc: request.ScheduledAtUtc.AddMinutes(-1)));
+        TenantTerminationExportRetentionScheduler scheduler = new(
+            store,
+            new FixedClock(Now));
+
+        InvalidOperationException failure =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                scheduler.EnqueueArtifactCleanupAsync(
+                    TenantId,
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    operationRevision: 9,
+                    Now.AddHours(12),
+                    CancellationToken.None));
+
+        Assert.Equal(
+            "DataRights.TenantTerminationTaskRunConflict",
+            failure.Message);
+    }
+
     private static TenantTerminationPlannedDispatch Dispatch(
         Guid processId,
         string ownerKey,
@@ -283,7 +402,8 @@ public sealed class TenantTerminationTaskSchedulerTests
 
     private static TaskRunDetails Details(
         TaskRunRequest request,
-        string? payloadJson = null)
+        string? payloadJson = null,
+        DateTimeOffset? scheduledAtUtc = null)
     {
         TaskRunSummary summary = new(
             request.RunId,
@@ -295,7 +415,7 @@ public sealed class TenantTerminationTaskSchedulerTests
             request.ScopeId,
             request.CorrelationId,
             request.CreatedAtUtc,
-            request.ScheduledAtUtc,
+            scheduledAtUtc ?? request.ScheduledAtUtc,
             StartedAtUtc: null,
             CompletedAtUtc: null,
             Attempts: 0,

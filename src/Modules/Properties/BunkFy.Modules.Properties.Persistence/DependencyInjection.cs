@@ -31,9 +31,19 @@ public static class DependencyInjection
                 PropertiesMigrations.HistoryTable));
 
         builder.Services.TryAddScoped<IPropertyRepository, PropertyRepository>();
+        builder.Services.TryAddScoped<IPropertyStationEligibilitySource, PropertyStationEligibilitySource>();
         builder.Services.TryAddScoped<
             IPropertyMutationOperationRepository,
             PropertyMutationOperationRepository>();
+        builder.Services.TryAddScoped<
+            IPropertyTimeZoneRevisionWriter,
+            PropertyTimeZoneRevisionRepository>();
+        builder.Services.TryAddScoped<
+            IPropertyTimeZoneRevisionReader,
+            PropertyTimeZoneRevisionRepository>();
+        builder.Services.TryAddScoped<
+            IPropertyTimeZoneComplianceReader,
+            PropertyTimeZoneComplianceReader>();
         builder.Services.TryAddScoped<IRoomRepository, RoomRepository>();
         builder.Services.TryAddScoped<
             IPropertiesCreationOperationLock,

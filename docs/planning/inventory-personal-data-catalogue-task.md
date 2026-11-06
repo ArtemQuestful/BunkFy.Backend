@@ -2,6 +2,16 @@
 
 Status: published; local and exact-commit production proof complete
 
+## 2026-09-05 additive context-read amendment
+
+The status above describes the historical published catalogue, not the new
+[retirement context read](inventory-retirement-context-read-task.md).
+Classify the new lifecycle summary and nullable impact transport/query surfaces
+in the executable catalogue and regenerate its inventory. Existing bounded
+reason/actor, timestamps and reservation-reference policies/retention remain;
+no guest data or support-log disclosure is added. No-store and authorization
+tests, generated contracts and exact-candidate release evidence are required.
+
 ## Goal
 
 Make Inventory's personal-data boundary explicit and executable without

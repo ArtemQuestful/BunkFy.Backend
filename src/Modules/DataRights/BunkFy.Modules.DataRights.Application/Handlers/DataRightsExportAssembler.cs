@@ -4,9 +4,11 @@ using System.Text.Json;
 using BunkFy.Modules.DataRights.Application.Models;
 using BunkFy.Modules.DataRights.Application.Ports;
 using BunkFy.Modules.DataRights.Contracts;
+using Microsoft.Extensions.Logging;
 
 internal sealed class DataRightsExportAssembler(
-    IEnumerable<IDataRightsSubjectExportContributor> contributors)
+    IEnumerable<IDataRightsSubjectExportContributor> contributors,
+    ILogger<DataRightsExportAssembler> logger)
     : IDataRightsExportAssembler
 {
     public const int FormatVersion = 1;
@@ -78,6 +80,7 @@ internal sealed class DataRightsExportAssembler(
                         subject),
                     sink,
                     cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException)
             {
@@ -86,16 +89,36 @@ internal sealed class DataRightsExportAssembler(
             catch (Exception exception) when (
                 exception is not DataRightsExportGenerationException)
             {
+                logger.LogError(
+                    "Data Rights export owner {OwnerKey} failed with {ExceptionType}.",
+                    subject.OwnerKey.Trim().ToLowerInvariant(),
+                    exception.GetType().Name);
                 throw new DataRightsExportGenerationException(
-                    "owner-export-failed");
+                    "owner-export-failed",
+                    DataRightsExportFailureDisposition.Retryable);
             }
 
-            if (result is null ||
-                result.Status != DataRightsSubjectExportStatus.Succeeded ||
-                result.RecordCount != sink.RecordCount)
+            if (result is null || result.RecordCount < 0)
             {
                 throw new DataRightsExportGenerationException(
-                    StatusCode(result?.Status));
+                    "owner-result-invalid");
+            }
+
+            if (result.Status != DataRightsSubjectExportStatus.Succeeded)
+            {
+                if (result.RecordCount != 0 || sink.RecordCount != 0)
+                {
+                    throw new DataRightsExportGenerationException(
+                        "owner-result-invalid");
+                }
+
+                throw Failure(result.Status);
+            }
+
+            if (result.RecordCount != sink.RecordCount)
+            {
+                throw new DataRightsExportGenerationException(
+                    "owner-result-invalid");
             }
 
             writer.WriteEndArray();
@@ -128,7 +151,9 @@ internal sealed class DataRightsExportAssembler(
         if (result.IsFailure)
         {
             throw new DataRightsExportGenerationException(
-                "owner-unavailable");
+                result.Error == DataRightsApplicationErrors.ExportOwnerUnavailable
+                    ? "owner-unavailable"
+                    : "owner-catalog-invalid");
         }
 
         return result.Value;
@@ -246,14 +271,18 @@ internal sealed class DataRightsExportAssembler(
             ? "guestRights"
             : "staffRights";
 
-    private static string StatusCode(DataRightsSubjectExportStatus? status) =>
+    private static DataRightsExportGenerationException Failure(
+        DataRightsSubjectExportStatus status) =>
         status switch
         {
             DataRightsSubjectExportStatus.ScopeUnavailable =>
-                "owner-scope-unavailable",
-            DataRightsSubjectExportStatus.NotFound => "subject-not-found",
-            DataRightsSubjectExportStatus.Stale => "subject-stale",
-            _ => "owner-result-invalid"
+                new("owner-scope-unavailable"),
+            DataRightsSubjectExportStatus.NotFound => new("subject-not-found"),
+            DataRightsSubjectExportStatus.Stale => new("subject-stale"),
+            DataRightsSubjectExportStatus.RetryRequired => new(
+                "owner-retry-required",
+                DataRightsExportFailureDisposition.Retryable),
+            _ => new("owner-result-invalid")
         };
 
 }

@@ -77,7 +77,8 @@ internal sealed class ReservationGuestRecordWorkflow(
                 request.PreferredLanguageTag,
                 request.Notes,
                 prepared.Value.GuestCreationActorId,
-                prepared.Value.CreationConfirmationId),
+                prepared.Value.CreationConfirmationId,
+                request.LanguageTags),
             cancellationToken).ConfigureAwait(false);
         if (guest.IsFailure)
         {
@@ -122,7 +123,8 @@ internal sealed record ReservationGuestRecordWorkflowRequest(
     DateOnly? DateOfBirth,
     string? NationalityCountryCode,
     string? PreferredLanguageTag,
-    string? Notes);
+    string? Notes,
+    string[]? LanguageTags = null);
 
 internal static class ReservationGuestRecordWorkflowErrors
 {

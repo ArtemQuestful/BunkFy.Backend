@@ -1,14 +1,18 @@
 namespace BunkFy.Modules.Inventory.Application.Handlers;
 
 using BunkFy.Modules.Inventory.Application.Commands;
+using BunkFy.Modules.Inventory.Application.Ports;
 using BunkFy.Modules.Inventory.Contracts;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
+using BunkFy.Modules.Inventory.Domain.Aggregates;
+using BunkFy.Modules.Inventory.Domain.Errors;
 
 internal sealed class CreateManualInventoryBlockCommandHandler(
     InventoryManagementMutationCoordinator mutations,
     InventoryManagementOperationJournal journal,
-    ManualInventoryBlockCreator creator)
+    ManualInventoryBlockCreator creator,
+    IInventoryAvailabilitySelectionFence selectionFence)
     : ICommandHandler<CreateManualInventoryBlockCommand, ManualInventoryBlockMutationReceiptDto>
 {
     public async Task<Result<ManualInventoryBlockMutationReceiptDto>> HandleAsync(
@@ -50,6 +54,14 @@ internal sealed class CreateManualInventoryBlockCommandHandler(
             return replay.ToResult();
         }
 
+        if (!ManualInventoryBlockGroup.IsValidActorId(command.ActorId))
+        {
+            return Result.Failure<ManualInventoryBlockMutationReceiptDto>(
+                InventoryDomainErrors.BlockGroupActorInvalid);
+        }
+
+        await selectionFence.AcquireAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         Result<ManualInventoryBlockCreationResult> result = await creator.CreateAsync(
             command.PropertyId,
             target,

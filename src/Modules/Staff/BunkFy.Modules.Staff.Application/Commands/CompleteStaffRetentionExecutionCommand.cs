@@ -6,6 +6,7 @@ using Gma.Framework.Cqrs;
 
 internal sealed record CompleteStaffRetentionExecutionCommand(
     Guid ExecutionId,
+    int Attempt,
     StaffRetentionExecutionState State,
     int ScannedCount,
     int RemainingCount,

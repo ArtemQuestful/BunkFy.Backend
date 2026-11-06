@@ -174,6 +174,41 @@ public sealed class TenantTerminationOperatorLifecycleTests
     }
 
     [Fact]
+    public async Task Late_cancellation_after_intent_append_stops_and_exact_retry_recovers()
+    {
+        DataRightsCase dataRightsCase = PrepareApprovedCase();
+        List<string> order = [];
+        using CancellationTokenSource source = new();
+        StubProcessRepository processRepository = new(order);
+        StubReplayStore replayStore = new(order, source.Cancel);
+        RecordingSignal signal = new(order);
+        StartTenantTerminationCommandHandler handler = StartHandler(
+            new StubCaseRepository(dataRightsCase),
+            processRepository,
+            replayStore,
+            signal,
+            RequestedAt.AddMinutes(2));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            handler.HandleAsync(StartCommand(dataRightsCase), source.Token));
+
+        Assert.Equal(["intent"], order);
+        Assert.Equal(0, processRepository.AddCount);
+        Assert.Equal(0, signal.Count);
+
+        Result<TenantTerminationStartDto> recovered =
+            await handler.HandleAsync(
+                StartCommand(dataRightsCase),
+                CancellationToken.None);
+
+        Assert.True(recovered.IsSuccess);
+        Assert.Equal(["intent", "process", "signal"], order);
+        Assert.Equal(1, replayStore.AppendCount);
+        Assert.Equal(1, processRepository.AddCount);
+        Assert.Equal(1, signal.Count);
+    }
+
+    [Fact]
     public async Task Protected_intent_recovers_a_failed_database_start_exactly()
     {
         List<string> firstOrder = [];
@@ -431,7 +466,9 @@ public sealed class TenantTerminationOperatorLifecycleTests
             throw new NotSupportedException();
     }
 
-    private sealed class StubReplayStore(List<string> order)
+    private sealed class StubReplayStore(
+        List<string> order,
+        Action? afterAppend = null)
         : ITenantTerminationReplayStore
     {
         public TenantTerminationReplayIntent? Intent { get; private set; }
@@ -451,6 +488,7 @@ public sealed class TenantTerminationOperatorLifecycleTests
             this.Intent = Assert.IsType<TenantTerminationReplayIntent>(
                 entry.Intent);
             this.AppendCount++;
+            afterAppend?.Invoke();
             return Task.FromResult(new TenantTerminationReplayAppendReceipt(
                 TenantTerminationReplayAppendReceipt.CurrentContractVersion,
                 entry.LogicalEntryId,

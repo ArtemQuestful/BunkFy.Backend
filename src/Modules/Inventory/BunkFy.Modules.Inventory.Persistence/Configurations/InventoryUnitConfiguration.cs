@@ -10,7 +10,12 @@ internal sealed class InventoryUnitConfiguration : IEntityTypeConfiguration<Inve
     {
         builder.ToTable("inventory_units");
         builder.HasKey(unit => unit.Id);
-        builder.HasAlternateKey(unit => new { unit.ScopeId, unit.Id });
+        builder.HasAlternateKey(unit => new
+        {
+            unit.ScopeId,
+            unit.PropertyId,
+            unit.Id
+        });
         builder.Property(unit => unit.ScopeId).HasMaxLength(128).IsRequired();
         builder.Property(unit => unit.Kind).HasConversion<int>().IsRequired();
         builder.Property(unit => unit.Label).HasMaxLength(PropertiesContractLimits.RoomNameMaxLength).IsRequired();

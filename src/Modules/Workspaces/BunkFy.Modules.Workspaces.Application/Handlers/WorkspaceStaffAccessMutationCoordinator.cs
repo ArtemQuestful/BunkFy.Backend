@@ -7,10 +7,24 @@ internal sealed class WorkspaceStaffAccessMutationCoordinator(
     IWorkspaceStaffAccessOperationLock operationLock,
     IWorkspaceStaffAccessProcessRepository processes)
 {
+    public Task AcquireSubjectAsync(
+        string subjectId,
+        CancellationToken cancellationToken) =>
+        operationLock.AcquireSubjectAsync(subjectId, cancellationToken);
+
     public Task AcquireStaffAsync(
         Guid staffMemberId,
         CancellationToken cancellationToken) =>
         operationLock.AcquireStaffAsync(staffMemberId, cancellationToken);
+
+    public Task AcquireCoordinatesAsync(
+        Guid staffMemberId,
+        string subjectId,
+        CancellationToken cancellationToken) =>
+        operationLock.AcquireCoordinatesAsync(
+            staffMemberId,
+            subjectId,
+            cancellationToken);
 
     public async Task<WorkspaceStaffAccessProcess?> AcquireExistingAsync(
         Guid processId,
@@ -42,9 +56,14 @@ internal sealed class WorkspaceStaffAccessMutationCoordinator(
             return null;
         }
 
-        await operationLock.AcquireStaffAsync(
+        if (!await operationLock.TryAcquireStaffVersionAsync(
                 staffMemberId,
-                cancellationToken).ConfigureAwait(false);
+                targetStaffVersion,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
         return await processes.GetByStaffVersionAsync(
                 staffMemberId,
                 targetStaffVersion,

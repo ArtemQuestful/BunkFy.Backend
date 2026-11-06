@@ -9,7 +9,9 @@ using Gma.Framework.Pagination;
 using Microsoft.EntityFrameworkCore;
 
 internal sealed class DataRightsCaseRepository(DataRightsDbContext dbContext)
-    : IDataRightsCaseRepository, ITenantTerminationCaseRepository
+    : IDataRightsCaseRepository,
+      IDataRightsCaseIdentityRepository,
+      ITenantTerminationCaseRepository
 {
     public Task AddAsync(DataRightsCase dataRightsCase, CancellationToken cancellationToken)
     {
@@ -29,6 +31,13 @@ internal sealed class DataRightsCaseRepository(DataRightsDbContext dbContext)
                 cancellationToken)
             .ConfigureAwait(false);
     }
+
+    public Task<DataRightsCase?> GetByIdAsync(
+        Guid caseId,
+        CancellationToken cancellationToken) =>
+        dbContext.Cases.SingleOrDefaultAsync(
+            dataRightsCase => dataRightsCase.Id == caseId,
+            cancellationToken);
 
     public Task<DataRightsCase?> GetAsync(
         Guid caseId,

@@ -1,5 +1,6 @@
 namespace BunkFy.Modules.Guests.Persistence.Repositories;
 
+using System.Text.Json.Serialization;
 using BunkFy.Modules.Guests.Domain.Aggregates;
 using BunkFy.Modules.Guests.Domain.Models;
 using BunkFy.Modules.Guests.Domain.Retention;
@@ -40,7 +41,10 @@ internal sealed record GuestProfileStateTenantExport(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset LastChangedAtUtc,
     DateTimeOffset? ArchivedAtUtc,
-    DateTimeOffset? AnonymisedAtUtc);
+    DateTimeOffset? AnonymisedAtUtc)
+{
+    public string[] LanguageTags { get; init; } = [];
+}
 
 internal sealed record GuestProfileStaffTenantExport(
     string CreatedBy,
@@ -312,6 +316,8 @@ internal sealed record GuestRetentionAnonymisationProofTenantExport(
     int AffectedPropertyCount,
     DateTimeOffset RetentionDeadlineUtc,
     string PolicySetSha256,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? TimeZoneCatalogVersion,
     Guid EventId,
     DateTimeOffset CompletedAtUtc,
     string CanonicalSha256);

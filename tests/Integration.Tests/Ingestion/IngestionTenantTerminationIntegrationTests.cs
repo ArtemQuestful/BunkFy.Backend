@@ -17,6 +17,7 @@ using BunkFy.Modules.Ingestion.Domain.Retention;
 using BunkFy.Modules.Ingestion.Domain.Runs;
 using BunkFy.Modules.Ingestion.Persistence;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using BunkFy.Modules.Workspaces.Persistence;
 using Gma.Framework.Runtime.Identity;
@@ -200,18 +201,23 @@ public sealed partial class IngestionTenantTerminationIntegrationTests
             : TenantBPropertyId;
         IIngestionPropertyProjectionRepository properties = services
             .GetRequiredService<IIngestionPropertyProjectionRepository>();
-        await properties.ApplySnapshotAsync(
-            new(
-                tenantId,
-                propertyId,
-                "Tenant Export House",
-                "tenant-export-house",
-                IsActive: true,
-                PropertyProcessingStatus.Unconfigured,
-                GovernancePolicy: null,
-                SourceVersion: 1),
-            CancellationToken.None);
-        await context.SaveChangesAsync();
+        await using (var transaction =
+            await context.Database.BeginTransactionAsync())
+        {
+            await properties.ApplySnapshotAsync(
+                new(
+                    tenantId,
+                    propertyId,
+                    "Tenant Export House",
+                    "tenant-export-house",
+                    IsActive: true,
+                    PropertyProcessingStatus.Unconfigured,
+                    GovernancePolicy: null,
+                    SourceVersion: 1),
+                CancellationToken.None);
+            await context.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
 
         Guid connectionId = Guid.NewGuid();
         AdapterConnection connection = CreateConnection(
@@ -446,12 +452,13 @@ public sealed partial class IngestionTenantTerminationIntegrationTests
                 attempt: 1,
                 SeedNowUtc.AddMinutes(12),
                 SeedNowUtc.AddMinutes(42)).Value;
-        Assert.True(retention.RecordAffected(1).IsSuccess);
+        Assert.True(retention.RecordAffected(attempt: 1, count: 1).IsSuccess);
         Assert.True(retention.Complete(
             IngestionRetentionExecutionState.Completed,
+            attempt: 1,
             remainingCount: 0,
-            "completed",
-            SeedNowUtc.AddMinutes(13),
+            outcomeCode: "completed",
+            completedAtUtc: SeedNowUtc.AddMinutes(13),
             holdReviewDueAtUtc: null).IsSuccess);
 
         IngestionAnonymisationReceipt anonymisationReceipt =
@@ -811,6 +818,8 @@ public sealed partial class IngestionTenantTerminationIntegrationTests
         builder.Services.AddSingleton<IRawPayloadStore>(services =>
             services.GetRequiredService<TestRawPayloadStore>());
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddIngestionPersistence();
         return builder.Services.BuildServiceProvider();
     }

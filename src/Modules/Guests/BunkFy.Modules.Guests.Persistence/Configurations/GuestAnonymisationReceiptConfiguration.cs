@@ -12,10 +12,19 @@ using DomainReason = BunkFy.Modules.Guests.Domain.Models.GuestAnonymisationReaso
 internal sealed class GuestAnonymisationReceiptConfiguration
     : IEntityTypeConfiguration<GuestAnonymisationReceipt>
 {
+    private const string EmptyGuid =
+        "00000000-0000-0000-0000-000000000000";
+
     public void Configure(EntityTypeBuilder<GuestAnonymisationReceipt> builder)
     {
         builder.ToTable("guest_anonymisation_receipts", table =>
         {
+            table.HasCheckConstraint(
+                "CK_guest_anonymisation_receipts_coordinates",
+                $"\"Id\" <> '{EmptyGuid}' AND \"IdempotencyKey\" <> '{EmptyGuid}' AND " +
+                $"\"RoutingPropertyId\" <> '{EmptyGuid}' AND \"CaseId\" <> '{EmptyGuid}' AND " +
+                $"\"GuestId\" <> '{EmptyGuid}' AND \"EventId\" <> '{EmptyGuid}' AND " +
+                "trim(\"ScopeId\") <> ''");
             table.HasCheckConstraint(
                 "CK_guest_anonymisation_receipts_contract",
                 $"\"ContractVersion\" = {GuestAnonymisationReceipt.CurrentContractVersion}");
@@ -37,14 +46,19 @@ internal sealed class GuestAnonymisationReceiptConfiguration
             table.HasCheckConstraint(
                 "CK_guest_anonymisation_receipts_digests",
                 $"char_length(\"ApprovalEvidenceSha256\") = {GuestAnonymisationReceipt.Sha256Length} AND " +
+                "\"ApprovalEvidenceSha256\" ~ '^[0-9a-f]+$' AND " +
                 $"char_length(\"PolicySetSha256\") = {GuestAnonymisationReceipt.Sha256Length} AND " +
-                $"char_length(\"CanonicalSha256\") = {GuestAnonymisationReceipt.Sha256Length}");
+                "\"PolicySetSha256\" ~ '^[0-9a-f]+$' AND " +
+                $"char_length(\"CanonicalSha256\") = {GuestAnonymisationReceipt.Sha256Length} AND " +
+                "\"CanonicalSha256\" ~ '^[0-9a-f]+$'");
             table.HasCheckConstraint(
                 "CK_guest_anonymisation_receipts_actor",
-                "length(trim(\"ActorId\")) > 0");
+                "length(\"ActorId\") > 0 AND \"ActorId\" = trim(\"ActorId\")");
+            table.HasCheckConstraint(
+                "CK_guest_anonymisation_receipts_timestamp",
+                "\"CompletedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
         });
         builder.HasKey(receipt => receipt.Id);
-        builder.HasAlternateKey(receipt => new { receipt.ScopeId, receipt.Id });
         builder.HasAlternateKey(receipt => new
         {
             receipt.ScopeId,
@@ -72,7 +86,9 @@ internal sealed class GuestAnonymisationReceiptConfiguration
         {
             receipt.ScopeId,
             receipt.IdempotencyKey
-        }).IsUnique();
+        })
+            .HasDatabaseName("UX_guest_anonymisation_receipts_idempotency")
+            .IsUnique();
         builder.HasIndex(receipt => new
         {
             receipt.ScopeId,
@@ -80,17 +96,29 @@ internal sealed class GuestAnonymisationReceiptConfiguration
             receipt.ApprovalRevision,
             receipt.OperationRevision,
             receipt.GuestId
-        }).IsUnique();
+        })
+            .HasDatabaseName("UX_guest_anonymisation_receipts_case_operation")
+            .IsUnique();
         builder.HasIndex(receipt => new
         {
             receipt.ScopeId,
             receipt.GuestId,
             receipt.ResultingGuestVersion
-        }).IsUnique();
+        })
+            .HasDatabaseName("UX_guest_anonymisation_receipts_guest_version")
+            .IsUnique();
+        builder.HasIndex(receipt => new
+        {
+            receipt.ScopeId,
+            receipt.EventId
+        })
+            .HasDatabaseName("UX_guest_anonymisation_receipts_event")
+            .IsUnique();
         builder.HasOne<GuestProfile>()
             .WithMany()
             .HasForeignKey(receipt => new { receipt.ScopeId, receipt.GuestId })
             .HasPrincipalKey(profile => new { profile.ScopeId, profile.Id })
+            .HasConstraintName("FK_guest_anonymisation_receipts_guest_profile")
             .OnDelete(DeleteBehavior.Restrict);
         builder.Ignore(receipt => receipt.DomainEvents);
     }

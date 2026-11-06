@@ -77,22 +77,49 @@ public sealed class ReservationRetentionExecution
         DateTimeOffset startedAtUtc,
         DateTimeOffset deadlineUtc)
     {
-        if (this.State != ReservationRetentionExecutionState.Running ||
-            attempt <= this.Attempt ||
-            startedAtUtc == default ||
-            startedAtUtc < this.StartedAtUtc ||
-            deadlineUtc <= startedAtUtc)
+        Result valid = this.ValidateRetry(
+            attempt,
+            startedAtUtc,
+            deadlineUtc);
+        if (valid.IsFailure)
         {
-            return Result.Failure(
-                ReservationsDomainErrors
-                    .RetentionExecutionTransitionInvalid);
+            return valid;
         }
 
         this.Attempt = attempt;
+        this.State = ReservationRetentionExecutionState.Running;
         this.StartedAtUtc = startedAtUtc;
         this.DeadlineUtc = deadlineUtc;
+        this.CompletedAtUtc = null;
+        this.ScannedCount = null;
+        this.RemainingCount = null;
+        this.OutcomeCode = null;
+        this.HoldReviewDueAtUtc = null;
         this.Version++;
         return Result.Success();
+    }
+
+    public Result ValidateRetry(
+        int attempt,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset deadlineUtc)
+    {
+        bool failedWindowInvalid =
+            this.State == ReservationRetentionExecutionState.Failed &&
+            (!this.CompletedAtUtc.HasValue ||
+             startedAtUtc < this.CompletedAtUtc.Value);
+        return this.State is not (
+                   ReservationRetentionExecutionState.Running or
+                   ReservationRetentionExecutionState.Failed) ||
+               attempt <= this.Attempt ||
+               startedAtUtc == default ||
+               startedAtUtc < this.StartedAtUtc ||
+               deadlineUtc <= startedAtUtc ||
+               failedWindowInvalid
+            ? Result.Failure(
+                ReservationsDomainErrors
+                    .RetentionExecutionTransitionInvalid)
+            : Result.Success();
     }
 
     public Result RecordAffected()
@@ -111,6 +138,7 @@ public sealed class ReservationRetentionExecution
 
     public Result Complete(
         ReservationRetentionExecutionState state,
+        int attempt,
         int scannedCount,
         int remainingCount,
         string outcomeCode,
@@ -124,6 +152,7 @@ public sealed class ReservationRetentionExecution
                 ReservationRetentionExecutionState.Completed or
                 ReservationRetentionExecutionState.Blocked or
                 ReservationRetentionExecutionState.Failed) ||
+            attempt != this.Attempt ||
             scannedCount < 0 ||
             this.AffectedCount > scannedCount ||
             remainingCount < 0 ||
@@ -140,6 +169,7 @@ public sealed class ReservationRetentionExecution
         {
             return this.MatchesResult(
                     state,
+                    attempt,
                     scannedCount,
                     remainingCount,
                     normalized,
@@ -172,12 +202,14 @@ public sealed class ReservationRetentionExecution
 
     private bool MatchesResult(
         ReservationRetentionExecutionState state,
+        int attempt,
         int scannedCount,
         int remainingCount,
         string outcomeCode,
         DateTimeOffset completedAtUtc,
         DateTimeOffset? holdReviewDueAtUtc) =>
         this.State == state &&
+        this.Attempt == attempt &&
         this.ScannedCount == scannedCount &&
         this.RemainingCount == remainingCount &&
         string.Equals(

@@ -1,9 +1,9 @@
 # Workspace Invitation Access Plans Task
 
-Status: backend, deployed API, and Preview captured-delivery proof complete;
-browser and real-provider rehearsal pending
+Status: backend, deployed API, and trusted-HTTPS Preview browser proof complete;
+real-provider and hosted-orchestrator rehearsal pending
 Date: 2026-07-21
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 ## Goal
 
@@ -46,15 +46,16 @@ Let an authorized workspace manager attach a server-owned Staff/property/access 
 - reusable-link maximum-use and approval races retain one authoritative outcome;
 - deployed owner/applicant browser smoke covers password and external registration plus link and QR entry.
 
-Local verification covers aggregate lifecycle and exact replay, owner and delegated-manager anti-escalation, low-privilege reusable-link restrictions, prepare/activate/issue ordering, one-time token replay, endpoint authorization metadata, Staff/property/access retry behavior, migration drift, a PostgreSQL upgrade from the prior Workspaces migration, and the delegated web capability matrix. The browser and broker/restart cases remain deployment gates.
+Local verification covers aggregate lifecycle and exact replay, owner and delegated-manager anti-escalation, low-privilege reusable-link restrictions, prepare/activate/issue ordering, one-time token replay, endpoint authorization metadata, Staff/property/access retry behavior, migration drift, a PostgreSQL upgrade from the prior Workspaces migration, and the delegated web capability matrix.
 
 The root deployed invitation and QR enrollment verifiers now cover the public
 API boundary with separate identities, property isolation, approval/rejection,
-capacity, replay, and exact owner-visible access. The Preview rehearsal also
-proves captured verification delivery through private Mailpit on the hardened
-runtime. Browser registration and redirect continuity, QR rendering, enabled
-external-provider behavior, real-provider delivery, and deployment-controlled
-Worker restart remain the explicit root browser rehearsal gate.
+capacity, replay, and exact owner-visible access. The trusted-HTTPS Preview
+browser rehearsal now also proves password registration and redirect
+continuity, invitation and Team QR rendering, captured verification delivery
+through private Mailpit, pending denial, and a guarded Worker restart on the
+hardened runtime. Enabled external-provider behavior, real-provider delivery,
+and hosted orchestrator control remain the explicit private release gates.
 
 ## Not In This Slice
 

@@ -5,6 +5,7 @@ using BunkFy.Modules.Guests.Domain.DataRights;
 using BunkFy.Modules.Guests.Domain.Models;
 using BunkFy.Modules.Guests.Domain.Retention;
 using BunkFy.Modules.Guests.Persistence;
+using BunkFy.TimeZones;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -20,54 +21,115 @@ public sealed class GuestRetentionModelTests
         using GuestsDbContext dbContext = CreateDbContext();
         IModel designModel =
             dbContext.GetService<IDesignTimeModel>().Model;
-        IEntityType execution = designModel.FindEntityType(
+        IEntityType execution = dbContext.Model.FindEntityType(
             typeof(GuestRetentionExecution))!;
-        IEntityType checkpoint = designModel.FindEntityType(
+        IEntityType checkpoint = dbContext.Model.FindEntityType(
             typeof(GuestRetentionSweepCheckpoint))!;
-        IEntityType receipt = designModel.FindEntityType(
+        IEntityType receipt = dbContext.Model.FindEntityType(
             typeof(GuestRetentionAnonymisationReceipt))!;
-        IEntityType tombstone = designModel.FindEntityType(
-            typeof(GuestAnonymisationTombstone))!;
 
+        Assert.Equal(2, execution.GetKeys().Count());
         Assert.True(execution.FindProperty(
             nameof(GuestRetentionExecution.Version))!.IsConcurrencyToken);
+        Assert.Contains(execution.GetIndexes(), index =>
+            index.GetDatabaseName() ==
+                "IX_guest_retention_executions_history" &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(GuestRetentionExecution.ScopeId),
+                nameof(GuestRetentionExecution.DataClassKey),
+                nameof(GuestRetentionExecution.CompletedAtUtc),
+                nameof(GuestRetentionExecution.Id)
+            ]));
+        AssertConstraints(
+            designModel.FindEntityType(typeof(GuestRetentionExecution))!,
+            "CK_guest_retention_executions_coordinates",
+            "CK_guest_retention_executions_policy",
+            "CK_guest_retention_executions_cursor",
+            "CK_guest_retention_executions_key",
+            "CK_guest_retention_executions_version",
+            "CK_guest_retention_executions_timestamp",
+            "CK_guest_retention_executions_counts",
+            "CK_guest_retention_executions_state");
+
+        Assert.Single(checkpoint.GetKeys());
+        Assert.Empty(checkpoint.GetForeignKeys());
+        Assert.True(checkpoint.FindProperty(
+            nameof(GuestRetentionSweepCheckpoint.Version))!.IsConcurrencyToken);
+        Assert.Contains(checkpoint.GetIndexes(), index => index.IsUnique &&
+            index.GetDatabaseName() ==
+                "UX_guest_retention_checkpoints_data_class" &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(GuestRetentionSweepCheckpoint.ScopeId),
+                nameof(GuestRetentionSweepCheckpoint.DataClassKey)
+            ]));
+        Assert.Contains(checkpoint.GetIndexes(), index => index.IsUnique &&
+            index.GetDatabaseName() ==
+                "UX_guest_retention_checkpoints_last_execution" &&
+            index.GetFilter() == "\"LastExecutionId\" IS NOT NULL" &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(GuestRetentionSweepCheckpoint.ScopeId),
+                nameof(GuestRetentionSweepCheckpoint.LastExecutionId)
+            ]));
+        AssertConstraints(
+            designModel.FindEntityType(typeof(GuestRetentionSweepCheckpoint))!,
+            "CK_guest_retention_sweep_checkpoints_coordinates",
+            "CK_guest_retention_sweep_checkpoints_cursor",
+            "CK_guest_retention_sweep_checkpoints_key",
+            "CK_guest_retention_sweep_checkpoints_version",
+            "CK_guest_retention_sweep_checkpoints_lifecycle",
+            "CK_guest_retention_sweep_checkpoints_timestamp");
         Assert.Contains(
-            execution.GetCheckConstraints(),
-            constraint => constraint.Name ==
-                "CK_guest_retention_executions_state");
-        Assert.Contains(
-            execution.GetCheckConstraints(),
-            constraint => constraint.Name ==
-                "CK_guest_retention_executions_version");
-        Assert.Contains(
-            receipt.GetCheckConstraints(),
-            constraint => constraint.Name ==
-                "CK_guest_retention_receipts_actor");
-        Assert.Contains(
-            checkpoint.GetIndexes(),
-            index => index.IsUnique &&
-                index.Properties.Select(property => property.Name)
-                    .SequenceEqual(
-                    [
-                        nameof(GuestRetentionSweepCheckpoint.ScopeId),
-                        nameof(GuestRetentionSweepCheckpoint.DataClassKey)
-                    ]));
-        Assert.Equal(
-            2,
-            receipt.GetForeignKeys().Count(foreignKey =>
-                foreignKey.PrincipalEntityType.ClrType is
-                    not null));
-        Assert.Contains(
-            receipt.GetIndexes(),
-            index => index.IsUnique &&
-                index.Properties.Select(property => property.Name)
-                    .SequenceEqual(
-                    [
-                        nameof(GuestRetentionAnonymisationReceipt.ScopeId),
-                        nameof(GuestRetentionAnonymisationReceipt.GuestId)
-                    ]));
-        Assert.False(tombstone.FindProperty(
-            nameof(GuestAnonymisationTombstone.Authority))!.IsNullable);
+            "\"Version\" >= 3",
+            designModel
+                .FindEntityType(typeof(GuestRetentionSweepCheckpoint))!
+                .GetCheckConstraints()
+                .Single(constraint => constraint.Name ==
+                    "CK_guest_retention_sweep_checkpoints_lifecycle")
+                .Sql);
+
+        Assert.Single(receipt.GetKeys());
+        Assert.Contains(receipt.GetIndexes(), index => index.IsUnique &&
+            index.GetDatabaseName() == "UX_guest_retention_receipts_guest" &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(GuestRetentionAnonymisationReceipt.ScopeId),
+                nameof(GuestRetentionAnonymisationReceipt.GuestId)
+            ]));
+        Assert.Contains(receipt.GetIndexes(), index => !index.IsUnique &&
+            index.GetDatabaseName() ==
+                "IX_guest_retention_receipts_execution" &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(GuestRetentionAnonymisationReceipt.ScopeId),
+                nameof(GuestRetentionAnonymisationReceipt.ExecutionId)
+            ]));
+        Assert.Contains(receipt.GetIndexes(), index => index.IsUnique &&
+            index.GetDatabaseName() == "UX_guest_retention_receipts_event" &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(GuestRetentionAnonymisationReceipt.ScopeId),
+                nameof(GuestRetentionAnonymisationReceipt.EventId)
+            ]));
+        Assert.Equal(3, receipt.GetForeignKeys().Count());
+        AssertForeignKey(
+            receipt,
+            typeof(GuestRetentionExecution),
+            "FK_guest_retention_receipts_execution");
+        AssertForeignKey(
+            receipt,
+            typeof(GuestProfile),
+            "FK_guest_retention_receipts_guest_profile");
+        AssertForeignKey(
+            receipt,
+            typeof(GuestAnonymisationTombstone),
+            "FK_guest_retention_receipts_tombstone");
+        AssertConstraints(
+            designModel.FindEntityType(
+                typeof(GuestRetentionAnonymisationReceipt))!,
+            "CK_guest_retention_receipts_coordinates",
+            "CK_guest_retention_receipts_contract",
+            "CK_guest_retention_receipts_actor",
+            "CK_guest_retention_receipts_versions",
+            "CK_guest_retention_receipts_properties",
+            "CK_guest_retention_receipts_digests",
+            "CK_guest_retention_receipts_timestamps");
     }
 
     [Fact]
@@ -103,7 +165,8 @@ public sealed class GuestRetentionModelTests
                 Guid.NewGuid(),
                 profile.ScopeId,
                 "guest-operational",
-                executionPolicyVersion: 1,
+                executionPolicyVersion:
+                    GuestRetentionExecution.MinimumRunningPolicyVersion,
                 attempt: 1,
                 startingProjectionOrdinal: 0,
                 now.AddMinutes(-1),
@@ -125,6 +188,7 @@ public sealed class GuestRetentionModelTests
                 affectedPropertyCount: 1,
                 now.AddDays(-1),
                 new string('a', 64),
+                TimeZoneCatalog.Default.CatalogVersion,
                 outcome.EventId,
                 "system:retention",
                 now).Value;
@@ -155,6 +219,28 @@ public sealed class GuestRetentionModelTests
                 .Options;
         return new(options, new TestScopeContext());
     }
+
+    private static void AssertForeignKey(
+        IEntityType dependent,
+        Type principalType,
+        string constraintName)
+    {
+        IForeignKey reference = Assert.Single(
+            dependent.GetForeignKeys(),
+            foreignKey => foreignKey.PrincipalEntityType.ClrType ==
+                principalType);
+        Assert.Equal(constraintName, reference.GetConstraintName());
+        Assert.Equal(DeleteBehavior.Restrict, reference.DeleteBehavior);
+    }
+
+    private static void AssertConstraints(
+        IEntityType entity,
+        params string[] expectedNames) =>
+        Assert.Equal(
+            expectedNames.Order(StringComparer.Ordinal),
+            entity.GetCheckConstraints()
+                .Select(constraint => constraint.Name)
+                .Order(StringComparer.Ordinal));
 
     private sealed class TestScopeContext : IScopeContext
     {

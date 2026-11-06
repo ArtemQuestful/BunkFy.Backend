@@ -495,6 +495,38 @@ public sealed class LocalFileDataRightsLedgerDeltaStoreTests
     }
 
     [Fact]
+    public async Task Restore_startup_gate_does_not_continue_after_provider_cancels_normally()
+    {
+        ServiceCollection services = new();
+        await using ServiceProvider provider =
+            services.BuildServiceProvider();
+        using CancellationTokenSource source = new();
+        DataRightsRestoreReadinessState state = new();
+        EmptyRestoreScopeSource scopeSource = new();
+        DataRightsRestoreStartupGate gate = new(
+            scopeSource,
+            new ReadinessStore(
+                isProductionGrade: true,
+                _ => source.Cancel()),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            state,
+            new TestHostEnvironment(
+                Path.GetTempPath(),
+                Environments.Production),
+            new FixedTimeProvider(ProtectedLedgerTestData.Now));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            gate.StartAsync(source.Token));
+
+        Assert.Equal(0, scopeSource.ReadinessCheckCount);
+        Assert.Equal(0, scopeSource.OpenCount);
+        Assert.False(state.Snapshot.IsReady);
+        Assert.Equal(
+            "data-rights.restore.cancelled",
+            state.Snapshot.StatusCode);
+    }
+
+    [Fact]
     public async Task Restore_startup_gate_retries_a_changed_scope_snapshot()
     {
         ServiceCollection services = new();
@@ -715,16 +747,22 @@ public sealed class LocalFileDataRightsLedgerDeltaStoreTests
             new NullFileProvider();
     }
 
-    private sealed class ReadinessStore(bool isProductionGrade)
+    private sealed class ReadinessStore(
+        bool isProductionGrade,
+        Action<CancellationToken>? afterCheck = null)
         : IDataRightsLedgerDeltaStore
     {
         public Task<DataRightsLedgerDeltaStoreReadiness> CheckReadinessAsync(
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new DataRightsLedgerDeltaStoreReadiness(
+            CancellationToken cancellationToken)
+        {
+            DataRightsLedgerDeltaStoreReadiness result = new(
                 "external-test",
                 IsReady: true,
                 isProductionGrade,
-                FailureCode: null));
+                FailureCode: null);
+            afterCheck?.Invoke(cancellationToken);
+            return Task.FromResult(result);
+        }
 
         public Task<DataRightsLedgerDeltaAppendReceipt> AppendAsync(
             DataRightsLedgerDelta delta,
@@ -754,18 +792,27 @@ public sealed class LocalFileDataRightsLedgerDeltaStoreTests
                 new string('a', 64),
                 ProtectedLedgerTestData.Now);
 
+        public int ReadinessCheckCount { get; private set; }
+        public int OpenCount { get; private set; }
+
         public Task<DataRightsRestoreScopeSourceReadiness>
             CheckReadinessAsync(
-                CancellationToken cancellationToken) =>
-            Task.FromResult(new DataRightsRestoreScopeSourceReadiness(
+                CancellationToken cancellationToken)
+        {
+            this.ReadinessCheckCount++;
+            return Task.FromResult(new DataRightsRestoreScopeSourceReadiness(
                 "external-test",
                 IsReady: true,
                 IsProductionGrade: true,
                 FailureCode: null));
+        }
 
         public Task<DataRightsRestoreScopeSnapshot> OpenSnapshotAsync(
-            CancellationToken cancellationToken) =>
-            Task.FromResult(Snapshot);
+            CancellationToken cancellationToken)
+        {
+            this.OpenCount++;
+            return Task.FromResult(Snapshot);
+        }
 
         public Task<DataRightsRestoreScopePage> ReadScopesAsync(
             DataRightsRestoreScopeSnapshot snapshot,

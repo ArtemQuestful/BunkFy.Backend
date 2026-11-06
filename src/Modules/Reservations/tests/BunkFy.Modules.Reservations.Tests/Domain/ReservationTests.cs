@@ -450,10 +450,12 @@ public sealed class ReservationTests
         Assert.True(reservation.ConfirmAllocation(RequestId, allocationId, 1, Guid.NewGuid(), Now).IsSuccess);
         reservation.ClearDomainEvents();
         Guid amendmentId = Guid.NewGuid();
+        Guid inventoryRequestId = Guid.NewGuid();
         Guid replacementUnit = Guid.NewGuid();
 
         Result<ReservationDetailsChangeOutcome> begun = reservation.BeginAllocationAmendment(
             amendmentId,
+            inventoryRequestId,
             new string('a', Reservation.RequestFingerprintLength),
             new DateOnly(2026, 8, 2),
             new DateOnly(2026, 8, 5),
@@ -464,13 +466,13 @@ public sealed class ReservationTests
             2,
             "Changed stay",
             expectedDetailsRevision: 1,
-            ReservationDetailsChangeOrigin.Adapter,
-            "adapter:integration",
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Now.AddMinutes(1));
+            origin: ReservationDetailsChangeOrigin.Adapter,
+            actorId: "adapter:integration",
+            adapterConnectionId: Guid.NewGuid(),
+            externalOperationId: Guid.NewGuid(),
+            correlationId: Guid.NewGuid(),
+            eventId: Guid.NewGuid(),
+            nowUtc: Now.AddMinutes(1));
 
         Assert.Equal(ReservationDetailsChangeOutcome.Changed, begun.Value);
         Assert.Equal(new DateOnly(2026, 8, 1), reservation.Arrival);
@@ -490,7 +492,7 @@ public sealed class ReservationTests
 
         reservation.ClearDomainEvents();
         Assert.True(reservation.CompleteAllocationAmendment(
-            amendmentId,
+            inventoryRequestId,
             allocationId,
             new DateOnly(2026, 8, 2),
             new DateOnly(2026, 8, 5),

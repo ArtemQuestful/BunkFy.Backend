@@ -6,6 +6,8 @@ public static class PropertiesIntegrationSubjects
 {
     public static string PropertyCreated => CreatePropertyCreated();
     public static string PropertyUpdated => CreatePropertyUpdated();
+    public static string PropertyTimeZoneChanged =>
+        CreatePropertyTimeZoneChanged();
     public static string PropertyRetired => CreatePropertyRetired();
     public static string PropertyProcessingPolicyActivated => CreatePropertyProcessingPolicyActivated();
     public static string PropertyProcessingSuspended => CreatePropertyProcessingSuspended();
@@ -25,6 +27,14 @@ public static class PropertiesIntegrationSubjects
 
     public static string CreatePropertyUpdated(string subjectPrefix = IntegrationEventNaming.DefaultSubjectPrefix) =>
         IntegrationEventNaming.CreateSubject(subjectPrefix, PropertiesModuleMetadata.Name, PropertyUpdatedIntegrationEvent.EventType, PropertyUpdatedIntegrationEvent.EventVersion);
+
+    public static string CreatePropertyTimeZoneChanged(
+        string subjectPrefix = IntegrationEventNaming.DefaultSubjectPrefix) =>
+        IntegrationEventNaming.CreateSubject(
+            subjectPrefix,
+            PropertiesModuleMetadata.Name,
+            PropertyTimeZoneChangedIntegrationEvent.EventType,
+            PropertyTimeZoneChangedIntegrationEvent.EventVersion);
 
     public static string CreatePropertyRetired(string subjectPrefix = IntegrationEventNaming.DefaultSubjectPrefix) =>
         IntegrationEventNaming.CreateSubject(subjectPrefix, PropertiesModuleMetadata.Name, PropertyRetiredIntegrationEvent.EventType, PropertyRetiredIntegrationEvent.EventVersion);

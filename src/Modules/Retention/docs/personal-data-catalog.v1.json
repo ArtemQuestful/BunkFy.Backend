@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogId": "retention.personal-data",
-  "catalogVersion": 3,
+  "catalogVersion": 4,
   "module": "retention",
   "approvalState": "engineering-default",
   "accessPolicies": [
@@ -100,9 +100,11 @@
       "retentionPolicy": "retention-control-plane-evidence",
       "rightsPolicy": "retention-scope-coordinate",
       "allowedSurfaces": [
+        "application-command",
         "application-query",
         "data-rights-export",
         "integration-command",
+        "integration-event",
         "persistence"
       ],
       "allowedBoundaries": [
@@ -127,8 +129,36 @@
           "retentionPolicy": "transient-owner-execution-request"
         },
         {
+          "assembly": "BunkFy.Modules.Retention.Application",
+          "type": "BunkFy.Modules.Retention.Application.Commands.RequestRetentionRunRetryCommand",
+          "member": "TenantId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-owner-execution-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Contracts",
+          "type": "BunkFy.Modules.Retention.Contracts.RetentionRunRetryWorkItem",
+          "member": "TenantId",
+          "surface": "integration-command",
+          "retentionPolicy": "transient-owner-execution-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Contracts",
+          "type": "BunkFy.Modules.Retention.Contracts.RetentionRunRetryRequestedIntegrationEvent",
+          "member": "TenantId",
+          "surface": "integration-event",
+          "retentionPolicy": "transient-owner-execution-request"
+        },
+        {
           "assembly": "BunkFy.Modules.Retention.Domain",
           "type": "BunkFy.Modules.Retention.Domain.Aggregates.RetentionExecution",
+          "member": "ScopeId",
+          "surface": "persistence",
+          "retentionPolicy": "retention-control-plane-evidence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Domain",
+          "type": "BunkFy.Modules.Retention.Domain.Aggregates.RetentionRunRetryRequest",
           "member": "ScopeId",
           "surface": "persistence",
           "retentionPolicy": "retention-control-plane-evidence"
@@ -160,6 +190,13 @@
           "member": "ScopeId",
           "surface": "data-rights-export",
           "retentionPolicy": "retention-tenant-termination-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Persistence",
+          "type": "BunkFy.Modules.Retention.Persistence.Repositories.RetentionRunRetryRequestTenantExport",
+          "member": "ScopeId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "retention-tenant-termination-export-fragment"
         }
       ]
     },
@@ -183,7 +220,9 @@
       "retentionPolicy": "retention-control-plane-evidence",
       "rightsPolicy": "retention-scope-coordinate",
       "allowedSurfaces": [
+        "api-input",
         "api-response",
+        "application-command",
         "application-query",
         "data-rights-export",
         "integration-command",
@@ -212,6 +251,27 @@
           "retentionPolicy": "transient-owner-execution-request"
         },
         {
+          "assembly": "BunkFy.Modules.Retention.Contracts",
+          "type": "BunkFy.Modules.Retention.Contracts.RetryRetentionScheduleRequest",
+          "member": "PropertyId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-owner-execution-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Application",
+          "type": "BunkFy.Modules.Retention.Application.Commands.RetentionRunRetryExpectation",
+          "member": "PropertyId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-owner-execution-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Contracts",
+          "type": "BunkFy.Modules.Retention.Contracts.RetentionRunRetryWorkItem",
+          "member": "PropertyId",
+          "surface": "integration-command",
+          "retentionPolicy": "transient-owner-execution-request"
+        },
+        {
           "assembly": "BunkFy.Modules.Retention.Application",
           "type": "BunkFy.Modules.Retention.Application.Ports.RetentionScheduleTarget",
           "member": "PropertyId",
@@ -221,6 +281,13 @@
         {
           "assembly": "BunkFy.Modules.Retention.Domain",
           "type": "BunkFy.Modules.Retention.Domain.Aggregates.RetentionExecution",
+          "member": "PropertyId",
+          "surface": "persistence",
+          "retentionPolicy": "retention-control-plane-evidence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Domain",
+          "type": "BunkFy.Modules.Retention.Domain.Aggregates.RetentionRunRetryRequest",
           "member": "PropertyId",
           "surface": "persistence",
           "retentionPolicy": "retention-control-plane-evidence"
@@ -249,6 +316,13 @@
         {
           "assembly": "BunkFy.Modules.Retention.Persistence",
           "type": "BunkFy.Modules.Retention.Persistence.Repositories.RetentionScheduleStateTenantExport",
+          "member": "PropertyId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "retention-tenant-termination-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Retention.Persistence",
+          "type": "BunkFy.Modules.Retention.Persistence.Repositories.RetentionRunRetryRequestTenantExport",
           "member": "PropertyId",
           "surface": "data-rights-export",
           "retentionPolicy": "retention-tenant-termination-export-fragment"

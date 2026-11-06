@@ -51,6 +51,7 @@ public sealed class ApplyGuestAnonymisationCommandHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(GuestProfileState.Anonymised, profile.Status);
         Assert.True(profile.MatchesAnonymisedState(2, Now));
+        Assert.Empty(profile.LanguageTags);
         Assert.Equal(receiptId, result.Value.ReceiptId);
         Assert.Equal(eventId, result.Value.EventId);
         Assert.Equal(2, result.Value.AffectedPropertyCount);
@@ -74,6 +75,7 @@ public sealed class ApplyGuestAnonymisationCommandHandlerTests
                 nameof(GuestProfile.DateOfBirth) or
                 nameof(GuestProfile.NationalityCountryCode) or
                 nameof(GuestProfile.PreferredLanguageTag) or
+                nameof(GuestProfile.LanguageTags) or
                 nameof(GuestProfile.Notes));
     }
 
@@ -186,6 +188,7 @@ public sealed class ApplyGuestAnonymisationCommandHandlerTests
             "Guests.AnonymisationBlocked.ActiveDataHold",
             blocked.Error.Code);
         Assert.Equal(GuestProfileState.Active, blockedProfile.Status);
+        Assert.Equal(["en-gb", "fr", "unknown-١"], blockedProfile.LanguageTags);
         Assert.Null(blockedRepository.Receipt);
     }
 
@@ -288,7 +291,8 @@ public sealed class ApplyGuestAnonymisationCommandHandlerTests
         "Prefers a lower bunk.",
         "user:creator",
         Guid.NewGuid(),
-        Now.AddDays(-1)).Value;
+        Now.AddDays(-1),
+        languageTags: ["en-GB", "fr", "unknown-١"]).Value;
 
     private sealed class StubGuestRepository(GuestProfile profile)
         : IGuestProfileRepository

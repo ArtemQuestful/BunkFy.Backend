@@ -82,6 +82,37 @@ public sealed class ObservationReprocessingDomainTests
     }
 
     [Fact]
+    public void Attempt_rejects_backwards_transitions_and_success_error_evidence()
+    {
+        Guid attemptId = Guid.NewGuid();
+        ObservationReprocessingAttempt attempt = ObservationReprocessingAttempt.Create(
+            attemptId,
+            "tenant-a",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            attemptId,
+            "mail.reservation-json",
+            2,
+            "operator-1",
+            Now,
+            Now.AddHours(24)).Value;
+
+        Assert.Equal(
+            IngestionDomainErrors.ReprocessingTaskInvalid,
+            attempt.Start(attemptId, 1, Now.AddMinutes(-1), Now.AddHours(2)).Error);
+        Assert.True(attempt.Start(attemptId, 1, Now.AddMinutes(1), Now.AddHours(2)).IsSuccess);
+        Assert.Equal(
+            IngestionDomainErrors.ReprocessingOutcomeInvalid,
+            attempt.Complete(1, 1, 0, 0, false, null, Now).Error);
+        Assert.Equal(
+            IngestionDomainErrors.ReprocessingErrorInvalid,
+            attempt.Complete(1, 1, 0, 0, false, "unexpected", Now.AddMinutes(2)).Error);
+        Assert.True(attempt.Complete(1, 1, 0, 0, false, null, Now.AddMinutes(2)).IsSuccess);
+        Assert.Null(attempt.LastErrorCode);
+    }
+
+    [Fact]
     public void Output_ledger_requires_receipt_for_success_and_error_for_rejection()
     {
         string hash = new('a', AdapterProtocolLimits.Sha256Length);

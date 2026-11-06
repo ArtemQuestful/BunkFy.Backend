@@ -10,6 +10,9 @@ deterministically generated
 ## Current Slice
 
 - tenant- and property-scoped, optimistic-concurrency case lifecycle;
+- idempotent case intake that uses an operator-attempt UUID as the aggregate
+  identity, serializes through the tenant-qualified case lock, and accepts a
+  replay only when immutable scope, request, and creator coordinates match;
 - explicit requester-verification and controller-routing gates before discovery;
 - calendar- and daylight-saving-safe response deadlines for externally
   requested Guest Rights cases, resolved from the property time zone and exact
@@ -60,17 +63,32 @@ deterministically generated
 - restriction approvals bind an explicit apply or release directive, so one
   approved intent cannot authorize the opposite transition;
 - resumable selected-coordinate reads behind the sensitive discovery
-  permission, while ordinary case DTOs expose only a count;
+  permission, plus a separate Review-guarded read of only the coordinates and
+  pinned versions already attached to a case; ordinary case DTOs expose only a
+  count;
 - a PII-carrying owner-export envelope that is explicitly catalogued as a
   subject-scoped, cross-module, one-hour transient fragment;
 - a neutral streaming contributor/sink contract; callers must discard partial
   fragments unless the owner returns success;
+- a Data Rights-owned, short-lived protected-export aggregate that assembles
+  bounded owner fragments, stores only encrypted artifacts in `IFileStorage`,
+  and streams authenticated plaintext only through assurance-gated endpoints;
+- exact terminal/transient owner failure semantics: automatic task retries keep
+  the artifact active, while a failed artifact requires an assurance-gated,
+  version-pinned and replay-safe operator retry;
 - scoped permissions that are not granted to ordinary seeded roles;
 - public controller API plus tenant-termination Admin API and Admin CLI
   operator controls;
-- a DataRights-owned Properties topology and policy projection, including the
-  property time zone, populated only through versioned Properties events or
-  the bounded projection-rebuild contract;
+- a DataRights-owned, rebuildable Properties topology and policy projection,
+  including the property time zone, populated only through versioned
+  Properties events or the bounded projection-rebuild contract;
+- the projection is explicitly tenant-filtered through the GMA scoped-entity
+  conventions; ordinary reads and writes require the active tenant, while two
+  tenants may safely carry the same property id;
+- topology and policy streams advance independently, ignore older facts,
+  accept exact equal-version replays, and fail closed on conflicting replays;
+  PostgreSQL binds tenant coordinates, partial-stream state, policy formats,
+  known-state derivation, and acknowledgement shape with named constraints;
 - PostgreSQL persistence, inbox/outbox infrastructure and focused architecture,
   privacy, domain, persistence, migration and authorization tests;
 - an audited tenant-termination coordinator with one active process per tenant,
@@ -87,12 +105,15 @@ tasks runs enqueue --tenant <tenant-id> --module data-rights --task rebuild-data
 The case does not contain guest names, contacts, documents, search criteria,
 provider payloads or free text. It stores only the selected owner's opaque
 record coordinate and selection audit attribution. Guest data remains owned by
-its source module. The export contract prepares owner fragments only; DataRights
-does not persist fragments or expose download artifacts. Guest anonymisation
-now reaches immutable owner and processing-ledger proof, with protected
-pre-readiness replay after database restore. Existing reservation facts remain
-owned by Reservations; only its local Guest-link eligibility projection is
-updated from the PII-free Guests event.
+its source module. Data Rights never persists owner fragments or plaintext
+exports: it persists bounded artifact lifecycle and integrity metadata while
+encrypted artifact bytes remain in the configured file-storage adapter.
+Protected downloads revalidate scope, permission, expiry, integrity, and fresh
+MFA/two-step assurance. Guest anonymisation now reaches immutable owner and
+processing-ledger proof, with protected pre-readiness replay after database
+restore. Existing reservation facts remain owned by Reservations; only its
+local Guest-link eligibility projection is updated from the PII-free Guests
+event.
 
 ## Operational Surfaces
 
@@ -116,6 +137,31 @@ updated from the PII-free Guests event.
 - Exact subject discovery remains bounded to 20 candidates and returns
   `LimitReached` when that bound is filled, prompting the operator to refine a
   strong identifier rather than broadening the search.
+- Review and Discover remain deliberately separate capabilities. Reviewers can
+  read only the selected opaque coordinates and pinned versions through the
+  exact-scope `review-evidence` route; lookup, candidate disclosure, selection,
+  and unselection continue to require Discover. The client version-binds this
+  evidence and withholds review or decision actions when it is missing, stale,
+  or failed.
+- The operator client snapshots normalized exact-match criteria with the case
+  ID and version, aborts obsolete discovery requests, and renders only the
+  current generation. Criteria remain in component memory, while selection is
+  still revalidated against the authoritative owner projection.
+- Confirmation panels snapshot the PII-free case identity, version, status,
+  selected-record count, operation and action under review. Live case or
+  permission drift hides stale confirmation immediately, and confirmed writes
+  submit the reviewed version so the server rejects a later race instead of
+  silently adopting newer state.
+- Required-companion review failures distinguish an active business block
+  (`409`), owner unavailability or an explicit transient retry (`503`), and an
+  invalid internal contributor result (`500`). Only the explicit retry signal
+  carries a short `Retry-After`; review is never retried automatically.
+- Subject discovery and selection distinguish authoritative scope conflicts
+  (`409`), missing compatible owners (`503` without `Retry-After`), explicit or
+  exceptional owner retries (`503` with a bounded `Retry-After`), malformed
+  operator coordinates (`400`), and invalid owner catalogs or results (`500`).
+  Owner calls are never retried automatically and failure logs contain only the
+  bounded owner key and exception type.
 - Schema-v2 country packs define structural year/month/day response periods and
   allowlisted calculation time zones. Immutable v1 packs remain valid for
   ordinary processing but cannot authorize Guest Rights deadlines.

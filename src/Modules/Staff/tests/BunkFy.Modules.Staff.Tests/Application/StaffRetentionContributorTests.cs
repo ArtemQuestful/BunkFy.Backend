@@ -56,6 +56,7 @@ public sealed class StaffRetentionContributorTests
             Assert.IsType<CompleteStaffRetentionExecutionCommand>(
                 dispatcher.CompletedCommand);
         Assert.Equal(2, completed.ScannedCount);
+        Assert.Equal(1, completed.Attempt);
         Assert.Equal(2, completed.NextAfterProjectionOrdinal);
         Assert.Equal(1, completed.RemainingCount);
         Assert.Equal(
@@ -95,6 +96,7 @@ public sealed class StaffRetentionContributorTests
             Assert.IsType<CompleteStaffRetentionExecutionCommand>(
                 dispatcher.CompletedCommand);
         Assert.Equal(3, completed.ScannedCount);
+        Assert.Equal(2, completed.Attempt);
         Assert.Equal(0, completed.NextAfterProjectionOrdinal);
         Assert.Equal(2, result.AffectedCount);
         Assert.True(result.AffectedCount <= result.ScannedCount);

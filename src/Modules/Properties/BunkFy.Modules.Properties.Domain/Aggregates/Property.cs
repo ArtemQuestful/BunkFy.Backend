@@ -65,7 +65,11 @@ public sealed partial class Property : ScopedAggregateRoot<Guid>
         }
 
         Result<PropertyDetailsUpdateOutcome> outcome =
-            this.ApplyDetails(details.Value, eventId, nowUtc);
+            this.UpdateDetails(
+                details.Value,
+                expectedVersion,
+                eventId,
+                nowUtc);
         return outcome.IsSuccess
             ? Result.Success()
             : Result.Failure(outcome.Error);
@@ -107,6 +111,12 @@ public sealed partial class Property : ScopedAggregateRoot<Guid>
                 versionResult.Error);
         }
 
+        if (this.TimeZoneId != details.TimeZoneId)
+        {
+            return Result.Failure<PropertyDetailsUpdateOutcome>(
+                PropertiesDomainErrors.TimeZoneDedicatedOperationRequired);
+        }
+
         return Result.Success(this.MatchesCreation(details)
             ? PropertyDetailsUpdateOutcome.Unchanged
             : PropertyDetailsUpdateOutcome.Changed);
@@ -131,7 +141,6 @@ public sealed partial class Property : ScopedAggregateRoot<Guid>
 
         this.Name = details.Name;
         this.Code = details.Code;
-        this.TimeZoneId = details.TimeZoneId;
         this.UpdatedAtUtc = nowUtc;
         this.Version++;
 

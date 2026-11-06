@@ -3,6 +3,7 @@ namespace BunkFy.Modules.Workspaces.Application.Contributors;
 using BunkFy.Modules.Retention.Contracts;
 using BunkFy.Modules.Workspaces.Application.Commands;
 using BunkFy.Modules.Workspaces.Application.Ports;
+using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Time;
@@ -13,20 +14,17 @@ internal sealed class WorkspaceStaffOnboardingRetentionContributor
     : IRetentionExecutionContributor
 {
     private readonly IRequestDispatcher dispatcher;
-    private readonly IWorkspaceStaffOnboardingRetentionRepository candidates;
     private readonly WorkspaceStaffOnboardingRetentionOptions options;
     private readonly ISystemClock clock;
     private readonly ILogger<WorkspaceStaffOnboardingRetentionContributor> logger;
 
     public WorkspaceStaffOnboardingRetentionContributor(
         IRequestDispatcher dispatcher,
-        IWorkspaceStaffOnboardingRetentionRepository candidates,
         IOptions<WorkspaceStaffOnboardingRetentionOptions> options,
         ISystemClock clock,
         ILogger<WorkspaceStaffOnboardingRetentionContributor> logger)
     {
         this.dispatcher = dispatcher;
-        this.candidates = candidates;
         this.options = options.Value;
         this.clock = clock;
         this.logger = logger;
@@ -58,22 +56,40 @@ internal sealed class WorkspaceStaffOnboardingRetentionContributor
                 nowUtc);
         }
 
-        IReadOnlyList<WorkspaceStaffOnboardingRetentionCandidate> eligible =
-            await this.candidates.ListEligibleAsync(
-                request.TenantId,
-                nowUtc - this.options.GracePeriod,
-                checked(this.options.BatchSize + 1),
+        Result<WorkspaceStaffOnboardingRetentionExecutionStart> started =
+            await this.dispatcher.SendAsync(
+                new BeginWorkspaceStaffOnboardingRetentionExecutionCommand(
+                    request),
                 cancellationToken).ConfigureAwait(false);
+        WorkspaceStaffOnboardingRetentionExecutionStart start = Require(started);
+        if (!start.DispatchRequired)
+        {
+            return start.CompletedResult!;
+        }
+
+        Result<IReadOnlyList<WorkspaceStaffOnboardingRetentionCandidate>> listed =
+            await this.dispatcher.SendAsync(
+                new ListWorkspaceStaffOnboardingRetentionCandidatesCommand(
+                    request.ExecutionId,
+                    request.Attempt,
+                    nowUtc - this.options.GracePeriod,
+                    checked(this.options.BatchSize + 1)),
+                cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<WorkspaceStaffOnboardingRetentionCandidate> eligible =
+            Require(listed);
         WorkspaceStaffOnboardingRetentionCandidate[] batch =
             eligible.Take(this.options.BatchSize).ToArray();
 
-        int affectedCount = 0;
+        int attemptedCount = 0;
         bool authorityLapsed = false;
         foreach (WorkspaceStaffOnboardingRetentionCandidate candidate in batch)
         {
+            attemptedCount++;
             Result<WorkspaceStaffOnboardingRetentionReconciliation> reconciled =
                 await this.dispatcher.SendAsync(
                     new ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand(
+                        request.ExecutionId,
+                        request.Attempt,
                         candidate.ApplicationId,
                         candidate.ApplicationVersion),
                     cancellationToken).ConfigureAwait(false);
@@ -82,17 +98,16 @@ internal sealed class WorkspaceStaffOnboardingRetentionContributor
                 this.logger.LogWarning(
                     "Workspace Staff onboarding staging reconciliation failed with {ErrorCode}.",
                     reconciled.Error.Code);
-                return Result(
-                    RetentionContributionStatus.Failed,
-                    batch.Length,
-                    affectedCount,
-                    1,
+                return await this.CompleteAsync(
+                    request,
+                    WorkspaceStaffOnboardingRetentionExecutionState.Failed,
+                    checked(start.ScannedCount + attemptedCount),
+                    remainingCount: 1,
                     WorkspaceStaffOnboardingRetentionCoordinates
                         .ReconciliationFailedOutcome,
-                    this.clock.UtcNow);
+                    cancellationToken).ConfigureAwait(false);
             }
 
-            affectedCount += reconciled.Value.Affected ? 1 : 0;
             authorityLapsed |= reconciled.Value.Outcome ==
                 WorkspaceStaffOnboardingRetentionOutcome.AuthorityLapsed;
         }
@@ -103,29 +118,33 @@ internal sealed class WorkspaceStaffOnboardingRetentionContributor
                 : 0;
         if (authorityLapsed)
         {
-            return Result(
-                RetentionContributionStatus.Failed,
-                batch.Length,
-                affectedCount,
+            return await this.CompleteAsync(
+                request,
+                WorkspaceStaffOnboardingRetentionExecutionState.Failed,
+                checked(start.ScannedCount + attemptedCount),
                 remainingCount,
                 WorkspaceStaffOnboardingRetentionCoordinates.AuthorityLapsedOutcome,
-                this.clock.UtcNow);
+                cancellationToken).ConfigureAwait(false);
         }
 
-        return Result(
-            RetentionContributionStatus.Completed,
-            batch.Length,
-            affectedCount,
+        return await this.CompleteAsync(
+            request,
+            WorkspaceStaffOnboardingRetentionExecutionState.Completed,
+            checked(start.ScannedCount + attemptedCount),
             remainingCount,
             remainingCount > 0
                 ? WorkspaceStaffOnboardingRetentionCoordinates.BacklogOutcome
                 : WorkspaceStaffOnboardingRetentionCoordinates.CompletedOutcome,
-            this.clock.UtcNow);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static bool IsExpectedRequest(RetentionContributionRequest request) =>
         request.ContractVersion == RetentionExecutionContract.CurrentVersion &&
+        request.ExecutionId != Guid.Empty &&
         request.PropertyId is null &&
+        request.Attempt > 0 &&
+        request.StartedAtUtc != default &&
+        request.DeadlineUtc > request.StartedAtUtc &&
         request.ExecutionPolicyVersion ==
             WorkspaceStaffOnboardingRetentionCoordinates.ExecutionPolicyVersion &&
         string.Equals(
@@ -137,6 +156,33 @@ internal sealed class WorkspaceStaffOnboardingRetentionContributor
             WorkspaceStaffOnboardingRetentionCoordinates.DataClassKey,
             StringComparison.Ordinal) &&
         Guid.TryParse(request.TenantId, out _);
+
+    private async Task<RetentionContributionResult> CompleteAsync(
+        RetentionContributionRequest request,
+        WorkspaceStaffOnboardingRetentionExecutionState state,
+        int scannedCount,
+        int remainingCount,
+        string outcomeCode,
+        CancellationToken cancellationToken)
+    {
+        Result<RetentionContributionResult> completed =
+            await this.dispatcher.SendAsync(
+                new CompleteWorkspaceStaffOnboardingRetentionExecutionCommand(
+                    request.ExecutionId,
+                    request.Attempt,
+                    state,
+                    scannedCount,
+                    remainingCount,
+                    outcomeCode,
+                    this.clock.UtcNow),
+                cancellationToken).ConfigureAwait(false);
+        return Require(completed);
+    }
+
+    private static T Require<T>(Result<T> result) => result.IsSuccess
+        ? result.Value
+        : throw new InvalidOperationException(
+            $"{result.Error.Code}: {result.Error.Message}");
 
     private static RetentionContributionResult Result(
         RetentionContributionStatus status,

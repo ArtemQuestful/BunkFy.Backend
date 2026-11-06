@@ -65,7 +65,7 @@ public sealed class GuestManagementOperationIntegrationTests
                 "GB",
                 "en-GB",
                 "Prefers a lower bunk.",
-                "user:operator")).ConfigureAwait(false);
+                "user:operator", LanguageTags: ["en-GB", "fr"])).ConfigureAwait(false);
         Assert.True(created.IsSuccess, created.Error.Code);
 
         Guid updateOperationId = Guid.NewGuid();
@@ -82,7 +82,7 @@ public sealed class GuestManagementOperationIntegrationTests
             "en-GB",
             "Updated once.",
             created.Value.Version,
-            "user:operator");
+            "user:operator", ["fr", "en-GB", "unknown-١"]);
         Result<GuestMutationReceiptDto>[] concurrentUpdates =
             await Task.WhenAll(
                 SendAsync(services, update),
@@ -171,6 +171,7 @@ public sealed class GuestManagementOperationIntegrationTests
             .ConfigureAwait(false);
 
         Assert.Equal(GuestProfileState.Archived, profile.Status);
+        Assert.Equal(["en-gb", "fr", "unknown-١"], profile.LanguageTags);
         Assert.Equal(archived.Version, profile.Version);
         Assert.Equal(2, operations.Length);
         Assert.Contains(

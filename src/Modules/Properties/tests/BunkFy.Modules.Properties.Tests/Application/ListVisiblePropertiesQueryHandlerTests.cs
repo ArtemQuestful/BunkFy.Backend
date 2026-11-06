@@ -4,11 +4,14 @@ using BunkFy.Modules.Properties.Application;
 using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Properties.Domain.Aggregates;
+using BunkFy.TimeZones;
 using Gma.Framework.AccessControl;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Pagination;
 using Gma.Framework.Permissions;
 using Gma.Framework.Results;
+using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -95,14 +98,37 @@ public sealed class ListVisiblePropertiesQueryHandlerTests
         Assert.Equal(1, grants.CallCount);
     }
 
+    [Fact]
+    public async Task Visible_list_returns_typed_time_source_failure()
+    {
+        FakeGrantScopeReader grants = new(
+            new AccessGrantScope(
+                AccessScope.Parse("tenant:tenant-a"),
+                new AccessScopeMatchOptions()));
+        FakePropertiesReadRepository repository = new();
+        IQueryHandler<ListVisiblePropertiesQuery, PropertyListResponse> handler =
+            CreateHandler(repository, grants, new FixedClock(default));
+
+        Result<PropertyListResponse> result = await handler.HandleAsync(
+            new ListVisiblePropertiesQuery(AccessSubject.User("user-a")),
+            CancellationToken.None);
+
+        Assert.Equal(
+            PropertiesApplicationErrors.TimeSourceUnavailable,
+            result.Error);
+        Assert.NotNull(repository.Visibility);
+    }
+
     private static IQueryHandler<ListVisiblePropertiesQuery, PropertyListResponse> CreateHandler(
         FakePropertiesReadRepository repository,
-        FakeGrantScopeReader grants)
+        FakeGrantScopeReader grants,
+        ISystemClock? clock = null)
     {
         ServiceCollection services = new();
         services.AddSingleton<IPropertiesReadRepository>(repository);
         services.AddSingleton<IAccessGrantScopeReader>(grants);
         services.AddSingleton<IScopeContext>(new TestScopeContext());
+        services.AddSingleton<ISystemClock>(clock ?? new TestClock());
         services.AddPropertiesApplication();
 
         ServiceProvider provider = services.BuildServiceProvider();
@@ -128,19 +154,19 @@ public sealed class ListVisiblePropertiesQueryHandlerTests
     {
         public PropertiesVisibilityScope? Visibility { get; private set; }
 
-        public Task<PropertyDto?> GetPropertyAsync(Guid propertyId, CancellationToken cancellationToken) =>
+        public Task<Property?> GetPropertyAsync(Guid propertyId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<PropertyListResponse> ListPropertiesAsync(PageRequest pageRequest, CancellationToken cancellationToken) =>
+        public Task<PropertyReadPage> ListPropertiesAsync(PageRequest pageRequest, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<PropertyListResponse> ListVisiblePropertiesAsync(
+        public Task<PropertyReadPage> ListVisiblePropertiesAsync(
             PageRequest pageRequest,
             PropertiesVisibilityScope visibility,
             CancellationToken cancellationToken)
         {
             this.Visibility = visibility;
-            return Task.FromResult(new PropertyListResponse([], pageRequest.Page, pageRequest.PageSize, false));
+            return Task.FromResult(new PropertyReadPage([], pageRequest.Page, pageRequest.PageSize, false));
         }
 
         public Task<RoomDto?> GetRoomAsync(Guid propertyId, Guid roomId, CancellationToken cancellationToken) =>
@@ -164,5 +190,16 @@ public sealed class ListVisiblePropertiesQueryHandlerTests
     {
         public bool IsEnabled => true;
         public string ScopeId => "tenant-a";
+    }
+
+    private sealed class TestClock : ISystemClock
+    {
+        public DateTimeOffset UtcNow { get; } =
+            new(2026, 8, 14, 12, 0, 0, TimeSpan.Zero);
+    }
+
+    private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNow => utcNow;
     }
 }

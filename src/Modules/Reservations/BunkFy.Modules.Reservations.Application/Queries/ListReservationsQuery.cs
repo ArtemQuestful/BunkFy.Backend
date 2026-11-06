@@ -9,5 +9,9 @@ public sealed record ListReservationsQuery(
     string? Search,
     ReservationListOrder Order,
     int Page,
-    int PageSize)
+    int PageSize,
+    DateOnly? OverlapsFrom = null,
+    DateOnly? OverlapsTo = null,
+    ReservationListView? View = null,
+    DateOnly? OperatingDate = null)
     : IQuery<ReservationListResponse>;

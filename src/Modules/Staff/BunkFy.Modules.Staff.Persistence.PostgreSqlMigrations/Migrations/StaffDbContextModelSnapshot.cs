@@ -146,6 +146,10 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("staff_members", "staff", t =>
                         {
+                            t.HasCheckConstraint("CK_staff_members_anonymised_profile", "\"Status\" <> 4 OR (\"DisplayName\" = 'Anonymised staff member' AND \"DisplayNameSearch\" = 'ANONYMISED STAFF MEMBER' AND \"LegalName\" IS NULL AND \"LegalNameSearch\" IS NULL AND \"WorkEmail\" IS NULL AND \"WorkEmailSearch\" IS NULL AND \"WorkPhone\" IS NULL AND \"WorkPhoneSearch\" IS NULL AND \"EmployeeNumber\" IS NULL AND \"EmployeeNumberSearch\" IS NULL AND \"JobTitle\" IS NULL AND \"Department\" IS NULL AND \"AuthSubjectId\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_staff_members_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
                             t.HasCheckConstraint("CK_staff_members_created_by", "length(trim(\"CreatedBy\")) > 0");
 
                             t.HasCheckConstraint("CK_staff_members_display_name", "length(trim(\"DisplayName\")) > 0");
@@ -153,6 +157,12 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
                             t.HasCheckConstraint("CK_staff_members_last_changed_by", "length(trim(\"LastChangedBy\")) > 0");
 
                             t.HasCheckConstraint("CK_staff_members_lifecycle", "(\"Status\" = 1 AND \"SuspendedAtUtc\" IS NULL AND \"DepartedAtUtc\" IS NULL AND \"DepartureEffectiveOn\" IS NULL AND \"AnonymisedAtUtc\" IS NULL) OR (\"Status\" = 2 AND \"SuspendedAtUtc\" IS NOT NULL AND \"DepartedAtUtc\" IS NULL AND \"DepartureEffectiveOn\" IS NULL AND \"AnonymisedAtUtc\" IS NULL) OR (\"Status\" = 3 AND \"SuspendedAtUtc\" IS NULL AND \"DepartedAtUtc\" IS NOT NULL AND \"DepartureEffectiveOn\" IS NOT NULL AND \"AnonymisedAtUtc\" IS NULL) OR (\"Status\" = 4 AND \"SuspendedAtUtc\" IS NULL AND \"DepartedAtUtc\" IS NOT NULL AND \"DepartureEffectiveOn\" IS NOT NULL AND \"AnonymisedAtUtc\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_staff_members_optional_text", "(\"JobTitle\" IS NULL OR length(trim(\"JobTitle\")) > 0) AND (\"Department\" IS NULL OR length(trim(\"Department\")) > 0) AND (\"AuthSubjectId\" IS NULL OR length(trim(\"AuthSubjectId\")) > 0)");
+
+                            t.HasCheckConstraint("CK_staff_members_search_shape", "length(trim(\"DisplayNameSearch\")) > 0 AND ((\"LegalName\" IS NULL AND \"LegalNameSearch\" IS NULL) OR (\"LegalName\" IS NOT NULL AND \"LegalNameSearch\" IS NOT NULL AND length(trim(\"LegalName\")) > 0 AND length(trim(\"LegalNameSearch\")) > 0)) AND ((\"WorkEmail\" IS NULL AND \"WorkEmailSearch\" IS NULL) OR (\"WorkEmail\" IS NOT NULL AND \"WorkEmailSearch\" IS NOT NULL AND length(trim(\"WorkEmail\")) > 0 AND length(trim(\"WorkEmailSearch\")) > 0)) AND ((\"WorkPhone\" IS NULL AND \"WorkPhoneSearch\" IS NULL) OR (\"WorkPhone\" IS NOT NULL AND \"WorkPhoneSearch\" IS NOT NULL AND length(trim(\"WorkPhone\")) > 0 AND length(trim(\"WorkPhoneSearch\")) > 0)) AND ((\"EmployeeNumber\" IS NULL AND \"EmployeeNumberSearch\" IS NULL) OR (\"EmployeeNumber\" IS NOT NULL AND \"EmployeeNumberSearch\" IS NOT NULL AND length(trim(\"EmployeeNumber\")) > 0 AND length(trim(\"EmployeeNumberSearch\")) > 0))");
+
+                            t.HasCheckConstraint("CK_staff_members_timestamps", "\"LastChangedAtUtc\" >= \"CreatedAtUtc\" AND (\"SuspendedAtUtc\" IS NULL OR (\"SuspendedAtUtc\" >= \"CreatedAtUtc\" AND \"SuspendedAtUtc\" <= \"LastChangedAtUtc\")) AND (\"DepartedAtUtc\" IS NULL OR (\"DepartedAtUtc\" >= \"CreatedAtUtc\" AND \"DepartedAtUtc\" <= \"LastChangedAtUtc\")) AND (\"AnonymisedAtUtc\" IS NULL OR (\"DepartedAtUtc\" IS NOT NULL AND \"AnonymisedAtUtc\" >= \"DepartedAtUtc\" AND \"AnonymisedAtUtc\" <= \"LastChangedAtUtc\"))");
 
                             t.HasCheckConstraint("CK_staff_members_version", "\"Version\" >= 1");
                         });
@@ -835,17 +845,33 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("ScopeId", "StaffMemberId", "Id");
 
+                    b.HasIndex("ScopeId", "StaffMemberId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_staff_assignments_current_primary")
+                        .HasFilter("\"IsCurrent\" AND \"IsPrimary\"");
+
+                    b.HasIndex("ScopeId", "StaffMemberId", "PropertyId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_staff_assignments_current_property")
+                        .HasFilter("\"IsCurrent\"");
+
                     b.HasIndex("ScopeId", "PropertyId", "IsCurrent", "StaffMemberId");
 
                     b.HasIndex("ScopeId", "StaffMemberId", "PropertyId", "IsCurrent");
 
                     b.ToTable("property_assignments", "staff", t =>
                         {
-                            t.HasCheckConstraint("CK_staff_assignments_dates", "\"EffectiveTo\" IS NULL OR \"EffectiveTo\" >= \"EffectiveFrom\"");
+                            t.HasCheckConstraint("CK_staff_assignments_actor_shape", "length(trim(\"AssignedBy\")) > 0 AND (\"UnassignedBy\" IS NULL OR length(trim(\"UnassignedBy\")) > 0) AND (\"UnassignmentReason\" IS NULL OR length(trim(\"UnassignmentReason\")) > 0)");
+
+                            t.HasCheckConstraint("CK_staff_assignments_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"StaffMemberId\" <> '00000000-0000-0000-0000-000000000000' AND \"PropertyId\" <> '00000000-0000-0000-0000-000000000000' AND length(trim(\"ScopeId\")) > 0");
+
+                            t.HasCheckConstraint("CK_staff_assignments_dates", "\"EffectiveFrom\" > DATE '0001-01-01' AND (\"EffectiveTo\" IS NULL OR \"EffectiveTo\" >= \"EffectiveFrom\")");
 
                             t.HasCheckConstraint("CK_staff_assignments_lifecycle", "(\"IsCurrent\" AND \"EffectiveTo\" IS NULL AND \"UnassignedBy\" IS NULL AND \"UnassignedAtUtc\" IS NULL AND \"UnassignedAtVersion\" IS NULL) OR (NOT \"IsCurrent\" AND NOT \"IsPrimary\" AND \"EffectiveTo\" IS NOT NULL AND \"UnassignedBy\" IS NOT NULL AND \"UnassignedAtUtc\" IS NOT NULL AND \"UnassignedAtVersion\" IS NOT NULL)");
 
-                            t.HasCheckConstraint("CK_staff_assignments_versions", "\"AssignedAtVersion\" >= 2 AND (\"UnassignedAtVersion\" IS NULL OR \"UnassignedAtVersion\" >= \"AssignedAtVersion\")");
+                            t.HasCheckConstraint("CK_staff_assignments_timestamps", "\"UnassignedAtUtc\" IS NULL OR \"UnassignedAtUtc\" >= \"AssignedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_staff_assignments_versions", "\"AssignedAtVersion\" >= 2 AND (\"UnassignedAtVersion\" IS NULL OR \"UnassignedAtVersion\" > \"AssignedAtVersion\")");
                         });
                 });
 
@@ -1028,13 +1054,16 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
+                    b.HasIndex("ScopeId", "EventId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_staff_retention_receipts_event");
+
+                    b.HasIndex("ScopeId", "ExecutionId")
+                        .HasDatabaseName("IX_staff_retention_receipts_execution");
 
                     b.HasIndex("ScopeId", "StaffMemberId")
-                        .IsUnique();
-
-                    b.HasIndex("ScopeId", "ExecutionId", "StaffMemberId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_staff_retention_receipts_staff_member");
 
                     b.ToTable("staff_retention_anonymisation_receipts", "staff", t =>
                         {
@@ -1042,9 +1071,11 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                             t.HasCheckConstraint("CK_staff_retention_receipts_contract", "\"ContractVersion\" = 1");
 
-                            t.HasCheckConstraint("CK_staff_retention_receipts_deadline", "\"RetentionDeadlineUtc\" >= \"DepartedAtUtc\" AND \"CompletedAtUtc\" >= \"RetentionDeadlineUtc\"");
+                            t.HasCheckConstraint("CK_staff_retention_receipts_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND \"ExecutionId\" <> '00000000-0000-0000-0000-000000000000' AND \"StaffMemberId\" <> '00000000-0000-0000-0000-000000000000' AND \"EventId\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
 
-                            t.HasCheckConstraint("CK_staff_retention_receipts_digests", "char_length(\"PolicyEvidenceSha256\") = 64 AND char_length(\"CanonicalSha256\") = 64");
+                            t.HasCheckConstraint("CK_staff_retention_receipts_digests", "char_length(\"PolicyEvidenceSha256\") = 64 AND \"PolicyEvidenceSha256\" ~ '^[0-9a-f]+$' AND char_length(\"CanonicalSha256\") = 64 AND \"CanonicalSha256\" ~ '^[0-9a-f]+$'");
+
+                            t.HasCheckConstraint("CK_staff_retention_receipts_timestamps", "\"DepartedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00' AND \"RetentionDeadlineUtc\" >= \"DepartedAtUtc\" AND \"CompletedAtUtc\" >= \"RetentionDeadlineUtc\"");
 
                             t.HasCheckConstraint("CK_staff_retention_receipts_versions", "\"SelectedStaffVersion\" >= 1 AND \"ResultingStaffVersion\" = \"SelectedStaffVersion\" + 1 AND \"SelectedOperationLockRevision\" >= 1 AND \"ResultingOperationLockRevision\" = \"SelectedOperationLockRevision\" + 1");
                         });
@@ -1109,21 +1140,26 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ScopeId", "DataClassKey", "CompletedAtUtc", "Id");
+                    b.HasIndex("ScopeId", "DataClassKey", "CompletedAtUtc", "Id")
+                        .HasDatabaseName("IX_staff_retention_executions_history");
 
                     b.ToTable("staff_retention_executions", "staff", t =>
                         {
+                            t.HasCheckConstraint("CK_staff_retention_executions_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
                             t.HasCheckConstraint("CK_staff_retention_executions_counts", "\"AffectedCount\" >= 0 AND (\"ScannedCount\" IS NULL OR \"ScannedCount\" >= 0) AND (\"RemainingCount\" IS NULL OR \"RemainingCount\" >= 0) AND (\"ScannedCount\" IS NULL OR \"AffectedCount\" <= \"ScannedCount\")");
 
                             t.HasCheckConstraint("CK_staff_retention_executions_cursor", "\"StartingProjectionOrdinal\" >= 0");
 
-                            t.HasCheckConstraint("CK_staff_retention_executions_key", "\"DataClassKey\" ~ '^[A-Za-z0-9.-]+$'");
+                            t.HasCheckConstraint("CK_staff_retention_executions_key", "\"DataClassKey\" ~ '^[a-z0-9.-]+$'");
 
                             t.HasCheckConstraint("CK_staff_retention_executions_policy", "\"ExecutionPolicyVersion\" >= 1 AND \"Attempt\" >= 1 AND \"DeadlineUtc\" > \"StartedAtUtc\"");
 
                             t.HasCheckConstraint("CK_staff_retention_executions_state", "(\"State\" = 1 AND \"CompletedAtUtc\" IS NULL AND \"ScannedCount\" IS NULL AND \"RemainingCount\" IS NULL AND \"OutcomeCode\" IS NULL AND \"HoldReviewDueAtUtc\" IS NULL) OR (\"State\" IN (2, 3, 4) AND \"CompletedAtUtc\" BETWEEN \"StartedAtUtc\" AND \"DeadlineUtc\" AND \"ScannedCount\" IS NOT NULL AND \"RemainingCount\" IS NOT NULL AND \"OutcomeCode\" ~ '^[A-Za-z0-9.-]+$' AND ((\"State\" = 3 AND \"HoldReviewDueAtUtc\" IS NOT NULL) OR (\"State\" <> 3 AND \"HoldReviewDueAtUtc\" IS NULL)))");
 
-                            t.HasCheckConstraint("CK_staff_retention_executions_version", "\"Version\" >= 1");
+                            t.HasCheckConstraint("CK_staff_retention_executions_timestamp", "\"StartedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
+
+                            t.HasCheckConstraint("CK_staff_retention_executions_version", "\"Version\" >= 1 AND (\"State\" = 1 OR \"Version\" >= 2)");
                         });
                 });
 
@@ -1161,18 +1197,28 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("ScopeId", "Id");
+                    b.HasIndex("ScopeId", "LastExecutionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_staff_retention_checkpoints_last_execution")
+                        .HasFilter("\"LastExecutionId\" IS NOT NULL");
 
                     b.HasIndex("ScopeId", "DataClassKey", "ExecutionPolicyVersion")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_staff_retention_checkpoints_data_class_policy");
 
                     b.ToTable("staff_retention_sweep_checkpoints", "staff", t =>
                         {
+                            t.HasCheckConstraint("CK_staff_retention_checkpoints_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND trim(\"ScopeId\") <> ''");
+
                             t.HasCheckConstraint("CK_staff_retention_checkpoints_cursor", "\"AfterProjectionOrdinal\" >= 0");
 
-                            t.HasCheckConstraint("CK_staff_retention_checkpoints_key", "\"DataClassKey\" ~ '^[A-Za-z0-9.-]+$'");
+                            t.HasCheckConstraint("CK_staff_retention_checkpoints_key", "\"DataClassKey\" ~ '^[a-z0-9.-]+$'");
+
+                            t.HasCheckConstraint("CK_staff_retention_checkpoints_lifecycle", "(\"LastExecutionId\" IS NULL AND ((\"Version\" = 1 AND \"AfterProjectionOrdinal\" = 0) OR \"Version\" >= 3)) OR (\"LastExecutionId\" IS NOT NULL AND \"LastExecutionId\" <> '00000000-0000-0000-0000-000000000000' AND \"Version\" >= 2)");
 
                             t.HasCheckConstraint("CK_staff_retention_checkpoints_policy", "\"ExecutionPolicyVersion\" >= 1");
+
+                            t.HasCheckConstraint("CK_staff_retention_checkpoints_timestamp", "\"UpdatedAtUtc\" > TIMESTAMPTZ '0001-01-01 00:00:00+00'");
 
                             t.HasCheckConstraint("CK_staff_retention_checkpoints_version", "\"Version\" >= 1");
                         });
@@ -1426,6 +1472,12 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("property_projection", "staff", t =>
                         {
+                            t.HasCheckConstraint("CK_staff_property_projection_coordinates", "\"Id\" <> '00000000-0000-0000-0000-000000000000' AND char_length(\"ScopeId\") > 0 AND \"ScopeId\" = btrim(\"ScopeId\") AND \"ScopeId\" !~ '[[:space:][:cntrl:]]'");
+
+                            t.HasCheckConstraint("CK_staff_property_projection_name", "\"Name\" IS NULL OR (char_length(\"Name\") > 0 AND \"Name\" = btrim(\"Name\") AND \"Name\" !~ '[[:cntrl:]]')");
+
+                            t.HasCheckConstraint("CK_staff_property_projection_state", "\"Status\" IN (1, 2) AND (\"Status\" = 2 OR \"Name\" IS NOT NULL)");
+
                             t.HasCheckConstraint("CK_staff_property_projection_version", "\"Version\" >= 1");
                         });
                 });
@@ -1903,14 +1955,16 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
                         .HasForeignKey("ScopeId", "ExecutionId")
                         .HasPrincipalKey("ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_staff_retention_receipts_execution");
 
                     b.HasOne("BunkFy.Modules.Staff.Domain.Aggregates.StaffMember", null)
                         .WithOne()
                         .HasForeignKey("BunkFy.Modules.Staff.Domain.Retention.StaffRetentionAnonymisationReceipt", "ScopeId", "StaffMemberId")
                         .HasPrincipalKey("BunkFy.Modules.Staff.Domain.Aggregates.StaffMember", "ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_staff_retention_receipts_staff_member");
                 });
 
             modelBuilder.Entity("BunkFy.Modules.Staff.Persistence.Models.StaffOperationLock", b =>

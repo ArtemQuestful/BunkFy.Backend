@@ -81,6 +81,32 @@ internal sealed record PropertiesPropertyMutationOperationStateTenantExport(
     long ResultResourceVersion,
     DateTimeOffset CompletedAtUtc);
 
+internal sealed record PropertiesPropertyTimeZoneOperationTenantExport(
+    [property: PropertiesTenantExportField("properties.scope-id")]
+    string ScopeId,
+    [property: PropertiesTenantExportField("properties.property-id")]
+    Guid PropertyId,
+    [property: PropertiesTenantExportField("properties.record-id")]
+    Guid OperationId,
+    [property: PropertiesTenantExportField(
+        "properties.property-time-zone-operation")]
+    PropertiesPropertyTimeZoneOperationStateTenantExport State,
+    [property: PropertiesTenantExportField(
+        "properties.staff-actor-reference")]
+    string ActorId,
+    [property: PropertiesTenantExportField("properties.occurred-at")]
+    DateTimeOffset OccurredAtUtc);
+
+internal sealed record PropertiesPropertyTimeZoneOperationStateTenantExport(
+    Guid RevisionId,
+    BunkFy.Modules.Properties.Contracts.PropertyTimeZoneChangeKind ChangeKind,
+    string RequestedTimeZoneId,
+    string? PreviousTimeZoneId,
+    string TimeZoneId,
+    string CatalogVersion,
+    long ExpectedVersion,
+    long ResultVersion);
+
 internal sealed record PropertiesGovernanceAcknowledgementTenantExport(
     [property: PropertiesTenantExportField("properties.scope-id")]
     string ScopeId,

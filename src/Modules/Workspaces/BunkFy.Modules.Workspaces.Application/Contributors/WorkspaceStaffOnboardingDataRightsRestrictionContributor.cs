@@ -24,11 +24,63 @@ internal sealed class
     : IDataRightsRestrictionContributor
 {
     private static readonly PageRequest ActiveRestrictionPage = new(1, 2);
+    private static readonly PageRequest ReleaseTargetPage = new(
+        1,
+        DataRightsRestrictionContract.MaxReleaseTargets + 1);
 
     public string OwnerKey => WorkspacesDataRightsCoordinates.Owner;
 
     public int ContractVersion =>
         DataRightsRestrictionContract.CurrentVersion;
+
+    public async Task<DataRightsRestrictionTargetResolutionResult>
+        ResolveReleaseTargetsAsync(
+            DataRightsRestrictionTargetResolutionRequest request,
+            CancellationToken cancellationToken)
+    {
+        if (!IsValid(request, clock.UtcNow))
+        {
+            return DataRightsRestrictionTargetResolutionResult.Failed(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .RestrictionRequestInvalid.Code);
+        }
+
+        if (request.TargetOwnerOperationId is Guid targetId)
+        {
+            WorkspaceStaffOnboardingProcessingRestriction? target =
+                await restrictions.GetAsync(
+                    targetId,
+                    cancellationToken).ConfigureAwait(false);
+            if (target is null ||
+                target.ApplicationId != request.Coordinate.RecordId)
+            {
+                return DataRightsRestrictionTargetResolutionResult.NotFound();
+            }
+
+            if (target.Status !=
+                    WorkspaceStaffOnboardingProcessingRestrictionState.Active ||
+                target.Version != request.TargetOwnerOperationVersion)
+            {
+                return DataRightsRestrictionTargetResolutionResult.Stale();
+            }
+
+            return DataRightsRestrictionTargetResolutionResult.Completed(
+                [ToReleaseTarget(target)]);
+        }
+
+        IReadOnlyCollection<WorkspaceStaffOnboardingProcessingRestriction>
+            active = await restrictions.ListActiveAsync(
+                request.Coordinate.RecordId,
+                ReleaseTargetPage,
+                cancellationToken).ConfigureAwait(false);
+        bool limitReached =
+            active.Count > DataRightsRestrictionContract.MaxReleaseTargets;
+        return DataRightsRestrictionTargetResolutionResult.Completed(
+            active.Take(DataRightsRestrictionContract.MaxReleaseTargets)
+                .Select(ToReleaseTarget)
+                .ToArray(),
+            limitReached);
+    }
 
     public async Task<DataRightsRestrictionContributionResult> ExecuteAsync(
         DataRightsRestrictionContributionRequest request,
@@ -64,12 +116,47 @@ internal sealed class
                     .RestrictionProjectionUnavailable.Code);
         }
 
-        IReadOnlyCollection<
-            WorkspaceStaffOnboardingProcessingRestriction> active =
-            await restrictions.ListActiveAsync(
-                request.Coordinate.RecordId,
-                ActiveRestrictionPage,
-                cancellationToken).ConfigureAwait(false);
+        WorkspaceStaffOnboardingProcessingRestriction? releaseTarget = null;
+        if (request.Directive == DataRightsRestrictionDirective.Release)
+        {
+            if (request.TargetOwnerOperationId is Guid targetId)
+            {
+                releaseTarget = await restrictions.GetAsync(
+                    targetId,
+                    cancellationToken).ConfigureAwait(false);
+                if (releaseTarget is null ||
+                    releaseTarget.ApplicationId !=
+                        request.Coordinate.RecordId ||
+                    releaseTarget.Status !=
+                        WorkspaceStaffOnboardingProcessingRestrictionState
+                            .Active ||
+                    releaseTarget.Version !=
+                        request.TargetOwnerOperationVersion)
+                {
+                    return DataRightsRestrictionContributionResult.Blocked(
+                        WorkspaceStaffOnboardingApplicationErrors
+                            .RestrictionActiveStateInvalid.Code);
+                }
+            }
+            else
+            {
+                IReadOnlyCollection<
+                    WorkspaceStaffOnboardingProcessingRestriction> active =
+                    await restrictions.ListActiveAsync(
+                        request.Coordinate.RecordId,
+                        ActiveRestrictionPage,
+                        cancellationToken).ConfigureAwait(false);
+                if (active.Count != 1)
+                {
+                    return DataRightsRestrictionContributionResult.Blocked(
+                        WorkspaceStaffOnboardingApplicationErrors
+                            .RestrictionActiveStateInvalid.Code);
+                }
+
+                releaseTarget = active.Single();
+            }
+        }
+
         Result<WorkspaceStaffOnboardingProcessingRestrictionReceiptDto>
             executed = request.Directive switch
             {
@@ -86,11 +173,11 @@ internal sealed class
                                 request.ExecutingActorId),
                         cancellationToken).ConfigureAwait(false),
                 DataRightsRestrictionDirective.Release
-                    when active.Count == 1 =>
+                    when releaseTarget is not null =>
                     await this.ReleaseAsync(
                         request,
                         projection,
-                        active.Single(),
+                        releaseTarget,
                         cancellationToken).ConfigureAwait(false),
                 _ =>
                     Result.Failure<
@@ -152,7 +239,9 @@ internal sealed class
                 request.Coordinate.RecordVersion,
                 restriction.Version,
                 projection.Revision,
-                request.ExecutingActorId),
+                request.ExecutingActorId,
+                LegacyUnboundTarget:
+                    request.TargetOwnerOperationId is null),
             cancellationToken).ConfigureAwait(false);
 
     private static bool IsValid(
@@ -167,6 +256,7 @@ internal sealed class
         request.PropertyId is null &&
         request.CaseId != Guid.Empty &&
         request.ApprovalRevision > 0 &&
+        request.Coordinate is not null &&
         string.Equals(
             request.Coordinate.OwnerKey,
             WorkspacesDataRightsCoordinates.Owner,
@@ -179,7 +269,38 @@ internal sealed class
         request.Coordinate.RecordVersion > 0 &&
         request.Directive is DataRightsRestrictionDirective.Apply
             or DataRightsRestrictionDirective.Release &&
+        HasValidTarget(
+            request.Directive,
+            request.TargetOwnerOperationId,
+            request.TargetOwnerOperationVersion) &&
         !string.IsNullOrWhiteSpace(request.ExecutingActorId) &&
+        request.DeadlineUtc > nowUtc;
+
+    private static bool IsValid(
+        DataRightsRestrictionTargetResolutionRequest? request,
+        DateTimeOffset nowUtc) =>
+        request is not null &&
+        request.ContractVersion ==
+            DataRightsRestrictionContract.CurrentVersion &&
+        request.CaseType == DataRightsCaseType.StaffRights &&
+        !string.IsNullOrWhiteSpace(request.TenantId) &&
+        request.PropertyId is null &&
+        request.CaseId != Guid.Empty &&
+        request.Coordinate is not null &&
+        string.Equals(
+            request.Coordinate.OwnerKey,
+            WorkspacesDataRightsCoordinates.Owner,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            request.Coordinate.RecordType,
+            WorkspacesDataRightsCoordinates.StaffOnboardingRecordType,
+            StringComparison.Ordinal) &&
+        request.Coordinate.RecordId != Guid.Empty &&
+        request.Coordinate.RecordVersion > 0 &&
+        HasValidTarget(
+            DataRightsRestrictionDirective.Release,
+            request.TargetOwnerOperationId,
+            request.TargetOwnerOperationVersion) &&
         request.DeadlineUtc > nowUtc;
 
     private static bool Matches(
@@ -191,6 +312,22 @@ internal sealed class
                 ? WorkspaceStaffOnboardingProcessingRestrictionActionDto.Apply
                 : WorkspaceStaffOnboardingProcessingRestrictionActionDto
                     .Release;
+        bool targetMatches = request.Directive switch
+        {
+            DataRightsRestrictionDirective.Apply =>
+                request.TargetOwnerOperationId is null &&
+                request.TargetOwnerOperationVersion is null &&
+                receipt.EffectiveRestricted,
+            DataRightsRestrictionDirective.Release
+                when request.TargetOwnerOperationId is null =>
+                request.TargetOwnerOperationVersion is null &&
+                !receipt.EffectiveRestricted,
+            DataRightsRestrictionDirective.Release =>
+                receipt.RestrictionId == request.TargetOwnerOperationId &&
+                receipt.RestrictionVersion ==
+                    request.TargetOwnerOperationVersion + 1,
+            _ => false
+        };
         return receipt.ReceiptId != Guid.Empty &&
             receipt.RestrictionId != Guid.Empty &&
             receipt.Action == expectedAction &&
@@ -201,9 +338,7 @@ internal sealed class
                 request.Coordinate.RecordVersion &&
             receipt.RestrictionVersion > 0 &&
             receipt.ProjectionRevision > 0 &&
-            receipt.EffectiveRestricted ==
-                (request.Directive ==
-                    DataRightsRestrictionDirective.Apply) &&
+            targetMatches &&
             string.Equals(
                 receipt.ActorId,
                 request.ExecutingActorId.Trim(),
@@ -212,6 +347,26 @@ internal sealed class
             receipt.CompletedAtUtc != default &&
             receipt.CompletedAtUtc <= request.DeadlineUtc;
     }
+
+    private static bool HasValidTarget(
+        DataRightsRestrictionDirective directive,
+        Guid? targetId,
+        long? targetVersion) =>
+        directive == DataRightsRestrictionDirective.Apply
+            ? targetId is null && targetVersion is null
+            : (targetId is null && targetVersion is null) ||
+              (targetId is Guid id &&
+               id != Guid.Empty &&
+               targetVersion is long version &&
+               version is > 0 and < long.MaxValue);
+
+    private static DataRightsRestrictionReleaseTarget ToReleaseTarget(
+        WorkspaceStaffOnboardingProcessingRestriction restriction) =>
+        new(
+            restriction.Id,
+            restriction.Version,
+            restriction.ApplyCaseId,
+            restriction.AppliedAtUtc);
 
     private static bool IsBlocked(string code) =>
         code is

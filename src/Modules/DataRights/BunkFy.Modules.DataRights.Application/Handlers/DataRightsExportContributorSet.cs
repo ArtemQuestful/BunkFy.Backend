@@ -16,48 +16,101 @@ internal static class DataRightsExportContributorSet
             caseType is not DataRightsCaseType.GuestRights and
                 not DataRightsCaseType.StaffRights)
         {
-            return Failure();
+            return CatalogInvalid();
         }
 
-        IDataRightsSubjectExportContributor[] available = contributors
-            .Where(contributor => contributor is not null &&
-                contributor.SupportedCaseTypes?.Contains(caseType) == true)
-            .ToArray();
-        if (available.Any(contributor =>
-                string.IsNullOrWhiteSpace(contributor.OwnerKey) ||
-                contributor.OwnerKey.Trim().Length >
-                    DataRightsExportLimits.OwnerKeyMaxLength ||
-                contributor.Descriptor is null) ||
-            available.GroupBy(
-                    contributor => contributor.OwnerKey.Trim().ToLowerInvariant(),
+        try
+        {
+            IDataRightsSubjectExportContributor[] catalog =
+                contributors.ToArray();
+            if (catalog.Any(contributor => contributor is null) ||
+                catalog.Any(contributor => !IsValid(contributor)))
+            {
+                return CatalogInvalid();
+            }
+
+            IDataRightsSubjectExportContributor[] available = catalog
+                .Where(contributor =>
+                    contributor.SupportedCaseTypes.Contains(caseType))
+                .ToArray();
+            if (available.GroupBy(
+                    contributor => NormalizeOwner(contributor.OwnerKey),
                     StringComparer.Ordinal)
                 .Any(group => group.Count() != 1))
-        {
-            return Failure();
-        }
+            {
+                return CatalogInvalid();
+            }
 
-        Dictionary<string, IDataRightsSubjectExportContributor> byOwner =
-            available.ToDictionary(
-                contributor => contributor.OwnerKey.Trim().ToLowerInvariant(),
-                StringComparer.Ordinal);
-        string[] requiredOwners = subjects
-            .Select(subject => subject.OwnerKey?.Trim().ToLowerInvariant() ?? string.Empty)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (requiredOwners.Length == 0 ||
-            requiredOwners.Any(owner => !byOwner.ContainsKey(owner)))
-        {
-            return Failure();
-        }
+            Dictionary<string, IDataRightsSubjectExportContributor> byOwner =
+                available.ToDictionary(
+                    contributor => NormalizeOwner(contributor.OwnerKey),
+                    StringComparer.Ordinal);
+            string[] requiredOwners = subjects
+                .Select(subject => NormalizeOwner(subject.OwnerKey))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (requiredOwners.Length == 0 ||
+                requiredOwners.Any(owner => !byOwner.ContainsKey(owner)))
+            {
+                return OwnerUnavailable();
+            }
 
-        return Result.Success<IReadOnlyDictionary<
-            string,
-            IDataRightsSubjectExportContributor>>(byOwner);
+            return Result.Success<IReadOnlyDictionary<
+                string,
+                IDataRightsSubjectExportContributor>>(byOwner);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException)
+        {
+            return CatalogInvalid();
+        }
     }
+
+    private static bool IsValid(
+        IDataRightsSubjectExportContributor contributor)
+    {
+        try
+        {
+            string owner = NormalizeOwner(contributor.OwnerKey);
+            IReadOnlyCollection<DataRightsCaseType>? supported =
+                contributor.SupportedCaseTypes;
+            if (owner.Length is 0 or > DataRightsExportLimits.OwnerKeyMaxLength ||
+                supported is null ||
+                supported.Count is <= 0 or > 2 ||
+                supported.Any(caseType => caseType is not
+                    DataRightsCaseType.GuestRights and not
+                    DataRightsCaseType.StaffRights) ||
+                supported.Distinct().Count() != supported.Count)
+            {
+                return false;
+            }
+
+            _ = DataRightsExportSchemaValidator.Validate(
+                contributor.Descriptor,
+                owner);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeOwner(string? ownerKey) =>
+        ownerKey?.Trim().ToLowerInvariant() ?? string.Empty;
 
     private static Result<IReadOnlyDictionary<
         string,
-        IDataRightsSubjectExportContributor>> Failure() =>
+        IDataRightsSubjectExportContributor>> CatalogInvalid() =>
+        Result.Failure<IReadOnlyDictionary<
+            string,
+            IDataRightsSubjectExportContributor>>(
+                DataRightsApplicationErrors.ExportOwnerCatalogInvalid);
+
+    private static Result<IReadOnlyDictionary<
+        string,
+        IDataRightsSubjectExportContributor>> OwnerUnavailable() =>
         Result.Failure<IReadOnlyDictionary<
             string,
             IDataRightsSubjectExportContributor>>(

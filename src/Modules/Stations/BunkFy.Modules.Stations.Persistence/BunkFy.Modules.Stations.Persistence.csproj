@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup><InternalsVisibleTo Include="BunkFy.Modules.Stations.Tests" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BunkFy.Modules.Stations.Application/BunkFy.Modules.Stations.Application.csproj" />
+    <ProjectReference Include="../BunkFy.Modules.Stations.Contracts/BunkFy.Modules.Stations.Contracts.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Persistence/Gma.Framework.Persistence.EntityFrameworkCore/Gma.Framework.Persistence.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="../../DataRights/BunkFy.Modules.DataRights.Contracts/BunkFy.Modules.DataRights.Contracts.csproj" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+</Project>

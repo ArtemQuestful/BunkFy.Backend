@@ -77,7 +77,7 @@ public sealed class
             postgreSql.GetConnectionString(),
             ids,
             access);
-        await MigrateAndInstallPhaseASchemaAsync(services)
+        await MigrateActualModuleSchemasAsync(services)
             .ConfigureAwait(false);
 
         Guid applicationId = Guid.NewGuid();
@@ -88,6 +88,18 @@ public sealed class
             sourceId,
             SubjectId,
             access.ProfileId).ConfigureAwait(false);
+
+        long preStaffApplicationVersion;
+        using (IServiceScope preStaffReview = CreateTenantScope(services))
+        {
+            Result<WorkspaceStaffOnboardingDto> review = await preStaffReview.ServiceProvider
+                .GetRequiredService<IRequestDispatcher>()
+                .QueryAsync(new BunkFy.Modules.Workspaces.Application.Queries.GetWorkspaceStaffOnboardingReviewQuery(applicationId))
+                .ConfigureAwait(false);
+            Assert.True(review.IsSuccess, review.Error.Code);
+            Assert.Equal("Phase A Applicant", review.Value.DisplayName);
+            preStaffApplicationVersion = review.Value.Version;
+        }
 
         Guid rolledBackContinuationId;
         StaffMemberDto provisioned;
@@ -168,6 +180,17 @@ public sealed class
             Assert.Null(application.IdentityAnchorExpectedResolutionEventId);
             Assert.Null(application.IdentityAnchorContinuationEventId);
             Assert.Equal("Phase A Applicant", application.DisplayName);
+            Assert.Equal(preStaffApplicationVersion, application.Version);
+            Result<WorkspaceStaffOnboardingDto> managerReview = await afterRollback.ServiceProvider
+                .GetRequiredService<IRequestDispatcher>()
+                .QueryAsync(new BunkFy.Modules.Workspaces.Application.Queries.GetWorkspaceStaffOnboardingReviewQuery(applicationId))
+                .ConfigureAwait(false);
+            Assert.True(managerReview.IsFailure);
+            Assert.Equal(WorkspaceStaffOnboardingApplicationErrors.ProfileReviewUnavailable,
+                managerReview.Error);
+            // Staff committed in its own real module transaction; Workspaces
+            // rolled back every local Staff coordinate and version change.
+            // The unchanged staging/version must never authorize disclosure.
             Assert.False(await dbContext.OutboxMessages.AsNoTracking()
                 .AnyAsync(message => message.Id == rolledBackContinuationId)
                 .ConfigureAwait(false));
@@ -399,7 +422,7 @@ public sealed class
             postgreSql.GetConnectionString(),
             ids,
             access);
-        await MigrateAndInstallPhaseASchemaAsync(services)
+        await MigrateActualModuleSchemasAsync(services)
             .ConfigureAwait(false);
 
         AnchoredPassOne seeded = await SeedAnchoredPassOneAsync(
@@ -514,7 +537,7 @@ public sealed class
     [DockerFact]
     [Trait("Category", "Docker")]
     [Trait("Category", "Integration")]
-    public async Task Suspension_commit_serializes_pass_two_without_deadlock_or_precommit_grant()
+    public async Task Suspension_commit_prevents_precommit_grants_and_converges_without_deadlock()
     {
         await using PostgreSqlContainer postgreSql =
             new PostgreSqlBuilder("postgres:16-alpine")
@@ -531,7 +554,7 @@ public sealed class
             ids,
             access,
             blocker);
-        await MigrateAndInstallPhaseASchemaAsync(services)
+        await MigrateActualModuleSchemasAsync(services)
             .ConfigureAwait(false);
 
         ProvisionedAnchor seeded = await SeedProvisionedAnchorAsync(
@@ -594,12 +617,9 @@ public sealed class
             continuation,
             WorkspacesModuleMetadata
                 .StaffOnboardingIdentityAnchorContinuationHandlerName);
-        Assert.NotSame(
-            continuationTask,
-            await Task.WhenAny(
-                continuationTask,
-                Task.Delay(TimeSpan.FromMilliseconds(300)))
-                .ConfigureAwait(false));
+        await AssertNoGrantBeforeStaffCommitAsync(
+            services, access, passOne.Id, seeded.StaffMemberId,
+            SubjectId, continuationTask).ConfigureAwait(false);
 
         blocker.Release();
         Result<StaffMemberMutationReceiptDto> suspended =
@@ -659,7 +679,7 @@ public sealed class
             ids,
             access,
             blocker);
-        await MigrateAndInstallPhaseASchemaAsync(services)
+        await MigrateActualModuleSchemasAsync(services)
             .ConfigureAwait(false);
 
         ProvisionedAnchor seeded = await SeedProvisionedAnchorAsync(
@@ -698,12 +718,9 @@ public sealed class
             continuation,
             WorkspacesModuleMetadata
                 .StaffOnboardingIdentityAnchorContinuationHandlerName);
-        Assert.NotSame(
-            continuationTask,
-            await Task.WhenAny(
-                continuationTask,
-                Task.Delay(TimeSpan.FromMilliseconds(300)))
-                .ConfigureAwait(false));
+        await AssertNoGrantBeforeStaffCommitAsync(
+            services, access, seeded.ApplicationId, seeded.StaffMemberId,
+            SubjectId, continuationTask).ConfigureAwait(false);
 
         blocker.Release();
         Result<StaffMemberMutationReceiptDto> aborted =
@@ -782,7 +799,7 @@ public sealed class
             postgreSql.GetConnectionString(),
             ids,
             access);
-        await MigrateAndInstallPhaseASchemaAsync(services)
+        await MigrateActualModuleSchemasAsync(services)
             .ConfigureAwait(false);
 
         ProvisionedAnchor seeded = await SeedProvisionedAnchorAsync(
@@ -958,7 +975,7 @@ public sealed class
             postgreSql.GetConnectionString(),
             ids,
             access);
-        await MigrateAndInstallPhaseASchemaAsync(services)
+        await MigrateActualModuleSchemasAsync(services)
             .ConfigureAwait(false);
 
         AnchoredPassOne seeded = await SeedAnchoredPassOneAsync(
@@ -1121,6 +1138,7 @@ public sealed class
         string applicationSubjectId,
         string staffSubjectId)
     {
+        access.SeedMembership(staffSubjectId);
         Guid applicationId = Guid.NewGuid();
         await SeedSubmittedApplicationAsync(
             services,
@@ -1166,6 +1184,8 @@ public sealed class
         string subjectId,
         Guid profileId)
     {
+        services.GetRequiredService<PhaseAAccessState>()
+            .SeedMembership(subjectId);
         using IServiceScope scope = CreateTenantScope(services);
         WorkspacesDbContext dbContext = scope.ServiceProvider
             .GetRequiredService<WorkspacesDbContext>();
@@ -1206,6 +1226,45 @@ public sealed class
         dbContext.StaffOnboardingProcessingRestrictionProjections.Add(
             projection);
         await dbContext.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    private static async Task AssertNoGrantBeforeStaffCommitAsync(
+        ServiceProvider services,
+        PhaseAAccessState access,
+        Guid applicationId,
+        Guid staffMemberId,
+        string subjectId,
+        Task continuationTask)
+    {
+        Task completed = await Task.WhenAny(continuationTask,
+            Task.Delay(TimeSpan.FromMilliseconds(300))).ConfigureAwait(false);
+        if (ReferenceEquals(completed, continuationTask))
+        {
+            // Current Organizations membership denial can reject before the
+            // lifecycle fence is reached. This exact rejection is safe; a
+            // successful continuation or any unrelated fault is not.
+            InvalidOperationException denied =
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    continuationTask).ConfigureAwait(false);
+            Assert.Equal(
+                "Identity-anchor continuation failed with 'Workspaces.StaffOnboardingMembershipStateConflict'.",
+                denied.Message);
+        }
+
+        Assert.Equal(StaffStatus.Active,
+            await ReadStaffStatusAsync(services, staffMemberId).ConfigureAwait(false));
+        OrganizationMembershipSnapshotDto? membership = await services
+            .GetRequiredService<IOrganizationMembershipReader>()
+            .FindAsync(Guid.Parse(TenantId), subjectId).ConfigureAwait(false);
+        Assert.Equal(OrganizationMembershipStatus.Suspended,
+            membership?.Membership?.Status);
+        Assert.Equal(0, access.ProvisionCountFor(subjectId));
+        Assert.Empty(access.TargetsFor(subjectId));
+        WorkspaceStaffOnboarding application = await ReadApplicationAsync(
+            services, applicationId).ConfigureAwait(false);
+        Assert.Equal(WorkspaceStaffOnboardingState.StaffReady, application.Status);
+        Assert.Null(application.FailureCode);
+        Assert.Null(application.IdentityAnchorResolutionEventId);
     }
 
     private static async Task<Guid> ReadAnchorResolutionEventIdAsync(
@@ -1597,7 +1656,7 @@ public sealed class
         return scope;
     }
 
-    private static async Task MigrateAndInstallPhaseASchemaAsync(
+    private static async Task MigrateActualModuleSchemasAsync(
         ServiceProvider services)
     {
         using IServiceScope scope = CreateTenantScope(services);
@@ -1606,11 +1665,8 @@ public sealed class
             .ConfigureAwait(false);
         WorkspacesDbContext workspaces = scope.ServiceProvider
             .GetRequiredService<WorkspacesDbContext>();
-        await workspaces.Database.GetService<IMigrator>().MigrateAsync(
-            "20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals")
+        await workspaces.Database.GetService<IMigrator>().MigrateAsync()
             .ConfigureAwait(false);
-        await workspaces.Database.ExecuteSqlRawAsync(
-            PhaseASchemaSql).ConfigureAwait(false);
     }
 
     private static ServiceProvider CreateProvider(
@@ -1631,7 +1687,11 @@ public sealed class
         builder.Services.AddSingleton<IAccessControlRoleProvisioner>(access);
         builder.Services.AddSingleton<IAccessProfileProvisioner>(access);
         builder.Services.AddSingleton<IScopedAccessProfileProvisioner>(access);
+        builder.Services.AddSingleton<IScopedAccessProfileManager>(access);
         builder.Services.AddSingleton<IOrganizationMembershipLifecycle>(access);
+        builder.Services.AddSingleton<IOrganizationScopeLifecycle>(access);
+        builder.Services.AddSingleton<IOrganizationMembershipReader>(access);
+        builder.Services.AddSingleton(access);
         builder.Services.AddSingleton<IAccessAuthorizationService>(
             AllowAllAuthorizationService.Instance);
         builder.Services.AddStaffApplication();
@@ -1735,8 +1795,15 @@ public sealed class
         : IAccessControlRoleProvisioner,
           IAccessProfileProvisioner,
           IScopedAccessProfileProvisioner,
-          IOrganizationMembershipLifecycle
+          IScopedAccessProfileManager,
+          IOrganizationMembershipLifecycle,
+          IOrganizationScopeLifecycle,
+          IOrganizationMembershipReader
     {
+        private readonly Lock membershipSync = new();
+        private readonly Dictionary<(Guid OrganizationId, string SubjectId),
+            OrganizationMembershipDto> memberships = [];
+        private long organizationRevision = 1;
         private readonly Dictionary<string, AccessProfileAssignmentTarget[]>
             assignments = new(StringComparer.Ordinal);
         private readonly HashSet<string> membershipMarkers =
@@ -1747,6 +1814,62 @@ public sealed class
 
         public Guid ProfileId { get; } =
             Guid.Parse("75000000-0000-0000-0000-000000000001");
+
+        public void SeedMembership(string subjectId)
+        {
+            Guid organizationId = Guid.Parse(TenantId);
+            lock (this.membershipSync)
+            {
+                if (this.memberships.TryAdd((organizationId, subjectId), new(
+                        Guid.NewGuid(), organizationId, subjectId,
+                        OrganizationMembershipRole.Member,
+                        OrganizationMembershipStatus.Active, 1, Now, Now)))
+                {
+                    this.organizationRevision++;
+                }
+            }
+        }
+
+        public Task<OrganizationScopeSnapshot> GetSnapshotAsync(
+            Guid organizationId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (this.membershipSync)
+            {
+                return Task.FromResult(new OrganizationScopeSnapshot(
+                    organizationId == Guid.Parse(TenantId)
+                        ? OrganizationScopeStatus.Open
+                        : OrganizationScopeStatus.Missing,
+                    this.organizationRevision));
+            }
+        }
+
+        public Task<OrganizationMembershipSnapshotDto?> FindAsync(
+            Guid organizationId,
+            string subjectId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (this.membershipSync)
+            {
+                return Task.FromResult<OrganizationMembershipSnapshotDto?>(
+                    this.memberships.TryGetValue((organizationId, subjectId),
+                        out OrganizationMembershipDto? membership)
+                        ? new(organizationId, OrganizationStatus.Active, membership)
+                        : null);
+            }
+        }
+
+        public Task<OrganizationScopeExportPage> ExportAsync(
+            OrganizationScopeExportRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<OrganizationScopeDestroyResult> DestroyBatchAsync(
+            OrganizationScopeDestroyRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public int ProvisionCountFor(string subjectId) =>
             this.provisions.Count(candidate => string.Equals(
@@ -1911,6 +2034,26 @@ public sealed class
                     0));
         }
 
+        async Task<Result<ScopedAccessProfileAssignmentSet>>
+            IScopedAccessProfileManager.GetSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                AccessSubject actor,
+                CancellationToken cancellationToken) =>
+            Result.Success(await this.GetSubjectScopedAssignmentsAsync(
+                subject, ownerScope, cancellationToken).ConfigureAwait(false));
+
+        async Task<Result<ScopedAccessProfileAssignmentReconciliation>>
+            IScopedAccessProfileManager.ReconcileSubjectAssignmentsAsync(
+                AccessSubject subject,
+                AccessScope ownerScope,
+                IReadOnlyCollection<AccessProfileAssignmentTarget> targets,
+                AccessSubject actor,
+                CancellationToken cancellationToken) =>
+            Result.Success(await this.ReconcileSubjectScopedAssignmentsAsync(
+                subject, ownerScope, targets, actor, cancellationToken)
+                .ConfigureAwait(false));
+
         public Task<OrganizationMembershipLifecycleResult> EnsureStateAsync(
             Guid organizationId,
             string subjectId,
@@ -1918,10 +2061,28 @@ public sealed class
             string actorId,
             CancellationToken cancellationToken = default)
         {
-            this.membershipTransitions.Add((subjectId, desiredStatus));
-            return Task.FromResult(new OrganizationMembershipLifecycleResult(
-                OrganizationMembershipLifecycleOutcome.Changed,
-                null));
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (this.membershipSync)
+            {
+                OrganizationMembershipDto membership =
+                    this.memberships[(organizationId, subjectId)];
+                if (membership.Status != desiredStatus)
+                {
+                    membership = membership with
+                    {
+                        Status = desiredStatus,
+                        Version = membership.Version + 1,
+                        LastChangedAtUtc = Now
+                    };
+                    this.memberships[(organizationId, subjectId)] = membership;
+                    this.organizationRevision++;
+                }
+
+                this.membershipTransitions.Add((subjectId, desiredStatus));
+                return Task.FromResult(new OrganizationMembershipLifecycleResult(
+                    OrganizationMembershipLifecycleOutcome.Changed,
+                    membership));
+            }
         }
 
         private AccessProfileDto Profile(
@@ -1940,107 +2101,4 @@ public sealed class
             Now);
     }
 
-    private const string PhaseASchemaSql =
-        """
-        ALTER TABLE workspaces.staff_onboarding_applications
-            DROP CONSTRAINT "CK_staff_onboarding_pending_profile";
-
-        ALTER TABLE workspaces.staff_onboarding_applications
-            ADD COLUMN "IdentityAnchorExpectedResolutionEventId" uuid NULL,
-            ADD COLUMN "IdentityAnchorContinuationEventId" uuid NULL,
-            ADD COLUMN "IdentityAnchorResolutionEventId" uuid NULL,
-            ADD COLUMN "IdentityAnchorResolutionStaffMemberId" uuid NULL,
-            ADD COLUMN "IdentityAnchorResolutionApplicationVersion" bigint NULL,
-            ADD COLUMN "IdentityAnchorResolutionDisposition" integer NULL,
-            ADD COLUMN "IdentityAnchorResolutionIntentAtUtc" timestamp with time zone NULL,
-            ADD COLUMN "IdentityAnchorResolutionObservedAtUtc" timestamp with time zone NULL,
-            ADD COLUMN "IdentityAnchorSweepOrdinal" bigint
-                GENERATED BY DEFAULT AS IDENTITY;
-
-        CREATE UNIQUE INDEX "UX_workspaces_staff_onboarding_anchor_resolution_event"
-            ON workspaces.staff_onboarding_applications
-                ("IdentityAnchorExpectedResolutionEventId")
-            WHERE "IdentityAnchorExpectedResolutionEventId" IS NOT NULL;
-        CREATE UNIQUE INDEX "UX_workspaces_staff_onboarding_anchor_continuation_event"
-            ON workspaces.staff_onboarding_applications
-                ("IdentityAnchorContinuationEventId")
-            WHERE "IdentityAnchorContinuationEventId" IS NOT NULL;
-        CREATE UNIQUE INDEX
-            "IX_staff_onboarding_applications_ScopeId_IdentityAnchorSweepOrdinal"
-            ON workspaces.staff_onboarding_applications
-                ("ScopeId", "IdentityAnchorSweepOrdinal");
-
-        ALTER TABLE workspaces.staff_onboarding_applications
-            ADD CONSTRAINT "CK_staff_onboarding_pending_profile"
-            CHECK ("StaffMemberId" IS NOT NULL OR
-                "Status" IN (5, 7, 8, 9, 10) OR
-                ("VerifiedAccountEmail" IS NOT NULL AND
-                 "DisplayName" IS NOT NULL)),
-            ADD CONSTRAINT "CK_staff_onboarding_anchor_bound_redaction"
-            CHECK ("StaffMemberId" IS NULL OR
-                ("VerifiedAccountEmail" IS NULL AND "DisplayName" IS NULL AND
-                 "LegalName" IS NULL AND "WorkEmail" IS NULL AND
-                 "WorkPhone" IS NULL AND "EmployeeNumber" IS NULL AND
-                 "JobTitle" IS NULL AND "Department" IS NULL)),
-            ADD CONSTRAINT "CK_staff_onboarding_anchor_expected_resolution"
-            CHECK (("IdentityAnchorExpectedResolutionEventId" IS NULL OR
-                ("StaffMemberId" IS NOT NULL AND
-                 "IdentityAnchorExpectedResolutionEventId" <>
-                    '00000000-0000-0000-0000-000000000000'::uuid AND
-                 "IdentityAnchorExpectedResolutionEventId" <> "Id")) AND
-                ("IdentityAnchorContinuationEventId" IS NULL OR
-                ("IdentityAnchorExpectedResolutionEventId" IS NOT NULL AND
-                 "IdentityAnchorContinuationEventId" <>
-                    '00000000-0000-0000-0000-000000000000'::uuid AND
-                 "IdentityAnchorContinuationEventId" <> "Id" AND
-                 "IdentityAnchorContinuationEventId" <>
-                    "IdentityAnchorExpectedResolutionEventId"))),
-            ADD CONSTRAINT "CK_staff_onboarding_anchor_resolution_intent"
-            CHECK (("IdentityAnchorResolutionEventId" IS NULL AND
-                "IdentityAnchorResolutionStaffMemberId" IS NULL AND
-                "IdentityAnchorResolutionApplicationVersion" IS NULL AND
-                "IdentityAnchorResolutionDisposition" IS NULL AND
-                "IdentityAnchorResolutionIntentAtUtc" IS NULL) OR
-                ("IdentityAnchorResolutionEventId" IS NOT NULL AND
-                 "StaffMemberId" IS NOT NULL AND
-                 "IdentityAnchorResolutionStaffMemberId" IS NOT NULL AND
-                 "IdentityAnchorResolutionApplicationVersion" > 0 AND
-                 "IdentityAnchorResolutionApplicationVersion" <= "Version" AND
-                 "IdentityAnchorResolutionDisposition" BETWEEN 1 AND 5 AND
-                 "IdentityAnchorResolutionIntentAtUtc" IS NOT NULL)),
-            ADD CONSTRAINT "CK_staff_onboarding_anchor_resolution_coordinates"
-            CHECK ("IdentityAnchorResolutionEventId" IS NULL OR
-                ("IdentityAnchorExpectedResolutionEventId" IS NOT NULL AND
-                 "IdentityAnchorResolutionEventId" =
-                    "IdentityAnchorExpectedResolutionEventId" AND
-                 "StaffMemberId" IS NOT NULL AND
-                 "IdentityAnchorResolutionStaffMemberId" = "StaffMemberId")),
-            ADD CONSTRAINT "CK_staff_onboarding_anchor_resolution_terminal"
-            CHECK ("IdentityAnchorResolutionEventId" IS NULL OR
-                (("Status" = 5 AND "IdentityAnchorResolutionDisposition" = 1) OR
-                 ("Status" = 7 AND "IdentityAnchorResolutionDisposition" = 2) OR
-                 ("Status" = 8 AND "IdentityAnchorResolutionDisposition" = 3) OR
-                 ("Status" = 9 AND "IdentityAnchorResolutionDisposition" = 4) OR
-                 ("Status" = 10 AND "IdentityAnchorResolutionDisposition" = 5))),
-            ADD CONSTRAINT "CK_staff_onboarding_anchor_resolution_observation"
-            CHECK ("IdentityAnchorResolutionObservedAtUtc" IS NULL OR
-                ("IdentityAnchorResolutionEventId" IS NOT NULL AND
-                 "IdentityAnchorResolutionObservedAtUtc" >=
-                    "IdentityAnchorResolutionIntentAtUtc")),
-            ADD CONSTRAINT "CK_staff_onboarding_identity_anchor_sweep_ordinal"
-            CHECK ("IdentityAnchorSweepOrdinal" > 0);
-
-        ALTER TABLE workspaces.staff_access_processes
-            ADD COLUMN "RestorationDisposition" integer NULL;
-        UPDATE workspaces.staff_access_processes
-        SET "RestorationDisposition" = CASE
-            WHEN "TargetState" = 1 THEN 2 ELSE 1 END;
-        ALTER TABLE workspaces.staff_access_processes
-            ALTER COLUMN "RestorationDisposition" SET NOT NULL,
-            ADD CONSTRAINT "CK_staff_access_process_restoration_disposition"
-            CHECK (("TargetState" = 1 AND
-                    "RestorationDisposition" IN (2, 3)) OR
-                   ("TargetState" IN (2, 3) AND
-                    "RestorationDisposition" = 1));
-        """;
 }

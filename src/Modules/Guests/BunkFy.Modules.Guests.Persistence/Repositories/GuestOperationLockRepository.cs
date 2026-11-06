@@ -2,11 +2,14 @@ namespace BunkFy.Modules.Guests.Persistence.Repositories;
 
 using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Persistence.Models;
+using Gma.Framework.Persistence.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 internal sealed class GuestOperationLockRepository(GuestsDbContext dbContext)
     : IGuestOperationLock
 {
+    private const string ResourcePrefix = "bunkfy:guests:operation-lock:";
+
     public Task AcquireGuestAsync(
         string tenantId,
         Guid guestId,
@@ -52,6 +55,25 @@ internal sealed class GuestOperationLockRepository(GuestsDbContext dbContext)
         {
             throw new InvalidOperationException(
                 "A Guest operation lock requires an active database transaction.");
+        }
+
+        if (relational)
+        {
+            string kind = resourceKind switch
+            {
+                GuestOperationLockKind.Guest => "guest",
+                GuestOperationLockKind.Property => "property",
+                _ => throw new InvalidOperationException(
+                    "A Guest operation lock requires a supported resource kind.")
+            };
+            foreach (Guid resourceId in ids)
+            {
+                await EfTransactionKeyLock.AcquireAsync(
+                    dbContext,
+                    ResourcePrefix + scopeId + ':' + kind + ':' +
+                        resourceId.ToString("N"),
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
 
         GuestOperationLock[] existing = await dbContext.Set<GuestOperationLock>()

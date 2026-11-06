@@ -121,9 +121,9 @@ public sealed class WorkspacesAdminCliModule : IAdminCliModule
                     : Result.Failure<WorkspaceAccessBootstrapResult>(AdminErrors.ConfirmationRequired);
                 if (result.IsSuccess)
                 {
-                    AdminCliOutput.WriteMessage(
-                        $"Workspace access seed v{result.Value.SeedVersion} is ready; " +
-                        $"migrated {result.Value.MigratedMemberCount} legacy member(s).");
+                    WriteBootstrapResult(
+                        result.Value,
+                        parse.GetValue(global.OutputOption) ?? AdminCliOutput.Table);
                 }
 
                 return result;
@@ -132,7 +132,14 @@ public sealed class WorkspacesAdminCliModule : IAdminCliModule
         return command;
     }
 
-    private static void WriteStatus(WorkspaceAccessBootstrapStatus status, string output) =>
+    internal static void WriteStatus(WorkspaceAccessBootstrapStatus status, string output)
+    {
+        if (AdminCliOutput.NormalizeFormat(output) == AdminCliOutput.Json)
+        {
+            AdminCliOutput.WriteObject(status, output);
+            return;
+        }
+
         AdminCliOutput.WriteRows(
             [status],
             output,
@@ -146,6 +153,22 @@ public sealed class WorkspacesAdminCliModule : IAdminCliModule
                 ("MarkerMembers", item => item.MarkerMemberCount.ToString(CultureInfo.InvariantCulture)),
                 ("RequiresBackfill", item => item.RequiresBackfill.ToString())
             ]);
+    }
+
+    internal static void WriteBootstrapResult(
+        WorkspaceAccessBootstrapResult result,
+        string output)
+    {
+        if (AdminCliOutput.NormalizeFormat(output) == AdminCliOutput.Json)
+        {
+            AdminCliOutput.WriteObject(result, output);
+            return;
+        }
+
+        AdminCliOutput.WriteMessage(
+            $"Workspace access seed v{result.SeedVersion} is ready; " +
+            $"migrated {result.MigratedMemberCount} legacy member(s).");
+    }
 
     private static Command CreateStaffAccessListCommand(
         IServiceProvider services,

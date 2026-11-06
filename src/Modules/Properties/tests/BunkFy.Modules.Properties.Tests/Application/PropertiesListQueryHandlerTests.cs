@@ -4,6 +4,7 @@ using BunkFy.Modules.Properties.Application;
 using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Properties.Domain.Aggregates;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Pagination;
 using Gma.Framework.Results;
@@ -57,13 +58,13 @@ public sealed class PropertiesListQueryHandlerTests
         public bool ListRoomsCalled { get; private set; }
         public bool ListBedsCalled { get; private set; }
 
-        public Task<PropertyDto?> GetPropertyAsync(Guid propertyId, CancellationToken cancellationToken) =>
-            Task.FromResult<PropertyDto?>(null);
+        public Task<Property?> GetPropertyAsync(Guid propertyId, CancellationToken cancellationToken) =>
+            Task.FromResult<Property?>(null);
 
-        public Task<PropertyListResponse> ListPropertiesAsync(PageRequest pageRequest, CancellationToken cancellationToken) =>
+        public Task<PropertyReadPage> ListPropertiesAsync(PageRequest pageRequest, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<PropertyListResponse> ListVisiblePropertiesAsync(
+        public Task<PropertyReadPage> ListVisiblePropertiesAsync(
             PageRequest pageRequest,
             PropertiesVisibilityScope visibility,
             CancellationToken cancellationToken) =>

@@ -36,7 +36,25 @@ public sealed record TenantTerminationStartDto(
 public sealed record TenantTerminationOperatorStatusDto(
     TenantTerminationCaseDto Case,
     TenantTerminationProcessDto? Process,
-    IReadOnlyList<TenantTerminationOwnerWorkItemDto> OwnerWorkItems);
+    IReadOnlyList<TenantTerminationOwnerWorkItemDto> OwnerWorkItems,
+    TenantTerminationExportHandoffDto? ExportHandoff);
+
+public sealed record TenantTerminationExportHandoffDto(
+    Guid ArtifactId,
+    long ExportOperationRevision,
+    TenantTerminationExportArtifactStatus Status,
+    int? FragmentCount,
+    long? RecordCount,
+    string FrozenRevisionSha256,
+    string FragmentSetSha256,
+    DateTimeOffset? AvailableAtUtc,
+    DateTimeOffset ExpiresAtUtc,
+    long ArtifactVersion,
+    bool Confirmed,
+    long? ConfirmedArtifactVersion,
+    long ConfirmationRevision,
+    string? ConfirmedBy,
+    DateTimeOffset? ConfirmedAtUtc);
 
 public sealed record TenantTerminationOwnerWorkItemDto(
     Guid Id,
@@ -96,4 +114,16 @@ public enum TenantTerminationOwnerWorkStatus
     Blocked = 4,
     Failed = 5,
     Completed = 6
+}
+
+public enum TenantTerminationExportArtifactStatus
+{
+    Unknown = 0,
+    Requested = 1,
+    Generating = 2,
+    Available = 3,
+    Failed = 4,
+    Expired = 5,
+    Deleting = 6,
+    Deleted = 7
 }

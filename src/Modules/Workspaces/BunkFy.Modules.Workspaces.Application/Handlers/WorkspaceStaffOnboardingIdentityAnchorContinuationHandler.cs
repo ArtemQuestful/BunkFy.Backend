@@ -43,7 +43,9 @@ internal sealed class WorkspaceStaffOnboardingIdentityAnchorContinuationHandler(
             application,
             integrationEvent.StaffMemberId,
             cancellationToken).ConfigureAwait(false);
-        if (processed.IsFailure)
+        if (processed.IsFailure &&
+            !WorkspaceStaffOnboardingProcessor.RequiresOwnerRecovery(
+                application, processed))
         {
             throw new InvalidOperationException(
                 $"Identity-anchor continuation failed with '{processed.Error.Code}'.");

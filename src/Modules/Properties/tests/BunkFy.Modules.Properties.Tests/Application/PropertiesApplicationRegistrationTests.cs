@@ -5,6 +5,7 @@ using BunkFy.Modules.Properties.Application.Commands;
 using BunkFy.Modules.Properties.Application.Handlers;
 using BunkFy.Modules.Properties.Application.Queries;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.TimeZones;
 using Gma.Framework.Application.Events;
 using Gma.Framework.Cqrs;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,7 @@ public sealed class PropertiesApplicationRegistrationTests
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ICommandHandler<RetireBedCommand, Unit>));
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(PropertyDetailsUpdateCoordinator));
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(PropertyMutationOperationJournal));
+        Assert.Single(services, descriptor => descriptor.ServiceType == typeof(TimeZoneRuntimeCompatibilityProbe));
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IQueryHandler<GetPropertyQuery, PropertyDto>));
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IQueryHandler<ListPropertiesQuery, PropertyListResponse>));
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IQueryHandler<ListVisiblePropertiesQuery, PropertyListResponse>));

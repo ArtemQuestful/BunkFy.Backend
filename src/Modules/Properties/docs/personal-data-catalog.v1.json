@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogId": "properties.personal-data",
-  "catalogVersion": 3,
+  "catalogVersion": 5,
   "module": "properties",
   "approvalState": "engineering-default",
   "accessPolicies": [
@@ -25,6 +25,17 @@
       ],
       "writers": [
         "permission:properties.properties.manage"
+      ]
+    },
+    {
+      "id": "properties-time-zone-management",
+      "scope": "tenant-property-time-zone-compliance-and-correction",
+      "readers": [
+        "permission:properties.time-zones.manage",
+        "system:authorized-audit-consumer"
+      ],
+      "writers": [
+        "permission:properties.time-zones.manage"
       ]
     },
     {
@@ -56,6 +67,13 @@
       "legalHoldBehavior": "retain-minimum-required-audit-evidence"
     },
     {
+      "id": "property-time-zone-operation-lifecycle",
+      "approvalState": "engineering-default",
+      "startsAt": "property-time-zone-operation-recorded",
+      "endsAt": "tenant-termination-or-approved-pseudonymization",
+      "legalHoldBehavior": "retain-minimum-required-audit-evidence"
+    },
+    {
       "id": "properties-tenant-termination-export-fragment",
       "approvalState": "engineering-default",
       "startsAt": "tenant-export-fragment-generation",
@@ -82,6 +100,13 @@
       "startsAt": "request-accepted",
       "endsAt": "request-completed",
       "legalHoldBehavior": "not-applicable"
+    },
+    {
+      "id": "transient-response",
+      "approvalState": "engineering-default",
+      "startsAt": "response-created",
+      "endsAt": "response-delivered",
+      "legalHoldBehavior": "not-applicable"
     }
   ],
   "rightsPolicies": [
@@ -98,6 +123,13 @@
       "correction": "append-corrective-property-lifecycle-action",
       "restriction": "retain-minimum-required-audit-and-notification-processing",
       "erasure": "pseudonymize-subject-when-approved-retention-permits"
+    },
+    {
+      "id": "property-time-zone-operations",
+      "export": "include-in-authorized-property-or-tenant-export-when-retained",
+      "correction": "append-an-authorized-property-time-zone-operation",
+      "restriction": "enforce-property-scope-and-sensitive-management-permission",
+      "erasure": "remove-with-approved-tenant-destruction-after-required-audit-retention"
     },
     {
       "id": "properties-tenant-destruction-proof-control",
@@ -149,10 +181,12 @@
       "sensitivity": "standard",
       "purposes": [
         "property-lifecycle-audit-correlation",
+        "property-time-zone-correction-audit",
         "self-notification-suppression"
       ],
       "sources": [
-        "authenticated-access-subject"
+        "authenticated-access-subject",
+        "authenticated-admin-actor-context"
       ],
       "authoritativeOwner": "auth",
       "controllerProcessorContext": "customer-controller-bunk-fy-processor",
@@ -161,7 +195,11 @@
       "retentionPolicy": "integration-message-journal",
       "rightsPolicy": "staff-audit-attribution",
       "allowedSurfaces": [
+        "admin-input",
+        "admin-output",
+        "api-response",
         "application-command",
+        "application-query",
         "data-rights-export",
         "domain-event",
         "integration-event",
@@ -169,10 +207,26 @@
       ],
       "allowedBoundaries": [
         "cross-module",
-        "intra-module"
+        "customer-api",
+        "intra-module",
+        "support"
       ],
       "approvalState": "engineering-default",
       "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.CreatePropertyCommand",
+          "member": "ActorId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.CreatePropertyCommand",
+          "member": "ActorId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
         {
           "assembly": "BunkFy.Modules.Properties.Application",
           "type": "BunkFy.Modules.Properties.Application.Commands.ActivatePropertyProcessingCommand",
@@ -200,6 +254,62 @@
           "member": "ActorId",
           "surface": "application-command",
           "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Ports.PropertyTimeZoneRevisionWriteModel",
+          "member": "ActorId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Ports.PropertyTimeZoneRevisionReadModel",
+          "member": "ActorId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "ActorId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "ActorId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "ActorId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "ActorId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "Receipt",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "Receipt",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
         },
         {
           "assembly": "BunkFy.Modules.Properties.Domain",
@@ -238,10 +348,1202 @@
         },
         {
           "assembly": "BunkFy.Modules.Properties.Persistence",
+          "type": "BunkFy.Modules.Properties.Persistence.PropertyTimeZoneOperation",
+          "member": "ActorId",
+          "surface": "persistence",
+          "retentionPolicy": "property-time-zone-operation-lifecycle"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Persistence",
           "type": "BunkFy.Modules.Properties.Persistence.Repositories.PropertiesGovernanceRevisionTenantExport",
           "member": "ActorId",
           "surface": "data-rights-export",
           "retentionPolicy": "properties-tenant-termination-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Persistence",
+          "type": "BunkFy.Modules.Properties.Persistence.Repositories.PropertiesPropertyTimeZoneOperationTenantExport",
+          "member": "ActorId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "properties-tenant-termination-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "properties.time-zone.management-coordinate",
+      "dataSubject": "subject-scoped",
+      "classification": "linked-operational",
+      "sensitivity": "standard",
+      "purposes": [
+        "property-time-zone-compliance",
+        "property-time-zone-correction",
+        "property-time-zone-operation-recovery"
+      ],
+      "sources": [
+        "staff-action",
+        "system-generated"
+      ],
+      "authoritativeOwner": "properties",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "properties-time-zone-management",
+      "countryPolicyKey": "properties.time-zone.operations",
+      "retentionPolicy": "transient-request",
+      "rightsPolicy": "property-time-zone-operations",
+      "allowedSurfaces": [
+        "admin-input",
+        "admin-output",
+        "api-input",
+        "api-response",
+        "application-command",
+        "application-query"
+      ],
+      "allowedBoundaries": [
+        "customer-api",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Properties.AdminApi",
+          "type": "BunkFy.Modules.Properties.AdminApi.PropertiesAdminApiModule+PropertyCreateRequest",
+          "member": "TimeZoneId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.AdminApi",
+          "type": "BunkFy.Modules.Properties.AdminApi.PropertiesAdminApiModule+PropertyUpdateRequest",
+          "member": "TimeZoneId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.AdminApi",
+          "type": "BunkFy.Modules.Properties.AdminApi.PropertiesAdminApiModule+SetPropertyTimeZoneRequest",
+          "member": "Confirmed",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.AdminApi",
+          "type": "BunkFy.Modules.Properties.AdminApi.PropertiesAdminApiModule+SetPropertyTimeZoneRequest",
+          "member": "ExpectedVersion",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.AdminApi",
+          "type": "BunkFy.Modules.Properties.AdminApi.PropertiesAdminApiModule+SetPropertyTimeZoneRequest",
+          "member": "OperationId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.AdminApi",
+          "type": "BunkFy.Modules.Properties.AdminApi.PropertiesAdminApiModule+SetPropertyTimeZoneRequest",
+          "member": "TimeZoneId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Api",
+          "type": "BunkFy.Modules.Properties.Api.PropertiesModule+PropertyCreateRequest",
+          "member": "TimeZoneId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Api",
+          "type": "BunkFy.Modules.Properties.Api.PropertiesModule+PropertyUpdateRequest",
+          "member": "TimeZoneId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Api",
+          "type": "BunkFy.Modules.Properties.Api.PropertiesModule+SetPropertyTimeZoneRequest",
+          "member": "Confirmed",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Api",
+          "type": "BunkFy.Modules.Properties.Api.PropertiesModule+SetPropertyTimeZoneRequest",
+          "member": "ExpectedVersion",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Api",
+          "type": "BunkFy.Modules.Properties.Api.PropertiesModule+SetPropertyTimeZoneRequest",
+          "member": "OperationId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Api",
+          "type": "BunkFy.Modules.Properties.Api.PropertiesModule+SetPropertyTimeZoneRequest",
+          "member": "TimeZoneId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.CreatePropertyCommand",
+          "member": "TimeZoneId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.CreatePropertyCommand",
+          "member": "TimeZoneId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "Confirmed",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "Confirmed",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "ExpectedVersion",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "ExpectedVersion",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "OperationId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "OperationId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "PropertyId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "PropertyId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "PropertyId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "TimeZoneId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.SetPropertyTimeZoneCommand",
+          "member": "TimeZoneId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.UpdatePropertyCommand",
+          "member": "TimeZoneId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Commands.UpdatePropertyCommand",
+          "member": "TimeZoneId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.GetPropertyTimeZoneRecoveryQuery",
+          "member": "OperationId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.GetPropertyTimeZoneRecoveryQuery",
+          "member": "OperationId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.GetPropertyTimeZoneRecoveryQuery",
+          "member": "OperationId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.GetPropertyTimeZoneRecoveryQuery",
+          "member": "PropertyId",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.GetPropertyTimeZoneRecoveryQuery",
+          "member": "PropertyId",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.GetPropertyTimeZoneRecoveryQuery",
+          "member": "PropertyId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "CountryCode",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "CountryCode",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "CountryCode",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "Cursor",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "Cursor",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "Cursor",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "PageSize",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "PageSize",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "PageSize",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "Search",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "Search",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneCatalogQuery",
+          "member": "Search",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneComplianceQuery",
+          "member": "Cursor",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneComplianceQuery",
+          "member": "Cursor",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneComplianceQuery",
+          "member": "Cursor",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneComplianceQuery",
+          "member": "PageSize",
+          "surface": "admin-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneComplianceQuery",
+          "member": "PageSize",
+          "surface": "api-input",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Application",
+          "type": "BunkFy.Modules.Properties.Application.Queries.ListPropertyTimeZoneComplianceQuery",
+          "member": "PageSize",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "CanonicalTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "CanonicalTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneCatalogVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneCatalogVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneObservedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneObservedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneCorrectionAllowed",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneCorrectionAllowed",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyDto",
+          "member": "TimeZoneStatus",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "CanonicalTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "CanonicalTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneCatalogVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneCatalogVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneObservedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneObservedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneCorrectionAllowed",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneCorrectionAllowed",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyListItemDto",
+          "member": "TimeZoneStatus",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "Comment",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "Comment",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "Countries",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "Countries",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "RuntimeAvailable",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "RuntimeAvailable",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "TimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "TimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "UtcOffsetMinutes",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogItemDto",
+          "member": "UtcOffsetMinutes",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "CatalogVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "CatalogVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "HasMore",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "HasMore",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "NextCursor",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "NextCursor",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "ObservedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "ObservedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "TimeZones",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCatalogPageDto",
+          "member": "TimeZones",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "CanonicalTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "CanonicalTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Code",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Code",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "CorrectionAllowed",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "CorrectionAllowed",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Name",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Name",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "OperatingCountryCode",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "OperatingCountryCode",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "ProcessingStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "ProcessingStatus",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "PropertyId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "PropertyId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Status",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Status",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "TimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "TimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "TimeZoneStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "TimeZoneStatus",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Version",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneComplianceItemDto",
+          "member": "Version",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "CatalogVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "CatalogVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "HasMore",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "HasMore",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "NextCursor",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "NextCursor",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "ObservedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "ObservedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "Properties",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCompliancePageDto",
+          "member": "Properties",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCountryDto",
+          "member": "Code",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCountryDto",
+          "member": "Code",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCountryDto",
+          "member": "Name",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneCountryDto",
+          "member": "Name",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentCanonicalTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentCanonicalTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentTimeZoneObservedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentTimeZoneObservedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentTimeZoneStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentTimeZoneStatus",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.PropertyTimeZoneRecoveryDto",
+          "member": "CurrentVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "CatalogVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "CatalogVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "ChangeKind",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "ChangeKind",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "CompletedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "CompletedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "ExpectedVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "ExpectedVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "OperationId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "OperationId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "PreviousTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "PreviousTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "PropertyId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "PropertyId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "RequestedTimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "RequestedTimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "TimeZoneId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "TimeZoneId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "TimeZoneStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "TimeZoneStatus",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "Version",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Properties.Contracts",
+          "type": "BunkFy.Modules.Properties.Contracts.SetPropertyTimeZoneReceiptDto",
+          "member": "Version",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },

@@ -80,4 +80,51 @@ public sealed class GuestRetentionSweepCheckpoint
         this.Version++;
         return Result.Success();
     }
+
+    public Result PrepareRetry(
+        GuestRetentionExecution failedExecution,
+        DateTimeOffset retryStartedAtUtc)
+    {
+        if (failedExecution.State !=
+                GuestRetentionExecutionState.Failed ||
+            !string.Equals(
+                this.ScopeId,
+                failedExecution.ScopeId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                this.DataClassKey,
+                failedExecution.DataClassKey,
+                StringComparison.Ordinal) ||
+            !failedExecution.CompletedAtUtc.HasValue ||
+            retryStartedAtUtc == default ||
+            retryStartedAtUtc < failedExecution.CompletedAtUtc.Value)
+        {
+            return Result.Failure(
+                GuestsDomainErrors.RetentionCheckpointConflict);
+        }
+
+        if (this.LastExecutionId == failedExecution.Id)
+        {
+            if (this.UpdatedAtUtc !=
+                failedExecution.CompletedAtUtc.Value)
+            {
+                return Result.Failure(
+                    GuestsDomainErrors.RetentionCheckpointConflict);
+            }
+
+            this.AfterProjectionOrdinal =
+                failedExecution.StartingProjectionOrdinal;
+            this.LastExecutionId = null;
+            this.UpdatedAtUtc = retryStartedAtUtc;
+            this.Version++;
+            return Result.Success();
+        }
+
+        return this.AfterProjectionOrdinal ==
+                   failedExecution.StartingProjectionOrdinal &&
+               this.UpdatedAtUtc <= failedExecution.StartedAtUtc
+            ? Result.Success()
+            : Result.Failure(
+                GuestsDomainErrors.RetentionCheckpointConflict);
+    }
 }

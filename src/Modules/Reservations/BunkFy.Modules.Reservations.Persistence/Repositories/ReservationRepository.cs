@@ -3,6 +3,7 @@ namespace BunkFy.Modules.Reservations.Persistence.Repositories;
 using Gma.Framework.Pagination;
 using BunkFy.Modules.Inventory.Contracts;
 using Microsoft.EntityFrameworkCore;
+using BunkFy.Modules.Reservations.Application.Policies;
 using BunkFy.Modules.Reservations.Application.Ports;
 using BunkFy.Modules.Reservations.Contracts;
 using BunkFy.Modules.Reservations.Domain.Aggregates;
@@ -148,11 +149,72 @@ internal sealed class ReservationRepository(
         string? search,
         ReservationListOrder order,
         PageRequest pageRequest,
+        CancellationToken cancellationToken) =>
+        await this.ListWindowAsync(
+            propertyId,
+            statuses,
+            search,
+            order,
+            pageRequest,
+            overlapsFrom: null,
+            overlapsTo: null,
+            view: null,
+            operatingDate: null,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+    public async Task<ReservationListResponse> ListWindowAsync(
+        Guid propertyId,
+        IReadOnlyCollection<ReservationStatus>? statuses,
+        string? search,
+        ReservationListOrder order,
+        PageRequest pageRequest,
+        DateOnly? overlapsFrom,
+        DateOnly? overlapsTo,
+        ReservationListView? view,
+        DateOnly? operatingDate,
         CancellationToken cancellationToken)
     {
         IQueryable<Reservation> query = this.OrdinaryReservations()
             .AsNoTracking()
             .Where(reservation => reservation.PropertyId == propertyId);
+
+        if (overlapsFrom.HasValue && overlapsTo.HasValue)
+        {
+            DateOnly from = overlapsFrom.Value;
+            DateOnly to = overlapsTo.Value;
+            query = query.Where(reservation =>
+                reservation.Arrival < to && reservation.Departure > from);
+        }
+
+        if (view.HasValue && operatingDate.HasValue)
+        {
+            DateOnly date = operatingDate.Value;
+            query = view.Value switch
+            {
+                ReservationListView.Upcoming => query.Where(reservation =>
+                    (reservation.Status == ReservationState.PendingAllocation ||
+                     reservation.Status == ReservationState.Confirmed) &&
+                    reservation.Arrival >= date),
+                ReservationListView.InHouse => query.Where(reservation =>
+                    reservation.Status == ReservationState.CheckedIn ||
+                    reservation.Status == ReservationState.CheckoutPending),
+                ReservationListView.Attention => query.Where(reservation =>
+                    reservation.Status == ReservationState.PendingAllocation ||
+                    reservation.Status == ReservationState.AllocationRejected ||
+                    reservation.Status == ReservationState.CancellationPending ||
+                    reservation.Status == ReservationState.NoShowPending ||
+                    reservation.Status == ReservationState.CheckoutPending ||
+                    (reservation.Status == ReservationState.Confirmed &&
+                     reservation.Arrival < date) ||
+                    (reservation.Status == ReservationState.CheckedIn &&
+                     reservation.Departure < date)),
+                ReservationListView.Closed => query.Where(reservation =>
+                    reservation.Status == ReservationState.Cancelled ||
+                    reservation.Status == ReservationState.NoShow ||
+                    reservation.Status == ReservationState.CheckedOut),
+                _ => query
+            };
+        }
 
         if (statuses is { Count: > 0 })
         {
@@ -206,7 +268,8 @@ internal sealed class ReservationRepository(
                 reservation.ExpectedDepartureTime,
                 reservation.PrimaryGuestName,
                 reservation.GuestCount,
-                reservation.RequestedUnits.Count,
+                reservation.RequestedUnits.Select(unit => unit.Id).ToArray(),
+                reservation.AllocationId,
                 reservation.Source,
                 reservation.Status))
             .ToArrayAsync(cancellationToken)
@@ -220,14 +283,7 @@ internal sealed class ReservationRepository(
     }
 
     private IQueryable<Reservation> OrdinaryReservations() =>
-        dbContext.Reservations.Where(reservation =>
-            !reservation.IsAnonymised &&
-            dbContext.ProcessingRestrictionProjections.Any(projection =>
-                projection.PropertyId == reservation.PropertyId &&
-                projection.ReservationId == reservation.Id &&
-                projection.ContractVersion ==
-                    ReservationProcessingRestrictionContract.CurrentVersion &&
-                !projection.IsRestricted));
+        ReservationVisibilityQueries.Ordinary(dbContext);
 
     private static ReservationListItemDto Map(ReservationListRow reservation) => new(
         reservation.ReservationId,
@@ -238,7 +294,11 @@ internal sealed class ReservationRepository(
         reservation.ExpectedDepartureTime,
         reservation.PrimaryGuestName,
         reservation.GuestCount,
-        reservation.InventoryUnitCount,
+        reservation.InventoryUnitIds.Length,
+        reservation.InventoryUnitIds,
+        ReservationInventoryTruthPolicy.HoldsInventory(
+            reservation.Status,
+            reservation.AllocationId),
         reservation.Source == ReservationSource.Direct
             ? ReservationSourceKind.Direct
             : ReservationSourceKind.External,
@@ -283,7 +343,8 @@ internal sealed class ReservationRepository(
         TimeOnly? ExpectedDepartureTime,
         string PrimaryGuestName,
         int GuestCount,
-        int InventoryUnitCount,
+        Guid[] InventoryUnitIds,
+        Guid? AllocationId,
         ReservationSource Source,
         ReservationState Status);
 }

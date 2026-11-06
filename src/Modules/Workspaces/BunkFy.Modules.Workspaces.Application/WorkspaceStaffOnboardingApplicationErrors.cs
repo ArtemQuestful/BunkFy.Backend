@@ -11,12 +11,46 @@ public static class WorkspaceStaffOnboardingApplicationErrors
     public static readonly Error JoinTokenInvalid = new("Workspaces.JoinTokenInvalid", "The workspace join token is invalid or unavailable.");
     public static readonly Error ApplicationNotFound = new("Workspaces.StaffOnboardingNotFound", "The Staff onboarding application was not found.");
     public static readonly Error ProvisioningFailed = new("Workspaces.StaffOnboardingProvisioningFailed", "Staff onboarding provisioning did not complete.");
+    public static readonly Error RecoveryRequiresReview = new(
+        "Workspaces.StaffOnboardingRecoveryRequiresReview",
+        "Staff onboarding no longer matches its recorded access plan and requires review before retry.");
+    public static readonly Error RecoveryAttemptRequired = new(
+        "Workspaces.StaffOnboardingRecoveryAttemptRequired",
+        "This partial Staff onboarding requires a recorded recovery attempt.");
+    public static readonly Error RecoveryRequestInvalid = new(
+        "Workspaces.StaffOnboardingRecoveryRequestInvalid",
+        "The Staff onboarding recovery request is invalid.");
+    public static readonly Error RecoveryApplicationVersionConflict = new(
+        "Workspaces.StaffOnboardingRecoveryApplicationVersionConflict",
+        "The Staff onboarding application changed before recovery began.");
+    public static readonly Error RecoveryIdempotencyConflict = new(
+        "Workspaces.StaffOnboardingRecoveryIdempotencyConflict",
+        "The recovery operation identifier was already used for another request.");
+    public static readonly Error RecoveryIneligible = new(
+        "Workspaces.StaffOnboardingRecoveryIneligible",
+        "Only a failed partial onboarding with a recorded Staff member can be recovered.");
+    public static readonly Error RecoveryVerifierUnavailable = new(
+        "Workspaces.StaffOnboardingRecoveryVerifierUnavailable",
+        "The authoritative Staff recovery verifier is unavailable.");
+    public static readonly Error RecoveryAttemptNotFound = new(
+        "Workspaces.StaffOnboardingRecoveryAttemptNotFound",
+        "No recovery attempt has been recorded for this application.");
+    public static readonly Error MembershipStateConflict = new(
+        "Workspaces.StaffOnboardingMembershipStateConflict",
+        "The accepted organization membership no longer matches this Staff onboarding.");
+    public static readonly Error MembershipStateUnavailable = new(
+        "Workspaces.StaffOnboardingMembershipStateUnavailable",
+        "The organization membership could not be verified consistently. Retry later.");
     public static readonly Error AccessPlanUnavailable = new(
         "Workspaces.StaffAccessPlanUnavailable",
         "The workspace Staff access plan is unavailable.");
     public static readonly Error ProfileMutationAuthorityUnavailable = new(
         "Workspaces.StaffOnboardingProfileMutationAuthorityUnavailable",
         "The Staff onboarding profile is no longer editable under the authoritative join state.");
+    public static readonly Error ProfileReviewUnavailable = new(
+        "Workspaces.StaffOnboardingProfileReviewUnavailable",
+        "Applicant details are unavailable for review. Refresh the request status before continuing.");
+
     public static readonly Error RetentionCoordinateInvalid = new(
         "Workspaces.StaffOnboardingRetentionCoordinateInvalid",
         "The Staff onboarding retention coordinate is invalid.");
@@ -26,6 +60,9 @@ public static class WorkspaceStaffOnboardingApplicationErrors
     public static readonly Error RetentionPlanInconsistent = new(
         "Workspaces.StaffOnboardingRetentionPlanInconsistent",
         "The Staff onboarding access plan is inconsistent with retention reconciliation.");
+    public static readonly Error RetentionExecutionNotFound = new(
+        "Workspaces.StaffOnboardingRetentionExecutionNotFound",
+        "The Staff onboarding retention execution was not found.");
     public static readonly Error CorrectionRequestInvalid = new(
         "Workspaces.StaffOnboardingCorrectionRequestInvalid",
         "The Staff onboarding correction request is invalid.");

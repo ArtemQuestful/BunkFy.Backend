@@ -75,7 +75,8 @@ public sealed class DataRightsRestrictionExecutionProof
         bool effectiveRestricted,
         string receiptSha256,
         string executedBy,
-        DateTimeOffset completedAtUtc)
+        DateTimeOffset completedAtUtc,
+        DataRightsRestrictionReleaseTarget? releaseTarget = null)
     {
         ArgumentNullException.ThrowIfNull(subject);
 
@@ -83,8 +84,13 @@ public sealed class DataRightsRestrictionExecutionProof
         string actor = executedBy?.Trim() ?? string.Empty;
         bool effectiveStateMatches = directive switch
         {
-            DataRightsRestrictionAction.Apply => effectiveRestricted,
-            DataRightsRestrictionAction.Release => !effectiveRestricted,
+            DataRightsRestrictionAction.Apply =>
+                releaseTarget is null && effectiveRestricted,
+            DataRightsRestrictionAction.Release when releaseTarget is null =>
+                !effectiveRestricted,
+            DataRightsRestrictionAction.Release =>
+                ownerOperationId == releaseTarget.OwnerOperationId &&
+                resultingOwnerRevision == releaseTarget.OwnerOperationVersion + 1,
             _ => false
         };
         if (idempotencyKey == Guid.Empty ||
@@ -125,7 +131,8 @@ public sealed class DataRightsRestrictionExecutionProof
         long approvalRevision,
         DataRightsRestrictionAction directive,
         DataRightsSubjectCoordinate subject,
-        string actorId) =>
+        string actorId,
+        DataRightsRestrictionReleaseTarget? releaseTarget = null) =>
         this.IdempotencyKey == idempotencyKey &&
         this.ApprovalRevision == approvalRevision &&
         this.Directive == directive &&
@@ -133,5 +140,21 @@ public sealed class DataRightsRestrictionExecutionProof
         string.Equals(this.RecordType, subject.RecordType, StringComparison.Ordinal) &&
         this.RecordId == subject.RecordId &&
         this.SelectedRecordVersion == subject.RecordVersion &&
+        this.MatchesReleaseTarget(directive, releaseTarget) &&
         string.Equals(this.ExecutedBy, actorId?.Trim(), StringComparison.Ordinal);
+
+    private bool MatchesReleaseTarget(
+        DataRightsRestrictionAction directive,
+        DataRightsRestrictionReleaseTarget? releaseTarget) =>
+        directive switch
+        {
+            DataRightsRestrictionAction.Apply => releaseTarget is null,
+            DataRightsRestrictionAction.Release when releaseTarget is null =>
+                !this.EffectiveRestricted,
+            DataRightsRestrictionAction.Release =>
+                this.OwnerOperationId == releaseTarget.OwnerOperationId &&
+                this.ResultingOwnerRevision ==
+                    releaseTarget.OwnerOperationVersion + 1,
+            _ => false
+        };
 }

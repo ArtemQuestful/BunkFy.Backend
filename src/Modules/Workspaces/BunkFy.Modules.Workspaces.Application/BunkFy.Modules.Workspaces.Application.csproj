@@ -10,6 +10,7 @@
     <ProjectReference Include="..\BunkFy.Modules.Workspaces.Domain\BunkFy.Modules.Workspaces.Domain.csproj" />
     <ProjectReference Include="..\..\DataRights\BunkFy.Modules.DataRights.Contracts\BunkFy.Modules.DataRights.Contracts.csproj" />
     <ProjectReference Include="..\..\Staff\BunkFy.Modules.Staff.Contracts\BunkFy.Modules.Staff.Contracts.csproj" />
+    <ProjectReference Include="..\..\Stations\BunkFy.Modules.Stations.Contracts\BunkFy.Modules.Stations.Contracts.csproj" />
     <ProjectReference Include="..\..\Guests\BunkFy.Modules.Guests.Contracts\BunkFy.Modules.Guests.Contracts.csproj" />
     <ProjectReference Include="..\..\Ingestion\BunkFy.Modules.Ingestion.Contracts\BunkFy.Modules.Ingestion.Contracts.csproj" />
     <ProjectReference Include="..\..\Inventory\BunkFy.Modules.Inventory.Contracts\BunkFy.Modules.Inventory.Contracts.csproj" />

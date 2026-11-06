@@ -1,13 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/Modules/Stations/BunkFy.Modules.Stations.Api/BunkFy.Modules.Stations.Api.csproj" />
+  </ItemGroup>
   <PropertyGroup>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Modules/Stations/BunkFy.Modules.Stations.Persistence.PostgreSqlMigrations/BunkFy.Modules.Stations.Persistence.PostgreSqlMigrations.csproj" />
+    <ProjectReference Include="../../src/Modules/Stations/BunkFy.Modules.Stations.Persistence/BunkFy.Modules.Stations.Persistence.csproj" />
+    <ProjectReference Include="../../src/Modules/Stations/BunkFy.Modules.Stations.Application/BunkFy.Modules.Stations.Application.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="SSH.NET">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="Testcontainers" />

@@ -150,7 +150,7 @@ public sealed class
             postgreSql.GetConnectionString(),
             poison,
             barrier);
-        await CreateSchemaAsync(services).ConfigureAwait(false);
+        await MigrateActualSchemaAsync(services).ConfigureAwait(false);
 
         Guid priorApplicationId = Guid.NewGuid();
         await using AsyncServiceScope priorWriter = services.CreateAsyncScope();
@@ -237,7 +237,8 @@ public sealed class
         builder.AddApplicationEventsInfrastructure();
         builder.AddTaskCqrs();
         builder.Services.AddDbContext<WorkspacesDbContext>(options =>
-            options.UseNpgsql(connectionString));
+            options.UseNpgsql(connectionString, postgres =>
+                postgres.MigrationsAssembly(WorkspacesMigrations.PostgreSqlAssembly)));
         builder.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IUnitOfWork, WorkspacesUnitOfWork>());
         builder.Services.AddScoped<
@@ -281,7 +282,7 @@ public sealed class
         ServiceProvider services,
         Guid applicationId)
     {
-        await CreateSchemaAsync(services).ConfigureAwait(false);
+        await MigrateActualSchemaAsync(services).ConfigureAwait(false);
         await using AsyncServiceScope scope = services.CreateAsyncScope();
         SetScope(scope.ServiceProvider);
         WorkspacesDbContext database = scope.ServiceProvider
@@ -294,13 +295,13 @@ public sealed class
         Assert.True(application.IdentityAnchorSweepOrdinal > 0);
     }
 
-    private static async Task CreateSchemaAsync(ServiceProvider services)
+    private static async Task MigrateActualSchemaAsync(ServiceProvider services)
     {
         await using AsyncServiceScope scope = services.CreateAsyncScope();
         SetScope(scope.ServiceProvider);
         WorkspacesDbContext database = scope.ServiceProvider
             .GetRequiredService<WorkspacesDbContext>();
-        await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+        await database.Database.MigrateAsync().ConfigureAwait(false);
     }
 
     private static WorkspaceStaffOnboarding CreateApplication(

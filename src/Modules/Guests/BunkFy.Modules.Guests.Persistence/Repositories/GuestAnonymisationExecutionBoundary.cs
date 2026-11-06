@@ -15,13 +15,22 @@ internal sealed class GuestAnonymisationExecutionBoundary(
         Guid guestId,
         CancellationToken cancellationToken)
     {
+        string scopeId = dbContext.CurrentScopeId;
+        if (!string.Equals(tenantId, scopeId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A Guest anonymisation execution boundary requires the active tenant scope.");
+        }
+
         await operationLock.AcquireGuestAsync(
             tenantId,
             guestId,
             cancellationToken).ConfigureAwait(false);
 
         Guid? originPropertyId = await dbContext.GuestProfiles.AsNoTracking()
-            .Where(profile => profile.Id == guestId)
+            .Where(profile =>
+                profile.ScopeId == scopeId &&
+                profile.Id == guestId)
             .Select(profile => (Guid?)profile.OriginPropertyId)
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -31,7 +40,9 @@ internal sealed class GuestAnonymisationExecutionBoundary(
         }
 
         Guid[] stayPropertyIds = await dbContext.StayHistory.AsNoTracking()
-            .Where(stay => stay.GuestId == guestId)
+            .Where(stay =>
+                stay.ScopeId == scopeId &&
+                stay.GuestId == guestId)
             .Select(stay => stay.PropertyId)
             .Distinct()
             .Take(GuestAnonymisationEligibilityContract.MaximumAffectedProperties + 1)
@@ -39,6 +50,7 @@ internal sealed class GuestAnonymisationExecutionBoundary(
             .ConfigureAwait(false);
         Guid[] holdPropertyIds = await dbContext.DataHolds.AsNoTracking()
             .Where(hold =>
+                hold.ScopeId == scopeId &&
                 hold.GuestId == guestId &&
                 hold.State == GuestDataHoldState.Active)
             .Select(hold => hold.PropertyId)

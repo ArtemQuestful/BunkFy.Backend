@@ -38,17 +38,39 @@ public sealed record DataRightsProtectedExportArtifact(
     DateTimeOffset AvailableAtUtc,
     DateTimeOffset ExpiresAtUtc);
 
+public enum DataRightsExportFailureDisposition
+{
+    Terminal = 0,
+    Retryable = 1
+}
+
 public sealed class DataRightsExportGenerationException : Exception
 {
-    public DataRightsExportGenerationException(string code)
+    public DataRightsExportGenerationException(
+        string code,
+        DataRightsExportFailureDisposition disposition =
+            DataRightsExportFailureDisposition.Terminal)
         : base(Normalize(code))
-        => this.Code = Normalize(code);
+    {
+        this.Code = Normalize(code);
+        this.Disposition = RequireDisposition(disposition);
+    }
 
-    public DataRightsExportGenerationException(string code, Exception innerException)
+    public DataRightsExportGenerationException(
+        string code,
+        Exception innerException,
+        DataRightsExportFailureDisposition disposition =
+            DataRightsExportFailureDisposition.Terminal)
         : base(Normalize(code), innerException)
-        => this.Code = Normalize(code);
+    {
+        this.Code = Normalize(code);
+        this.Disposition = RequireDisposition(disposition);
+    }
 
     public string Code { get; }
+    public DataRightsExportFailureDisposition Disposition { get; }
+    public bool IsRetryable =>
+        this.Disposition == DataRightsExportFailureDisposition.Retryable;
 
     private static string Normalize(string code)
     {
@@ -67,4 +89,13 @@ public sealed class DataRightsExportGenerationException : Exception
 
         return normalized;
     }
+
+    private static DataRightsExportFailureDisposition RequireDisposition(
+        DataRightsExportFailureDisposition disposition) =>
+        Enum.IsDefined(disposition)
+            ? disposition
+            : throw new ArgumentOutOfRangeException(
+                nameof(disposition),
+                disposition,
+                "A supported export failure disposition is required.");
 }

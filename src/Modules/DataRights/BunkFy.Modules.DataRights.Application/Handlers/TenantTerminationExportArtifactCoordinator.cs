@@ -62,29 +62,10 @@ internal static class TenantTerminationExportArtifactCoordinator
     {
         ArgumentNullException.ThrowIfNull(process);
         ArgumentNullException.ThrowIfNull(artifact);
-        if (artifact.State != TenantTerminationExportArtifactState.Available ||
-            artifact.AvailableAtUtc is not DateTimeOffset availableAtUtc ||
-            availableAtUtc > nowUtc ||
-            artifact.ExpiresAtUtc <= nowUtc ||
-            artifact.ProcessId != process.Id ||
-            artifact.CaseId != process.CaseId ||
-            artifact.ApprovalRevision != process.ApprovalRevision ||
-            artifact.FreezeOperationRevision !=
-                process.FreezeOperationRevision ||
-            artifact.ExportOperationRevision != process.OperationRevision ||
-            artifact.TerminationEpoch != process.TerminationEpoch ||
-            !string.Equals(
-                artifact.ScopeId,
-                process.ScopeId,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                artifact.PolicyEvidenceSha256,
-                process.PolicyEvidenceSha256,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                artifact.FrozenRevisionSha256,
-                process.FrozenRevisionSha256,
-                StringComparison.Ordinal))
+        if (!MatchesAvailableProof(process, artifact, nowUtc) ||
+            process.Phase != TenantTerminationProcessPhase.Export ||
+            process.Status != TenantTerminationProcessStatus.Running ||
+            artifact.ExportOperationRevision != process.OperationRevision)
         {
             return Result.Failure(
                 DataRightsApplicationErrors
@@ -101,6 +82,122 @@ internal static class TenantTerminationExportArtifactCoordinator
             actorId,
             nowUtc);
     }
+
+    public static bool IsAvailableForDownload(
+        TenantTerminationProcess process,
+        TenantTerminationExportArtifact artifact,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        ArgumentNullException.ThrowIfNull(artifact);
+        if (!MatchesAvailableProof(process, artifact, nowUtc))
+        {
+            return false;
+        }
+
+        bool currentExport =
+            process.Phase == TenantTerminationProcessPhase.Export &&
+            artifact.ExportOperationRevision == process.OperationRevision;
+        bool confirmedExport = MatchesConfirmationReceipt(
+                process,
+                artifact) &&
+            process.ExportArtifactVersion == artifact.Version;
+        return currentExport || confirmedExport;
+    }
+
+    internal static bool MatchesConfirmationReceipt(
+        TenantTerminationProcess process,
+        TenantTerminationExportArtifact artifact)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        ArgumentNullException.ThrowIfNull(artifact);
+        string confirmedBy = process.ExportConfirmedBy?.Trim() ?? string.Empty;
+        return MatchesProcessProof(process, artifact) &&
+            process.ExportConfirmationRevision > 0 &&
+            process.ExportConfirmedOperationRevision ==
+                artifact.ExportOperationRevision &&
+            process.ExportArtifactId == artifact.Id &&
+            process.ExportArtifactVersion is > 0 &&
+            process.ExportArtifactVersion <= artifact.Version &&
+            string.Equals(
+                process.ExportFrozenRevisionSha256,
+                artifact.FrozenRevisionSha256,
+                StringComparison.Ordinal) &&
+            string.Equals(
+                process.ExportFragmentSetSha256,
+                artifact.FragmentSetSha256,
+                StringComparison.Ordinal) &&
+            confirmedBy.Length is > 0 and <=
+                TenantTerminationProcess.ActorIdMaxLength &&
+            string.Equals(
+                process.ExportConfirmedBy,
+                confirmedBy,
+                StringComparison.Ordinal) &&
+            artifact.AvailableAtUtc is DateTimeOffset availableAtUtc &&
+            process.ExportConfirmedAtUtc is DateTimeOffset confirmedAtUtc &&
+            confirmedAtUtc >= availableAtUtc &&
+            confirmedAtUtc < artifact.ExpiresAtUtc;
+    }
+
+    private static bool MatchesAvailableProof(
+        TenantTerminationProcess process,
+        TenantTerminationExportArtifact artifact,
+        DateTimeOffset nowUtc) =>
+        artifact.State == TenantTerminationExportArtifactState.Available &&
+        artifact.AvailableAtUtc is DateTimeOffset availableAtUtc &&
+        availableAtUtc <= nowUtc &&
+        artifact.ExpiresAtUtc > nowUtc &&
+        MatchesProcessProof(process, artifact);
+
+    internal static bool MatchesProcessProof(
+        TenantTerminationProcess process,
+        TenantTerminationExportArtifact artifact) =>
+        process.ExportRequested &&
+        artifact.ProcessId == process.Id &&
+        artifact.CaseId == process.CaseId &&
+        artifact.ApprovalRevision == process.ApprovalRevision &&
+        artifact.FreezeOperationRevision == process.FreezeOperationRevision &&
+        artifact.TerminationEpoch == process.TerminationEpoch &&
+        string.Equals(
+            artifact.ScopeId,
+            process.ScopeId,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            artifact.PolicyEvidenceSha256,
+            process.PolicyEvidenceSha256,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            artifact.FrozenRevisionSha256,
+            process.FrozenRevisionSha256,
+            StringComparison.Ordinal);
+
+    internal static bool MatchesProcessProof(
+        TenantTerminationProcess process,
+        TenantTerminationExportFragment fragment) =>
+        fragment.ExportOperationRevision == process.OperationRevision &&
+        MatchesFrozenProcessProof(process, fragment);
+
+    internal static bool MatchesFrozenProcessProof(
+        TenantTerminationProcess process,
+        TenantTerminationExportFragment fragment) =>
+        process.ExportRequested &&
+        fragment.ProcessId == process.Id &&
+        fragment.CaseId == process.CaseId &&
+        fragment.ApprovalRevision == process.ApprovalRevision &&
+        fragment.FreezeOperationRevision == process.FreezeOperationRevision &&
+        fragment.TerminationEpoch == process.TerminationEpoch &&
+        string.Equals(
+            fragment.ScopeId,
+            process.ScopeId,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            fragment.PolicyEvidenceSha256,
+            process.PolicyEvidenceSha256,
+            StringComparison.Ordinal) &&
+        string.Equals(
+            fragment.FrozenRevisionSha256,
+            process.FrozenRevisionSha256,
+            StringComparison.Ordinal);
 
     internal static string ComputeFragmentSetSha256(
         TenantTerminationProcess process,

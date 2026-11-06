@@ -1,7 +1,7 @@
 namespace BunkFy.Modules.DataRights.Domain.Aggregates;
 
-using BunkFy.Modules.DataRights.Domain.Errors;
 using BunkFy.Modules.DataRights.Domain.Entities;
+using BunkFy.Modules.DataRights.Domain.Errors;
 using BunkFy.Modules.DataRights.Domain.Models;
 using Gma.Framework.Domain.Models;
 using Gma.Framework.Naming;
@@ -13,6 +13,10 @@ public sealed partial class TenantTerminationProcess : ScopedAggregateRoot<Guid>
     public const int OutcomeCodeMaxLength = 200;
     public const int Sha256Length = 64;
     public const int MaximumFrozenOwners = 64;
+    public const string ExportArtifactExpiredOutcomeCode =
+        "export-artifact-expired";
+    public const string ExportFragmentExpiredOutcomeCode =
+        "export-fragment-expired";
 
     private readonly List<TenantTerminationFrozenOwner> frozenExportOwners = [];
 

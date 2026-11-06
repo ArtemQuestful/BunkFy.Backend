@@ -35,6 +35,7 @@ internal sealed class ApplyGuestRetentionCommandHandler(
             scopeContext.IsEnabled ? scopeContext.ScopeId : null;
         if (string.IsNullOrWhiteSpace(tenantId) ||
             command.ExecutionId == Guid.Empty ||
+            command.Attempt < 1 ||
             command.GuestId == Guid.Empty ||
             command.ExpectedGuestVersion < 1)
         {
@@ -51,10 +52,7 @@ internal sealed class ApplyGuestRetentionCommandHandler(
                 execution.ScopeId,
                 tenantId,
                 StringComparison.Ordinal) ||
-            execution.State != GuestRetentionExecutionState.Running ||
-            !execution.MatchesCoordinate(
-                GuestRetentionCoordinates.DataClassKey,
-                GuestRetentionCoordinates.ExecutionPolicyVersion))
+            execution.Attempt != command.Attempt)
         {
             return Result.Failure<GuestRetentionMutationResult>(
                 GuestsApplicationErrors.RetentionExecutionNotFound);
@@ -66,6 +64,16 @@ internal sealed class ApplyGuestRetentionCommandHandler(
                 cancellationToken).ConfigureAwait(false);
         if (existing is not null)
         {
+            if (!string.Equals(
+                    existing.ScopeId,
+                    tenantId,
+                    StringComparison.Ordinal) ||
+                existing.GuestId != command.GuestId)
+            {
+                return Result.Failure<GuestRetentionMutationResult>(
+                    GuestsApplicationErrors.RetentionProofConflict);
+            }
+
             GuestAnonymisationTombstone? existingTombstone =
                 await executions.GetTombstoneAsync(
                     command.GuestId,
@@ -84,6 +92,15 @@ internal sealed class ApplyGuestRetentionCommandHandler(
                     command.ExpectedGuestVersion)
                     ? GuestRetentionMutationStatus.AlreadyApplied
                     : GuestRetentionMutationStatus.NoLongerEligible));
+        }
+
+        if (execution.State != GuestRetentionExecutionState.Running ||
+            !execution.MatchesCoordinate(
+                GuestRetentionCoordinates.DataClassKey,
+                GuestRetentionCoordinates.ExecutionPolicyVersion))
+        {
+            return Result.Failure<GuestRetentionMutationResult>(
+                GuestsApplicationErrors.RetentionExecutionNotFound);
         }
 
         await executionBoundary.AcquireAsync(
@@ -120,7 +137,9 @@ internal sealed class ApplyGuestRetentionCommandHandler(
 
         if (decision.Status != GuestRetentionEligibilityStatus.Eligible ||
             decision.RetentionDeadlineUtc is null ||
-            string.IsNullOrWhiteSpace(decision.PolicySetSha256))
+            string.IsNullOrWhiteSpace(decision.PolicySetSha256) ||
+            string.IsNullOrWhiteSpace(
+                decision.TimeZoneCatalogVersion))
         {
             return Result.Success(new GuestRetentionMutationResult(
                 GuestRetentionMutationStatus.Failed,
@@ -131,6 +150,8 @@ internal sealed class ApplyGuestRetentionCommandHandler(
                             .ProjectionUnavailable,
                     GuestRetentionEligibilityCode.PolicyUnavailable =>
                         GuestRetentionMutationFailure.PolicyUnavailable,
+                    GuestRetentionEligibilityCode.TimeZoneUnavailable =>
+                        GuestRetentionMutationFailure.TimeZoneUnavailable,
                     _ => GuestRetentionMutationFailure.MutationFailed
                 }));
         }
@@ -169,6 +190,7 @@ internal sealed class ApplyGuestRetentionCommandHandler(
                 decision.AffectedPropertyCount,
                 decision.RetentionDeadlineUtc.Value,
                 decision.PolicySetSha256,
+                decision.TimeZoneCatalogVersion,
                 mutated.Value.EventId,
                 GuestRetentionCoordinates.SystemActor,
                 mutated.Value.OccurredAtUtc);

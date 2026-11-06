@@ -85,10 +85,13 @@ internal sealed class ExecuteTenantTerminationExportOwnerWorkTaskHandler(
 
         try
         {
-            TenantTerminationProtectedExportFragment protectedFragment =
+            DataRightsDeadlineExecution<
+                TenantTerminationProtectedExportFragment> execution =
                 await this.GenerateWithDeadlineAsync(
                     begun.Value.Request,
                     cancellationToken).ConfigureAwait(false);
+            TenantTerminationProtectedExportFragment protectedFragment =
+                execution.Value;
             TenantTerminationContributionResult contribution =
                 ToContribution(
                     protectedFragment.AssemblyResult.Owner,
@@ -99,12 +102,18 @@ internal sealed class ExecuteTenantTerminationExportOwnerWorkTaskHandler(
                     TenantTerminationReplayResult.Create(
                         replay.Dispatch,
                         contribution,
-                        clock.UtcNow);
-                _ = await replayStore.AppendAsync(
+                        execution.ObservedAtUtc);
+                TenantTerminationReplayJournalEntry entry =
                     TenantTerminationReplayJournalEntry.ForResult(
                         replay.Dispatch,
-                        result),
-                    cancellationToken).ConfigureAwait(false);
+                        result);
+                TenantTerminationReplayAppendReceipt receipt =
+                    await replayStore.AppendAsync(entry, cancellationToken)
+                        .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                TenantTerminationReplayDurability.EnsureMatches(
+                    receipt,
+                    entry);
             }
 
             Result<TenantTerminationOwnerResultRecorded> completed =
@@ -188,39 +197,28 @@ internal sealed class ExecuteTenantTerminationExportOwnerWorkTaskHandler(
                 context.RunId,
                 context.Attempt,
                 recordedAtUtc);
-        _ = await replayStore.AppendAsync(
-            TenantTerminationReplayJournalEntry.ForDispatch(dispatch),
-            cancellationToken).ConfigureAwait(false);
+        TenantTerminationReplayJournalEntry entry =
+            TenantTerminationReplayJournalEntry.ForDispatch(dispatch);
+        TenantTerminationReplayAppendReceipt receipt =
+            await replayStore.AppendAsync(entry, cancellationToken)
+                .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        TenantTerminationReplayDurability.EnsureMatches(receipt, entry);
         return new TenantTerminationReplayAttempt(dispatch, Result: null);
     }
 
-    private async Task<TenantTerminationProtectedExportFragment>
+    private async Task<DataRightsDeadlineExecution<
+        TenantTerminationProtectedExportFragment>>
         GenerateWithDeadlineAsync(
             TenantTerminationExportFragmentGenerationRequest request,
             CancellationToken cancellationToken)
     {
-        TimeSpan remaining = request.AssemblyRequest.DeadlineUtc - clock.UtcNow;
-        if (remaining <= TimeSpan.Zero)
-        {
-            throw new TimeoutException(
-                "DataRights.TenantTerminationOwnerDeadlineExceeded");
-        }
-
-        using CancellationTokenSource deadline =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(remaining);
-        try
-        {
-            return await generator.GenerateAsync(
-                request,
-                deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (
-            !cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                "DataRights.TenantTerminationOwnerDeadlineExceeded");
-        }
+        return await DataRightsDeadlineExecutor.ExecuteAsync(
+            clock,
+            request.AssemblyRequest.DeadlineUtc,
+            "DataRights.TenantTerminationOwnerDeadlineExceeded",
+            token => generator.GenerateAsync(request, token),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task TryRecordFailureAsync(

@@ -23,6 +23,20 @@ public static class PropertiesApplicationErrors
     public static readonly Error ManagementOperationConflict = new(
         "Properties.ManagementOperationConflict",
         "The property management operation was already used for a different request.");
+    public static readonly Error TimeZoneRuntimeUnavailable = new(
+        "Properties.TimeZoneRuntimeUnavailable",
+        "The selected primary IANA/TZDB time-zone identifier is valid, but this serving runtime cannot execute UTC-offset rules compatible with the pinned catalog over the operational horizon.");
+    public static readonly Error TimeZoneDedicatedOperationRequired =
+        PropertiesDomainErrors.TimeZoneDedicatedOperationRequired;
+    public static readonly Error TimeZoneOperationNotFound = new(
+        "Properties.TimeZoneOperationNotFound",
+        "The property time-zone operation was not found.");
+    public static readonly Error TimeZoneQueryInvalid = new(
+        "Properties.TimeZoneQueryInvalid",
+        "The property time-zone query is invalid.");
+    public static readonly Error TimeSourceUnavailable = new(
+        "Properties.TimeSourceUnavailable",
+        "The serving runtime did not provide a supported UTC observation instant.");
     public static readonly Error TenantRequired = PropertiesDomainErrors.TenantRequired;
     public static readonly Error PropertyNotFound = PropertiesDomainErrors.PropertyNotFound;
     public static readonly Error PropertyCodeAlreadyExists = PropertiesDomainErrors.PropertyCodeAlreadyExists;

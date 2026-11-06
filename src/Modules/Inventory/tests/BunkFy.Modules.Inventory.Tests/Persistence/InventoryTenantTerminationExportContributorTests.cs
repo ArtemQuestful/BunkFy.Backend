@@ -12,6 +12,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -73,33 +74,51 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("inventory.termination.exported", result.ResultCode);
-        Assert.Equal(12, result.AffectedCount);
+        Assert.Equal(13, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(1, result.ResultingProofRevision);
         Assert.Equal(
             InventoryTenantTerminationMetadata.RecordTypes,
             first.Records.Select(record => record.RecordType).ToArray());
+        DataRightsExportRecord groupRecord = Assert.Single(
+            first.Records,
+            record => record.RecordType ==
+                InventoryTenantTerminationMetadata.ManualBlockGroupRecordType);
+        JsonElement groupActors = Field(
+            groupRecord,
+            "inventory.staff-actor-reference");
         Assert.Equal(
             "user:owner",
-            Field(
-                    first.Records[7],
-                    "inventory.staff-actor-reference")
+            groupActors.GetProperty("createdByActorId").GetString());
+        Assert.Equal(
+            "user:owner",
+            groupActors.GetProperty("lastModifiedByActorId").GetString());
+        Assert.Equal(
+            Digest,
+            Field(groupRecord, "inventory.staff-change-operations")
+                .GetProperty("membershipDigest")
                 .GetString());
         Assert.Equal(
             "maintenance",
             Field(first.Records[3], "inventory.operational-reason")
                 .GetString());
+        DataRightsExportRecord bedRetirementRecord = Assert.Single(
+            first.Records,
+            record => record.RecordType ==
+                InventoryTenantTerminationMetadata.BedRetirementRecordType);
         Assert.Equal(
             "keep bed in service",
-            Field(first.Records[10], "inventory.cancellation-reason")
+            Field(bedRetirementRecord, "inventory.cancellation-reason")
                 .GetString());
         Assert.Equal(
             "user:manager",
-            Field(first.Records[10], "inventory.cancellation-actor-reference")
+            Field(
+                    bedRetirementRecord,
+                    "inventory.cancellation-actor-reference")
                 .GetString());
         Assert.Equal(
             FrozenAtUtc,
-            Field(first.Records[10], "inventory.canceled-at")
+            Field(bedRetirementRecord, "inventory.canceled-at")
                 .GetDateTimeOffset());
         Assert.Equal(
             ManagementOperationId,
@@ -396,6 +415,25 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
             Guid.NewGuid(),
             FrozenAtUtc.AddDays(-1),
             "user:owner").Value;
+        ManualInventoryBlockGroup group = ManualInventoryBlockGroup.Create(
+            BlockGroupId,
+            TenantId,
+            PropertyId,
+            ManualInventoryBlockGroupTargetKind.Unit,
+            buildingLabel: null,
+            floorLabel: null,
+            roomId: null,
+            inventoryUnitId: BedId,
+            block.Arrival,
+            block.Departure,
+            "maintenance",
+            Digest,
+            Digest,
+            ManualInventoryBlockGroup.CurrentMembershipDigestVersion,
+            initialBlockCount: 1,
+            replacesGroupId: null,
+            FrozenAtUtc.AddDays(-1),
+            "user:owner").Value;
         Guid reservationId =
             Guid.Parse("83000000-0000-0000-0000-000000000001");
         InventoryAllocation allocation =
@@ -523,6 +561,7 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
         context.InventoryUnits.Add(unit);
         context.RoomConfigurations.Add(configuration);
         context.ManagementOperations.Add(managementOperation);
+        context.ManualBlockGroups.Add(group);
         context.ManualBlocks.Add(block);
         context.Allocations.Add(allocation);
         context.AllocationAmendmentDecisions.Add(decision);
@@ -592,11 +631,24 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
     private static InventoryDbContext CreateContext(
         IWorkspaceTerminationFenceReader fences)
     {
+        return CreateContext(
+            fences,
+            new TestScopeContext(),
+            Guid.NewGuid().ToString("N"),
+            new InMemoryDatabaseRoot());
+    }
+
+    private static InventoryDbContext CreateContext(
+        IWorkspaceTerminationFenceReader fences,
+        IScopeContext scopeContext,
+        string databaseName,
+        InMemoryDatabaseRoot root)
+    {
         DbContextOptions<InventoryDbContext> options =
             new DbContextOptionsBuilder<InventoryDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+                .UseInMemoryDatabase(databaseName, root)
                 .Options;
-        return new(options, new TestScopeContext(), fences);
+        return new(options, scopeContext, fences);
     }
 
     private sealed class CollectingSink : IDataRightsExportSink
@@ -634,10 +686,11 @@ public sealed partial class InventoryTenantTerminationExportContributorTests
             throw new InvalidOperationException("Fence store unavailable.");
     }
 
-    private sealed class TestScopeContext : IScopeContext
+    private sealed class TestScopeContext(string scopeId = TenantId)
+        : IScopeContext
     {
         public bool IsEnabled => true;
-        public string ScopeId => TenantId;
+        public string ScopeId { get; } = scopeId;
     }
 
     private sealed class TestClock : ISystemClock

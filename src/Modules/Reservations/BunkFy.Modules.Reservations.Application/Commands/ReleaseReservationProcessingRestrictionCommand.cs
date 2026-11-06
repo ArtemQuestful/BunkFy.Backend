@@ -13,5 +13,6 @@ public sealed record ReleaseReservationProcessingRestrictionCommand(
     long ExpectedReservationVersion,
     long ExpectedRestrictionVersion,
     long ExpectedProjectionRevision,
-    string ActorId)
+    string ActorId,
+    bool LegacyUnboundTarget = false)
     : ITransactionalCommand<ReservationProcessingRestrictionReceiptDto>;

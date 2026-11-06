@@ -75,6 +75,23 @@ public sealed class ReservationGuestRecordWorkflowTests
             Assert.Single(reservations.Confirmations).OperationId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prepared_process_preserves_explicit_language_collection_presence(bool clear)
+    {
+        RecordingGuests guests = new();
+        RecordingReservations reservations = new(Process(ReservationGuestRecordLinkStatus.Prepared));
+        ReservationGuestRecordWorkflow workflow = new(guests, reservations);
+        string[] languages = clear ? [] : ["fr", "unknown-١"];
+        Result<ReservationGuestRecordLinkProcessDto> result = await workflow.ExecuteAsync(
+            Request() with { PreferredLanguageTag = null, LanguageTags = languages }, ActorId, CancellationToken.None);
+        Assert.True(result.IsSuccess);
+        GuestProfileCreationRequest forwarded = Assert.Single(guests.Requests);
+        Assert.Equal(languages, forwarded.LanguageTags);
+        Assert.Null(forwarded.PreferredLanguageTag);
+    }
+
     [Fact]
     public async Task Resumed_process_preserves_original_guest_creation_attribution()
     {

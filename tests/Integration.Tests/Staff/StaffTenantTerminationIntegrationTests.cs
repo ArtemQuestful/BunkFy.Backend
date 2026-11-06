@@ -79,6 +79,9 @@ public sealed class StaffTenantTerminationIntegrationTests
                 seedScope.ServiceProvider.GetRequiredService<
                     IStaffMemberMutationOperationRepository>(),
                 TenantA);
+            await SeedIdentityAnchorRecordsAsync(
+                staff, seedScope.ServiceProvider, TenantA, tenantAStaffId,
+                anchorCount: 1, resolutionCount: 1);
         }
 
         Guid tenantBStaffId;
@@ -701,24 +704,63 @@ public sealed class StaffTenantTerminationIntegrationTests
         staff.StaffMembers.Add(member);
         await staff.SaveChangesAsync().ConfigureAwait(false);
 
-        IStaffIdentityProvisioningAnchorRepository anchors = seedScope
-            .ServiceProvider.GetRequiredService<
+        await SeedIdentityAnchorRecordsAsync(
+            staff, seedScope.ServiceProvider, tenantId, member.Id,
+            anchorCount, resolutionCount).ConfigureAwait(false);
+    }
+
+    private static async Task SeedIdentityAnchorRecordsAsync(
+        StaffDbContext staff,
+        IServiceProvider services,
+        string tenantId,
+        Guid staffMemberId,
+        int anchorCount,
+        int resolutionCount)
+    {
+        Assert.InRange(resolutionCount, 0, anchorCount);
+        long staffVersion = await staff.StaffMembers
+            .Where(member => member.Id == staffMemberId)
+            .Select(member => member.Version)
+            .SingleAsync().ConfigureAwait(false);
+        IStaffIdentityProvisioningAnchorRepository anchors = services
+            .GetRequiredService<
                 IStaffIdentityProvisioningAnchorRepository>();
         IStaffIdentityProvisioningAnchorResolutionRepository resolutions =
-            seedScope.ServiceProvider.GetRequiredService<
+            services.GetRequiredService<
                 IStaffIdentityProvisioningAnchorResolutionRepository>();
+        IStaffOnboardingProvisioningOperationRepository operations = services
+            .GetRequiredService<IStaffOnboardingProvisioningOperationRepository>();
         Guid[] sourceIds = Enumerable.Range(1, anchorCount)
             .Select(index => DeterministicSourceId(tenantId, index))
             .ToArray();
+        Dictionary<Guid, Guid> resolutionIds = [];
         foreach (Guid sourceId in sourceIds)
         {
+            Guid resolutionEventId = Guid.NewGuid();
+            Assert.NotEqual(sourceId, resolutionEventId);
+            resolutionIds.Add(sourceId, resolutionEventId);
+            // Keep the source receipt and its exact anchor in the same commit.
+            // These fixtures exercise export/deletion, not profile hashing.
+            await operations.AddAsync(
+                new StaffMemberMutationOperationRecord(
+                    sourceId,
+                    tenantId,
+                    staffMemberId,
+                    StaffMemberMutationKind.OnboardingProvision,
+                    staffVersion,
+                    Digest,
+                    StaffStatus.Active,
+                    staffVersion,
+                    SeedNowUtc.AddMinutes(5)),
+                CancellationToken.None).ConfigureAwait(false);
             await anchors.AddAsync(
                 new StaffIdentityProvisioningAnchorRecord(
                     tenantId,
                     StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
                     sourceId,
-                    member.Id,
-                    SeedNowUtc),
+                    staffMemberId,
+                    SeedNowUtc.AddMinutes(5),
+                    resolutionEventId),
                 CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -730,12 +772,12 @@ public sealed class StaffTenantTerminationIntegrationTests
                     tenantId,
                     StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
                     sourceId,
-                    member.Id,
+                    staffMemberId,
                     WorkspaceApplicationVersion: 1,
                     StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
                         .CompletedRedacted,
-                    sourceId,
-                    SeedNowUtc.AddMinutes(1)),
+                    resolutionIds[sourceId],
+                    SeedNowUtc.AddMinutes(6)),
                 CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -1385,6 +1427,8 @@ public sealed class StaffTenantTerminationIntegrationTests
             clock ?? new TestClock(ExportNowUtc));
         builder.Services.AddSingleton<IIdGenerator, TestIdGenerator>();
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddStaffPersistence();
         return builder.Services.BuildServiceProvider();
     }

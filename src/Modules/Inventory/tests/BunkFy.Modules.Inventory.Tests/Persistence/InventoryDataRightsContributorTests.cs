@@ -10,6 +10,7 @@ using BunkFy.Modules.Inventory.Persistence.Repositories;
 using BunkFy.Modules.Properties.Contracts;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -300,6 +301,83 @@ public sealed class InventoryDataRightsContributorTests
     }
 
     [Fact]
+    public async Task Export_excludes_foreign_same_coordinate_decisions()
+    {
+        const string foreignScopeId = "tenant-b";
+        InMemoryDatabaseRoot root = new();
+        string databaseName = Guid.NewGuid().ToString("N");
+        TestScopeContext scope = new(ScopeId);
+        await using InventoryDbContext dbContext = CreateDbContext(
+            scope,
+            databaseName,
+            root);
+        Guid propertyId = SeedKnownProperty(dbContext);
+        Guid reservationId = Guid.NewGuid();
+        Guid amendmentRequestId = Guid.NewGuid();
+        InventoryAllocation allocation = CreateAllocation(
+            propertyId,
+            reservationId);
+        dbContext.Allocations.Add(allocation);
+        dbContext.AllocationAmendmentDecisions.Add(CreateDecision(
+            amendmentRequestId,
+            allocation,
+            reservationId,
+            Now.AddMinutes(1)));
+        await dbContext.SaveChangesAsync();
+
+        await using (InventoryDbContext foreign = CreateDbContext(
+            new TestScopeContext(foreignScopeId),
+            databaseName,
+            root))
+        {
+            foreign.AllocationAmendmentDecisions.Add(new(
+                new InventoryAllocationAmendmentDecisionRecord(
+                    amendmentRequestId,
+                    foreignScopeId,
+                    allocation.Id,
+                    reservationId,
+                    propertyId,
+                    new string('b', 64),
+                    Confirmed: false,
+                    InventoryAllocationRejectionReason.AllocationConflict,
+                    AllocationVersion: null,
+                    Now.AddMinutes(2))));
+            await foreign.SaveChangesAsync();
+        }
+
+        CollectingSink sink = new();
+        InventoryDataRightsExportContributor contributor =
+            new(dbContext, scope);
+        DataRightsSubjectExportResult result = await contributor.ExportAsync(
+            new(
+                ScopeId,
+                DataRightsCaseType.GuestRights,
+                propertyId,
+                new(
+                    InventoryDataRightsCoordinates.Owner,
+                    InventoryDataRightsCoordinates.AllocationRecordType,
+                    allocation.Id,
+                    allocation.Version)),
+            sink,
+            CancellationToken.None);
+
+        Assert.Equal(DataRightsSubjectExportStatus.Succeeded, result.Status);
+        Assert.Equal(2, result.RecordCount);
+        DataRightsExportRecord exportedDecision = Assert.Single(
+            sink.Records,
+            record => record.RecordType ==
+                InventoryDataRightsExportContributor.AmendmentDecisionRecordType);
+        Assert.Contains(
+            exportedDecision.Fields,
+            field => field.Value.ValueKind == JsonValueKind.String &&
+                field.Value.GetString() == new string('a', 64));
+        Assert.DoesNotContain(
+            exportedDecision.Fields,
+            field => field.Value.ValueKind == JsonValueKind.String &&
+                field.Value.GetString() == new string('b', 64));
+    }
+
+    [Fact]
     public async Task Export_fails_closed_before_writing_when_the_record_limit_is_exceeded()
     {
         TestScopeContext scope = new(ScopeId);
@@ -404,10 +482,20 @@ public sealed class InventoryDataRightsContributorTests
     private static InventoryDbContext CreateDbContext(
         IScopeContext scopeContext)
     {
+        return CreateDbContext(
+            scopeContext,
+            $"inventory-data-rights-{Guid.NewGuid():N}",
+            new InMemoryDatabaseRoot());
+    }
+
+    private static InventoryDbContext CreateDbContext(
+        IScopeContext scopeContext,
+        string databaseName,
+        InMemoryDatabaseRoot root)
+    {
         DbContextOptions<InventoryDbContext> options =
             new DbContextOptionsBuilder<InventoryDbContext>()
-                .UseInMemoryDatabase(
-                    $"inventory-data-rights-{Guid.NewGuid():N}")
+                .UseInMemoryDatabase(databaseName, root)
                 .Options;
         return new(options, scopeContext);
     }

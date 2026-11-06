@@ -12,6 +12,7 @@ internal sealed class CancelRoomRetirementCommandHandler(
     InventoryManagementMutationCoordinator mutations,
     InventoryManagementOperationJournal journal,
     IRoomRetirementRepository retirements,
+    IInventoryAvailabilitySelectionFence selectionFence,
     RoomRetirementCoordinator coordinator,
     InventoryUnitDefinitionPublisher definitions,
     ISystemClock clock)
@@ -41,6 +42,8 @@ internal sealed class CancelRoomRetirementCommandHandler(
                 command.TopologyChangeId,
                 command.ExpectedVersion,
                 normalizedReason);
+        await selectionFence.AcquireAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
         await mutations.AcquireRoomRetirementAsync(
                 command.TopologyChangeId,
                 cancellationToken)
@@ -83,6 +86,9 @@ internal sealed class CancelRoomRetirementCommandHandler(
         {
             return Result.Failure<RoomRetirementDto>(canceled.Error);
         }
+
+        await selectionFence.AdvanceAsync(command.PropertyId, cancellationToken)
+            .ConfigureAwait(false);
 
         await definitions.PublishRoomAsync(
             process.PropertyId,

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogId": "data-rights.personal-data",
-  "catalogVersion": 19,
+  "catalogVersion": 20,
   "module": "data-rights",
   "approvalState": "engineering-default",
   "accessPolicies": [
@@ -474,6 +474,13 @@
           "retentionPolicy": "transient-request"
         },
         {
+          "assembly": "BunkFy.Modules.DataRights.Application",
+          "type": "BunkFy.Modules.DataRights.Application.Queries.GetDataRightsCorrectionExecutionQuery",
+          "member": "ActorId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
           "assembly": "BunkFy.Modules.DataRights.Contracts",
           "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionGateRequest",
           "member": "ExecutingActorId",
@@ -483,7 +490,7 @@
         {
           "assembly": "BunkFy.Modules.DataRights.Contracts",
           "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto",
-          "member": "ExecutedBy",
+          "member": "ClaimedBy",
           "surface": "api-response",
           "retentionPolicy": "transient-response"
         },
@@ -552,12 +559,17 @@
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RequestTenantTerminationCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.DecideTenantTerminationCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.StartTenantTerminationCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.PrepareTenantTerminationExportDownloadCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ConfirmedBy", "surface": "application-query", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RetryTenantTerminationCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RequestTenantTerminationCancellationCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RecoverTenantTerminationCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Ports.TenantTerminationReplayIntent", "member": "RequestedBy", "surface": "persistence" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Ports.TenantTerminationReplayIntent", "member": "ApprovedBy", "surface": "persistence" },
-        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Ports.TenantTerminationReplayIntent", "member": "ExecutingActorId", "surface": "persistence" }
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Ports.TenantTerminationReplayIntent", "member": "ExecutingActorId", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget", "member": "SelectedBy", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.SelectDataRightsRestrictionReleaseTargetCommand", "member": "ActorId", "surface": "application-command", "retentionPolicy": "transient-request" }
       ]
     },
     {
@@ -805,7 +817,8 @@
             "member": "RecordId",
             "surface": "integration-command",
             "retentionPolicy": "transient-request"
-          }
+          },
+          { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "Coordinate", "surface": "integration-command", "retentionPolicy": "transient-request" }
       ]
     },
     {
@@ -1692,7 +1705,46 @@
           "type": "BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionExecutionProof",
           "member": "CompletedAtUtc",
           "surface": "persistence"
-        }
+        },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionContributionRequest", "member": "TargetOwnerOperationId", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionContributionRequest", "member": "TargetOwnerOperationVersion", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "ContractVersion", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "TenantId", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "PropertyId", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "CaseId", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "DeadlineUtc", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "CaseType", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "TargetOwnerOperationId", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionRequest", "member": "TargetOwnerOperationVersion", "surface": "integration-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTarget", "member": "OwnerOperationId", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTarget", "member": "OwnerOperationVersion", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTarget", "member": "SourceCaseId", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTarget", "member": "AppliedAtUtc", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionResult", "member": "ContractVersion", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionResult", "member": "Status", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionResult", "member": "Targets", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionResult", "member": "LimitReached", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionTargetResolutionResult", "member": "OutcomeCode", "surface": "projection-export", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetDto", "member": "OwnerKey", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetDto", "member": "OwnerOperationId", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetDto", "member": "OwnerOperationVersion", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetDto", "member": "SelectedAtUtc", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetCandidateDto", "member": "OwnerOperationId", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetCandidateDto", "member": "OwnerOperationVersion", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetCandidateDto", "member": "SourceCaseId", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetCandidateDto", "member": "AppliedAtUtc", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetListResponse", "member": "CaseVersion", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetListResponse", "member": "Targets", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsRestrictionReleaseTargetListResponse", "member": "LimitReached", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget", "member": "OwnerKey", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget", "member": "OwnerOperationId", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget", "member": "OwnerOperationVersion", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.ValueObjects.DataRightsRestrictionReleaseTarget", "member": "SelectedAtUtc", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.Aggregates.DataRightsCase", "member": "RestrictionTargetingContractVersion", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Domain", "type": "BunkFy.Modules.DataRights.Domain.Aggregates.DataRightsCase", "member": "RestrictionReleaseTarget", "surface": "persistence" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCaseDto", "member": "RestrictionTargetingContractVersion", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCaseDto", "member": "RestrictionReleaseTarget", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCaseDto", "member": "RestrictionExecutionProof", "surface": "api-response", "retentionPolicy": "transient-response" }
       ]
     },
     {
@@ -1845,6 +1897,7 @@
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "ExecutionRevision", "surface": "api-response", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "ApprovalRevision", "surface": "api-response", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "FieldPolicyKey", "surface": "api-response", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "IsCurrentActor", "surface": "api-response", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "StartedAtUtc", "surface": "api-response", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "ExpiresAtUtc", "surface": "api-response", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.DataRightsCorrectionExecutionDetailsDto", "member": "Status", "surface": "api-response", "retentionPolicy": "transient-response" },
@@ -2272,6 +2325,17 @@
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.StartTenantTerminationCommand", "member": "ProcessId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.StartTenantTerminationCommand", "member": "ApprovalEvidence", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.StartTenantTerminationCommand", "member": "ExpectedCaseVersion", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "CaseId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "ProcessId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "ArtifactId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "ExportOperationRevision", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "ExpectedProcessVersion", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "ExpectedArtifactVersion", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "FrozenRevisionSha256", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.ConfirmTenantTerminationExportCommand", "member": "FragmentSetSha256", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.PrepareTenantTerminationExportDownloadCommand", "member": "CaseId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.PrepareTenantTerminationExportDownloadCommand", "member": "ProcessId", "surface": "application-command", "retentionPolicy": "transient-request" },
+        { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.PrepareTenantTerminationExportDownloadCommand", "member": "ArtifactId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RetryTenantTerminationCommand", "member": "ProcessId", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RetryTenantTerminationCommand", "member": "ExpectedProcessVersion", "surface": "application-command", "retentionPolicy": "transient-request" },
         { "assembly": "BunkFy.Modules.DataRights.Application", "type": "BunkFy.Modules.DataRights.Application.Commands.RequestTenantTerminationCancellationCommand", "member": "ProcessId", "surface": "application-command", "retentionPolicy": "transient-request" },
@@ -2333,6 +2397,21 @@
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOperatorStatusDto", "member": "Case", "surface": "application-query", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOperatorStatusDto", "member": "Process", "surface": "application-query", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOperatorStatusDto", "member": "OwnerWorkItems", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOperatorStatusDto", "member": "ExportHandoff", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ArtifactId", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "Status", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ExportOperationRevision", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ArtifactVersion", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "AvailableAtUtc", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ExpiresAtUtc", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "FragmentCount", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "RecordCount", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "FrozenRevisionSha256", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "FragmentSetSha256", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "Confirmed", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ConfirmationRevision", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ConfirmedArtifactVersion", "surface": "application-query", "retentionPolicy": "transient-response" },
+        { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationExportHandoffDto", "member": "ConfirmedAtUtc", "surface": "application-query", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOwnerWorkItemDto", "member": "Id", "surface": "application-query", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOwnerWorkItemDto", "member": "OwnerKey", "surface": "application-query", "retentionPolicy": "transient-response" },
         { "assembly": "BunkFy.Modules.DataRights.Contracts", "type": "BunkFy.Modules.DataRights.Contracts.TenantTerminationOwnerWorkItemDto", "member": "Phase", "surface": "application-query", "retentionPolicy": "transient-response" },

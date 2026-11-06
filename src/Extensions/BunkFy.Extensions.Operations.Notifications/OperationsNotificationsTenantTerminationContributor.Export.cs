@@ -45,17 +45,21 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
         WorkspaceTerminationFenceSnapshot? selectedFence =
             await this.ReadFenceAsync(cancellationToken)
                 .ConfigureAwait(false);
+        DateTimeOffset observedAtUtc = this.GetUtcNowBeforeDeadline(
+            request.Contribution.DeadlineUtc);
         if (!Matches(request, selectedFence))
         {
             return Retry(
                 "operations-notifications.termination.export-fence-unavailable",
-                clock.UtcNow);
+                observedAtUtc);
         }
 
         NotificationScopeSnapshot selected = await lifecycle.GetSnapshotAsync(
                 tenantId!,
                 cancellationToken)
             .ConfigureAwait(false);
+        observedAtUtc = this.GetUtcNowBeforeDeadline(
+            request.Contribution.DeadlineUtc);
         if (!TrySelectExportRevision(
                 selected,
                 out long selectedRevision,
@@ -65,13 +69,13 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
             {
                 NotificationScopeStatus.Closed => Failed(
                     "operations-notifications.termination.export-scope-closed",
-                    clock.UtcNow),
+                    observedAtUtc),
                 NotificationScopeStatus.ScopeUnavailable => Retry(
                     "operations-notifications.termination.export-scope-unavailable",
-                    clock.UtcNow),
+                    observedAtUtc),
                 _ => Failed(
                     "operations-notifications.termination.export-scope-invalid",
-                    clock.UtcNow)
+                    observedAtUtc)
             };
         }
 
@@ -84,25 +88,31 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
                     sink,
                     cancellationToken)
                 .ConfigureAwait(false);
+        observedAtUtc = this.GetUtcNowBeforeDeadline(
+            request.Contribution.DeadlineUtc);
         if (export.Status == ScopeExportStatus.RetryRequired)
         {
             return Retry(
                 export.Code,
-                clock.UtcNow);
+                observedAtUtc);
         }
 
         if (export.Status != ScopeExportStatus.Completed)
         {
-            return Failed(export.Code, clock.UtcNow);
+            return Failed(export.Code, observedAtUtc);
         }
 
         NotificationScopeSnapshot resulting = await lifecycle.GetSnapshotAsync(
                 tenantId!,
                 cancellationToken)
             .ConfigureAwait(false);
+        _ = this.GetUtcNowBeforeDeadline(
+            request.Contribution.DeadlineUtc);
         WorkspaceTerminationFenceSnapshot? resultingFence =
             await this.ReadFenceAsync(cancellationToken)
                 .ConfigureAwait(false);
+        DateTimeOffset completedAtUtc = this.GetUtcNowBeforeDeadline(
+            request.Contribution.DeadlineUtc);
         bool scopeStable = isMissing
             ? resulting is
             {
@@ -119,14 +129,6 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
         {
             return Retry(
                 "operations-notifications.termination.export-revision-changed",
-                clock.UtcNow);
-        }
-
-        DateTimeOffset completedAtUtc = clock.UtcNow;
-        if (completedAtUtc > request.Contribution.DeadlineUtc)
-        {
-            return Retry(
-                "operations-notifications.termination.export-deadline-expired",
                 completedAtUtc);
         }
 
@@ -151,11 +153,7 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
             string? cursor = null;
             while (true)
             {
-                if (clock.UtcNow > deadlineUtc)
-                {
-                    return ScopeExportResult.Retry(
-                        "operations-notifications.termination.export-deadline-expired");
-                }
+                _ = this.GetUtcNowBeforeDeadline(deadlineUtc);
 
                 NotificationScopeExportPage page = await lifecycle.ExportAsync(
                         new NotificationScopeExportRequest(
@@ -166,6 +164,7 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
                             NotificationScopeLifecycleLimits.MaximumPageSize),
                         cancellationToken)
                     .ConfigureAwait(false);
+                _ = this.GetUtcNowBeforeDeadline(deadlineUtc);
                 if (page is null)
                 {
                     return ScopeExportResult.Failed(
@@ -201,6 +200,7 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
                                 Map(store, record),
                                 cancellationToken)
                             .ConfigureAwait(false);
+                        _ = this.GetUtcNowBeforeDeadline(deadlineUtc);
                         count = checked(count + 1);
                         if (count >
                             TenantTerminationExportContract
@@ -231,6 +231,7 @@ internal sealed partial class OperationsNotificationsTenantTerminationContributo
             }
         }
 
+        _ = this.GetUtcNowBeforeDeadline(deadlineUtc);
         return ScopeExportResult.Success(count);
     }
 

@@ -73,6 +73,7 @@ internal sealed class DataRightsRestoreCoordinator(
                     checkpoint.StorageMacSha256),
                 pageSize,
                 cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!HasValidPage(page, checkpoint.Cursor, trusted.Cursor, pageSize))
             {
                 return Result.Failure<Unit>(
@@ -144,6 +145,7 @@ internal sealed class DataRightsRestoreCoordinator(
             new(deltas.Count);
         foreach (DataRightsLedgerDelta delta in deltas)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Result<DataRightsProcessingLedgerEntry> restored =
                 DataRightsProcessingLedgerEntry.Restore(delta.Ledger);
             if (restored.IsFailure)
@@ -159,6 +161,7 @@ internal sealed class DataRightsRestoreCoordinator(
                     delta,
                     ledger,
                     cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (ownerResult.IsFailure)
             {
                 return Result.Failure<
@@ -254,6 +257,7 @@ internal sealed class DataRightsRestoreCoordinator(
                     ledger.ResultingRecordVersion,
                     ledger.CompletedAtUtc),
                 cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         return HasMatchingProof(
                 result,
                 ledger,
@@ -335,6 +339,7 @@ internal sealed class DataRightsRestoreCoordinator(
             await prerequisite.ExecuteAsync(
                 request,
                 cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!HasValidPrerequisiteResult(prerequisiteResult))
         {
             return Result.Failure<DataRightsAnonymisationRestoreResult>(
@@ -361,6 +366,7 @@ internal sealed class DataRightsRestoreCoordinator(
             await contributor.RestoreAsync(
                 request,
                 cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         return HasMatchingProof(
                 result,
                 ledger,

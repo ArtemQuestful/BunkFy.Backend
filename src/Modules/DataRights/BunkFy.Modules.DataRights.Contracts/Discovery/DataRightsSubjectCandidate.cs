@@ -17,7 +17,8 @@ public enum DataRightsSubjectDiscoveryStatus
 {
     Unknown = 0,
     Succeeded = 1,
-    ScopeUnavailable = 2
+    ScopeUnavailable = 2,
+    RetryRequired = 3
 }
 
 public sealed record DataRightsSubjectDiscoveryResult(
@@ -30,6 +31,9 @@ public sealed record DataRightsSubjectDiscoveryResult(
 
     public static DataRightsSubjectDiscoveryResult ScopeUnavailable() =>
         new(DataRightsSubjectDiscoveryStatus.ScopeUnavailable, []);
+
+    public static DataRightsSubjectDiscoveryResult RetryRequired() =>
+        new(DataRightsSubjectDiscoveryStatus.RetryRequired, []);
 }
 
 public sealed record DataRightsSubjectDiscoveryResponse(

@@ -18,6 +18,7 @@ internal sealed class DataRightsTenantTerminationReplayStartupValidator(
         TenantTerminationReplayStoreReadiness readiness =
             await store.CheckReadinessAsync(cancellationToken)
                 .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!readiness.IsReady)
         {
             throw new TenantTerminationReplayStoreException(

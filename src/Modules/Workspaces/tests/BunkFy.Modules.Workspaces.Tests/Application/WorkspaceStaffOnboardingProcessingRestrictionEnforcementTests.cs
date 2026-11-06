@@ -407,6 +407,10 @@ public sealed class
                 scopedProfiles: null!),
             operationalAdmission ??
                 WorkspaceOperationalAdmissionTestSupport.Allowed(TenantId),
+            new WorkspaceOrganizationMembershipObserver(
+                [new ActiveOrganizationLifecycle()],
+                [new ActiveMembershipReader()],
+                new TestClock()),
             new TestClock(),
             new TestIds(),
             NullLogger<WorkspaceStaffOnboardingProcessor>.Instance);
@@ -574,7 +578,7 @@ public sealed class
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse>
+        public Task<WorkspaceStaffOnboardingSummaryListResponse>
             ListActionableAsync(
                 PageRequest page,
                 CancellationToken cancellationToken) =>
@@ -653,7 +657,7 @@ public sealed class
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse>
+        public Task<WorkspaceStaffOnboardingSummaryListResponse>
             ListActionableAsync(
                 PageRequest page,
                 CancellationToken cancellationToken) =>
@@ -812,6 +816,47 @@ public sealed class
             return ValueTask.FromResult<AuthMemberAdmission?>(
                 new AuthMemberAdmission("verified@example.test"));
         }
+    }
+
+    private sealed class ActiveOrganizationLifecycle
+        : IOrganizationScopeLifecycle
+    {
+        public Task<OrganizationScopeSnapshot> GetSnapshotAsync(
+            Guid organizationId,
+            CancellationToken cancellationToken) => Task.FromResult(
+            new OrganizationScopeSnapshot(OrganizationScopeStatus.Open, 1));
+
+        public Task<OrganizationScopeExportPage> ExportAsync(
+            OrganizationScopeExportRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<OrganizationScopeDestroyResult> DestroyBatchAsync(
+            OrganizationScopeDestroyRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class ActiveMembershipReader : IOrganizationMembershipReader
+    {
+        private readonly Guid membershipId = Guid.NewGuid();
+
+        public Task<OrganizationMembershipSnapshotDto?> FindAsync(
+            Guid organizationId,
+            string subjectId,
+            CancellationToken cancellationToken = default) => Task.FromResult<
+                OrganizationMembershipSnapshotDto?>(new(
+                    organizationId,
+                    OrganizationStatus.Active,
+                    new OrganizationMembershipDto(
+                        this.membershipId,
+                        organizationId,
+                        subjectId,
+                        OrganizationMembershipRole.Member,
+                        OrganizationMembershipStatus.Active,
+                        Version: 1,
+                        Now,
+                        Now)));
     }
 
     private sealed class EnrollmentTokenInspector(

@@ -9,16 +9,15 @@ using BunkFy.Modules.DataRights.Domain.Models;
 using BunkFy.Modules.DataRights.Domain.ValueObjects;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
-using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 
 internal sealed class CreateDataRightsCaseCommandHandler(
     IDataRightsCaseRepository cases,
+    DataRightsCaseMutationCoordinator mutations,
     IDataRightsResponseDeadlinePolicy responseDeadlinePolicy,
     IScopeContext scopeContext,
-    ISystemClock clock,
-    IIdGenerator ids) : ICommandHandler<CreateDataRightsCaseCommand, DataRightsCaseDto>
+    ISystemClock clock) : ICommandHandler<CreateDataRightsCaseCommand, DataRightsCaseDto>
 {
     public async Task<Result<DataRightsCaseDto>> HandleAsync(
         CreateDataRightsCaseCommand command,
@@ -27,6 +26,12 @@ internal sealed class CreateDataRightsCaseCommandHandler(
         if (!scopeContext.IsEnabled || string.IsNullOrWhiteSpace(scopeContext.ScopeId))
         {
             return Result.Failure<DataRightsCaseDto>(DataRightsApplicationErrors.TenantRequired);
+        }
+
+        if (command.OperationId == Guid.Empty)
+        {
+            return Result.Failure<DataRightsCaseDto>(
+                DataRightsApplicationErrors.CreationOperationInvalid);
         }
 
         Result<DataRightsCaseRequest> request = DataRightsCaseRequest.Create(
@@ -38,6 +43,17 @@ internal sealed class CreateDataRightsCaseCommandHandler(
         if (request.IsFailure)
         {
             return Result.Failure<DataRightsCaseDto>(request.Error);
+        }
+
+        DataRightsCase? existing = await mutations.AcquireCreationAsync(
+            command.OperationId,
+            cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
+        {
+            return existing.MatchesCreation(request.Value, command.ActorId)
+                ? Result.Success(existing.ToDto())
+                : Result.Failure<DataRightsCaseDto>(
+                    DataRightsApplicationErrors.CreationOperationConflict);
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
@@ -58,7 +74,7 @@ internal sealed class CreateDataRightsCaseCommandHandler(
         }
 
         Result<DataRightsCase> created = DataRightsCase.Create(
-            ids.NewId(),
+            command.OperationId,
             scopeContext.ScopeId,
             request.Value,
             command.ActorId,

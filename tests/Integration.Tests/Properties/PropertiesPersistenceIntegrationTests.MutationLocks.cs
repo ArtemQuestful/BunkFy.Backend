@@ -53,6 +53,11 @@ public sealed partial class PropertiesPersistenceIntegrationTests
                 .GetRequiredService<IRoomRepository>()
                 .AddAsync(room, CancellationToken.None)
                 .ConfigureAwait(false);
+            await AppendCreatedTimeZoneOperationAsync(
+                    seedScope.ServiceProvider,
+                    property,
+                    "system:properties-operation-lock-test")
+                .ConfigureAwait(false);
             await propertiesDb.SaveChangesAsync().ConfigureAwait(false);
         }
 

@@ -127,6 +127,7 @@ public sealed class GuestProcessingRestriction : ScopedAggregateRoot<Guid>
         }
 
         if (releaseCaseId == Guid.Empty ||
+            releaseCaseId == this.ApplyCaseId ||
             releaseApprovalRevision < 1 ||
             releaseSelectedGuestVersion < 1)
         {

@@ -19,6 +19,7 @@ internal sealed class ReservationOperationOutcomeHandler(
     IReservationSourceLinkRepository sourceLinks,
     IObservationReceiptRepository receipts,
     IChangeProposalRepository proposals,
+    PendingChangeProposalSuperseder proposalSuperseder,
     IIngestionRetentionPolicy retentionPolicy,
     IOutboxWriterRegistry outboxWriters,
     ISystemClock clock,
@@ -183,6 +184,12 @@ internal sealed class ReservationOperationOutcomeHandler(
         ChangeProposal? existing = await proposals.FindByReceiptAsync(receipt.Id, cancellationToken).ConfigureAwait(false);
         if (existing is null)
         {
+            await proposalSuperseder.SupersedeAsync(
+                receipt.ConnectionId,
+                receipt.ExternalId,
+                link.ReservationId.Value,
+                receipt.Id,
+                cancellationToken).ConfigureAwait(false);
             string diff = JsonSerializer.Serialize(new ReservationProposalDiff(
                 link.LastAppliedOperationalBaseline,
                 dispatch.NormalizedSnapshot!));

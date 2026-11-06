@@ -6,6 +6,7 @@ public sealed record RetentionScheduleHealthDto(
     RetentionTargetScopeKind TargetScopeKind,
     Guid? PropertyId,
     int ExecutionPolicyVersion,
+    long EvidenceVersion,
     RetentionExecutionStatus Status,
     Guid? LastRunId,
     DateTimeOffset? LastStartedAtUtc,
@@ -17,7 +18,8 @@ public sealed record RetentionScheduleHealthDto(
     int? LastAffectedCount,
     int? LastRemainingCount,
     string? OutcomeCode,
-    DateTimeOffset? HoldReviewDueAtUtc);
+    DateTimeOffset? HoldReviewDueAtUtc,
+    RetentionRunRetryReceiptDto? Retry);
 
 public sealed record RetentionScheduleHealthSummaryDto(
     int Total,

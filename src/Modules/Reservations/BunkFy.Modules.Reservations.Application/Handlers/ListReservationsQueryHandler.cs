@@ -13,11 +13,15 @@ internal sealed class ListReservationsQueryHandler(IReservationRepository reserv
     public async Task<Result<ReservationListResponse>> HandleAsync(
         ListReservationsQuery query,
         CancellationToken cancellationToken) =>
-        Result.Success(await reservations.ListAsync(
+        Result.Success(await reservations.ListWindowAsync(
             query.PropertyId,
             query.Statuses,
             query.Search,
             query.Order,
             PageRequest.Normalize(query.Page, query.PageSize),
+            query.OverlapsFrom,
+            query.OverlapsTo,
+            query.View,
+            query.OperatingDate,
             cancellationToken).ConfigureAwait(false));
 }

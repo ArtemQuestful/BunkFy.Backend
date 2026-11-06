@@ -1,5 +1,7 @@
 namespace BunkFy.Modules.DataRights.Tests.Api;
 
+using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.Reflection;
 using BunkFy.Modules.DataRights.AdminApi;
 using BunkFy.Modules.DataRights.AdminCli;
@@ -11,8 +13,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using System.CommandLine;
-using System.CommandLine.Parsing;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -44,6 +44,8 @@ public sealed class TenantTerminationAdminFrontDoorTests
             "/api/admin/data-rights/tenant-termination/requests",
             "/api/admin/data-rights/tenant-termination/{caseId:guid}",
             "/api/admin/data-rights/tenant-termination/{caseId:guid}/decision",
+            "/api/admin/data-rights/tenant-termination/{caseId:guid}/processes/{processId:guid}/export/{artifactId:guid}/confirm",
+            "/api/admin/data-rights/tenant-termination/{caseId:guid}/processes/{processId:guid}/export/{artifactId:guid}/download",
             "/api/admin/data-rights/tenant-termination/{caseId:guid}/processes/{processId:guid}/recover",
             "/api/admin/data-rights/tenant-termination/{caseId:guid}/processes/{processId:guid}/start"
         ],
@@ -70,6 +72,26 @@ public sealed class TenantTerminationAdminFrontDoorTests
             context.Response.Headers.CacheControl);
         Assert.Equal("no-cache", context.Response.Headers.Pragma);
         Assert.Equal("0", context.Response.Headers.Expires);
+    }
+
+    [Fact]
+    public void Admin_api_download_adds_attachment_security_headers()
+    {
+        Type endpoints = typeof(DataRightsAdminApiModule).Assembly.GetType(
+            "BunkFy.Modules.DataRights.AdminApi.TenantTerminationAdminEndpoints",
+            throwOnError: true)!;
+        MethodInfo policy = endpoints.GetMethod(
+            "ApplyDownloadResponseHeaders",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        DefaultHttpContext context = new();
+
+        policy.Invoke(null, [context.Response]);
+
+        Assert.Equal("nosniff", context.Response.Headers.XContentTypeOptions);
+        Assert.Equal("sandbox", context.Response.Headers.ContentSecurityPolicy);
+        Assert.Equal(
+            "same-origin",
+            context.Response.Headers["Cross-Origin-Resource-Policy"]);
     }
 
     [Fact]
@@ -107,6 +129,8 @@ public sealed class TenantTerminationAdminFrontDoorTests
             ["data-rights", "tenant-termination", "approve", "--case-id", commonId, "--expected-version", "3", "--yes", .. evidence],
             ["data-rights", "tenant-termination", "deny", "--case-id", commonId, "--expected-version", "3", "--reason", "RequestInvalid", "--yes"],
             ["data-rights", "tenant-termination", "start", "--case-id", commonId, "--process-id", processId, "--expected-case-version", "4", "--yes", .. evidence],
+            ["data-rights", "tenant-termination", "download-export", "--case-id", commonId, "--process-id", processId, "--artifact-id", commonId, "--output-file", "/tmp/tenant-export.zip", "--yes"],
+            ["data-rights", "tenant-termination", "confirm-export", "--case-id", commonId, "--process-id", processId, "--artifact-id", commonId, "--export-operation-revision", "5", "--expected-process-version", "6", "--expected-artifact-version", "3", "--frozen-revision-sha256", new string('b', 64), "--fragment-set-sha256", new string('c', 64), "--yes"],
             ["data-rights", "tenant-termination", "retry", "--process-id", processId, "--expected-process-version", "5", "--yes"],
             ["data-rights", "tenant-termination", "cancel", "--process-id", processId, "--expected-process-version", "5", "--yes"],
             ["data-rights", "tenant-termination", "recover", "--case-id", commonId, "--process-id", processId, "--expected-case-version", "4", "--expected-process-version", "5", "--yes", .. evidence]

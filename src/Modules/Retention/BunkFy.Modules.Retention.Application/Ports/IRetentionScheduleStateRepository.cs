@@ -16,6 +16,19 @@ public interface IRetentionScheduleStateRepository
 
 public interface IRetentionScheduleHealthReader
 {
+    Task<RetentionScheduleStateSnapshot?> GetAsync(
+        string tenantId,
+        string ownerKey,
+        string dataClassKey,
+        Guid? propertyId,
+        int executionPolicyVersion,
+        CancellationToken cancellationToken);
+
+    Task<RetentionScheduleStateSnapshot?> GetByLastExecutionIdAsync(
+        string tenantId,
+        Guid lastExecutionId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<RetentionScheduleStateSnapshot>> ListAsync(
         CancellationToken cancellationToken);
 }
@@ -25,6 +38,7 @@ public sealed record RetentionScheduleStateSnapshot(
     string DataClassKey,
     Guid? PropertyId,
     int ExecutionPolicyVersion,
+    long Version,
     int State,
     Guid LastExecutionId,
     DateTimeOffset LastStartedAtUtc,
@@ -35,4 +49,16 @@ public sealed record RetentionScheduleStateSnapshot(
     int? LastAffectedCount,
     int? LastRemainingCount,
     string? OutcomeCode,
-    DateTimeOffset? HoldReviewDueAtUtc);
+    DateTimeOffset? HoldReviewDueAtUtc,
+    RetentionRunRetryRequestSnapshot? Retry);
+
+public sealed record RetentionRunRetryRequestSnapshot(
+    Guid RequestId,
+    Guid RunId,
+    long EvidenceVersion,
+    int Attempt,
+    int State,
+    DateTimeOffset RequestedAtUtc,
+    DateTimeOffset? ScheduledAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    string? FailureCode);

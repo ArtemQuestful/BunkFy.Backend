@@ -61,9 +61,12 @@ public sealed class ReservationDispatch : ScopedAggregateRoot<Guid>
             connectionId == Guid.Empty || propertyId == Guid.Empty || string.IsNullOrWhiteSpace(scopeId) ||
             triggerKind is not (ReservationDispatchTriggerKind.Observation or ReservationDispatchTriggerKind.Proposal) ||
             kind is not (ReservationDispatchKind.Create or ReservationDispatchKind.ChangeGuestDetails or ReservationDispatchKind.Cancel or ReservationDispatchKind.Amend) ||
+            reservationId == Guid.Empty ||
+            (kind == ReservationDispatchKind.Create && (reservationId.HasValue || expectedDetailsRevision.HasValue)) ||
             (kind != ReservationDispatchKind.Create && (!reservationId.HasValue || expectedDetailsRevision <= 0)) ||
             sourceRevision?.Trim().Length > SourceRevisionMaxLength || sourceSequence < 0 ||
-            string.IsNullOrWhiteSpace(normalizedSnapshot) || normalizedSnapshot.Length > NormalizedSnapshotMaxLength)
+            string.IsNullOrWhiteSpace(normalizedSnapshot) || normalizedSnapshot.Length > NormalizedSnapshotMaxLength ||
+            nowUtc == default)
         {
             return Result.Failure<ReservationDispatch>(IngestionDomainErrors.ReservationDispatchInvalid);
         }
@@ -105,7 +108,15 @@ public sealed class ReservationDispatch : ScopedAggregateRoot<Guid>
         }
 
         string? normalizedError = string.IsNullOrWhiteSpace(errorCode) ? null : errorCode.Trim();
-        if (normalizedError?.Length > ErrorCodeMaxLength)
+        bool applied = state is ReservationDispatchState.Accepted or
+            ReservationDispatchState.Applied or ReservationDispatchState.Unchanged;
+        if (normalizedError?.Length > ErrorCodeMaxLength || reservationId == Guid.Empty ||
+            detailsRevision <= 0 || reservationVersion <= 0 || nowUtc < this.CreatedAtUtc ||
+            (this.ReservationId.HasValue && reservationId.HasValue &&
+                this.ReservationId != reservationId) ||
+            (!this.ReservationId.HasValue && reservationId.HasValue && !applied) ||
+            (applied && (!reservationId.HasValue || !detailsRevision.HasValue ||
+                !reservationVersion.HasValue || normalizedError is not null)))
         {
             return Result.Failure(IngestionDomainErrors.ReservationDispatchInvalid);
         }
@@ -134,7 +145,7 @@ public sealed class ReservationDispatch : ScopedAggregateRoot<Guid>
         DateTimeOffset nowUtc)
     {
         if (this.Kind != ReservationDispatchKind.Cancel || this.State != ReservationDispatchState.Accepted ||
-            reservationVersion <= 0)
+            reservationVersion <= 0 || !this.CompletedAtUtc.HasValue || nowUtc < this.CompletedAtUtc)
         {
             return Result.Failure(IngestionDomainErrors.ReservationDispatchNotPending);
         }
@@ -177,7 +188,7 @@ public sealed class ReservationDispatch : ScopedAggregateRoot<Guid>
         if (this.State is ReservationDispatchState.Pending or
                 ReservationDispatchState.Accepted ||
             this.AnonymisedAtUtc.HasValue ||
-            nowUtc == default)
+            !this.CompletedAtUtc.HasValue || nowUtc < this.CompletedAtUtc)
         {
             return Result.Failure(
                 IngestionDomainErrors.AnonymisationRecordNotReducible);

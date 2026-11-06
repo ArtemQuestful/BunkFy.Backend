@@ -100,10 +100,49 @@ internal sealed class
                     .RetentionExecutionCoordinateInvalid);
         }
         else if (
-            execution.State ==
-                ReservationRetentionExecutionState.Running &&
+            (execution.State is
+                ReservationRetentionExecutionState.Running or
+                ReservationRetentionExecutionState.Failed) &&
             request.Attempt > execution.Attempt)
         {
+            Result retryable = execution.ValidateRetry(
+                request.Attempt,
+                request.StartedAtUtc,
+                request.DeadlineUtc);
+            if (retryable.IsFailure)
+            {
+                return Result.Failure<
+                    ReservationRetentionExecutionStart>(
+                    retryable.Error);
+            }
+
+            if (execution.State ==
+                ReservationRetentionExecutionState.Failed)
+            {
+                ReservationRetentionSweepCheckpoint? checkpoint =
+                    await executions.GetCheckpointAsync(
+                        ReservationRetentionCoordinates.DataClassKey,
+                        request.ExecutionPolicyVersion,
+                        cancellationToken).ConfigureAwait(false);
+                if (checkpoint is null)
+                {
+                    return Result.Failure<
+                        ReservationRetentionExecutionStart>(
+                        ReservationsApplicationErrors
+                            .RetentionProofConflict);
+                }
+
+                Result prepared = checkpoint.PrepareRetry(
+                    execution,
+                    request.StartedAtUtc);
+                if (prepared.IsFailure)
+                {
+                    return Result.Failure<
+                        ReservationRetentionExecutionStart>(
+                        prepared.Error);
+                }
+            }
+
             Result retried = execution.BeginRetry(
                 request.Attempt,
                 request.StartedAtUtc,
@@ -116,8 +155,9 @@ internal sealed class
             }
         }
         else if (
-            execution.State ==
-                ReservationRetentionExecutionState.Running &&
+            (execution.State is
+                ReservationRetentionExecutionState.Running or
+                ReservationRetentionExecutionState.Failed) &&
             request.Attempt != execution.Attempt)
         {
             return Result.Failure<

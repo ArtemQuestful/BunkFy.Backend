@@ -21,6 +21,9 @@ public sealed class WorkspacesDbContext(
 
     public DbSet<WorkspaceStaffOnboarding> StaffOnboardingApplications =>
         this.Set<WorkspaceStaffOnboarding>();
+    public DbSet<WorkspaceStaffOnboardingRetentionExecution>
+        StaffOnboardingRetentionExecutions =>
+        this.Set<WorkspaceStaffOnboardingRetentionExecution>();
     public DbSet<WorkspaceStaffIdentityAnchorSweepCheckpoint>
         StaffIdentityAnchorSweepCheckpoints =>
         this.Set<WorkspaceStaffIdentityAnchorSweepCheckpoint>();
@@ -33,6 +36,9 @@ public sealed class WorkspacesDbContext(
     public DbSet<WorkspaceStaffOnboardingCorrectionReceipt>
         StaffOnboardingCorrectionReceipts =>
         this.Set<WorkspaceStaffOnboardingCorrectionReceipt>();
+    public DbSet<WorkspaceStaffOnboardingRecoveryReceipt>
+        StaffOnboardingRecoveryReceipts =>
+        this.Set<WorkspaceStaffOnboardingRecoveryReceipt>();
     public DbSet<WorkspaceStaffOnboardingProcessingRestriction>
         StaffOnboardingProcessingRestrictions =>
         this.Set<WorkspaceStaffOnboardingProcessingRestriction>();
@@ -121,6 +127,9 @@ public sealed class WorkspacesDbContext(
             .Any(entry =>
                 entry.State is
                     EntityState.Modified or EntityState.Deleted);
+        bool recoveryMutationRequested = this.ChangeTracker
+            .Entries<WorkspaceStaffOnboardingRecoveryReceipt>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted);
         bool restrictionMutationRequested = this.ChangeTracker
             .Entries<
                 WorkspaceStaffOnboardingProcessingRestrictionReceipt>()
@@ -154,6 +163,7 @@ public sealed class WorkspacesDbContext(
         if (retentionMutationRequested ||
             historicalNoProvisionMutationRequested ||
             correctionMutationRequested ||
+            recoveryMutationRequested ||
             restrictionMutationRequested ||
             anonymisationMutationRequested ||
             restoreMutationRequested ||
@@ -412,7 +422,8 @@ public sealed class WorkspacesDbContext(
         if (!TenantIds.TryNormalize(tenantId, out string? canonicalTenantId) ||
             operationId == Guid.Empty ||
             attemptedStage is <= WorkspaceTenantDestroyStage.Unknown or
-                >= WorkspaceTenantDestroyStage.Completed ||
+                > WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts or
+                WorkspaceTenantDestroyStage.Completed ||
             !this.scopeContext.IsEnabled ||
             !string.Equals(
                 this.scopeContext.ScopeId,

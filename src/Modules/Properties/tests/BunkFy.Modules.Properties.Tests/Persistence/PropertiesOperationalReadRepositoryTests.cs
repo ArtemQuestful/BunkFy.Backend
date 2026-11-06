@@ -1,5 +1,6 @@
 namespace BunkFy.Modules.Properties.Tests.Persistence;
 
+using BunkFy.Modules.Properties.Application.Ports;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Properties.Domain.Aggregates;
 using BunkFy.Modules.Properties.Domain.ValueObjects;
@@ -43,11 +44,11 @@ public sealed class PropertiesOperationalReadRepositoryTests
         await dbContext.SaveChangesAsync();
         dbContext.ChangeTracker.Clear();
 
-        PropertiesReadRepository repository = new(dbContext);
-        PropertyListResponse propertyFirst = await repository.ListPropertiesAsync(
+        PropertiesReadRepository repository = CreateRepository(dbContext);
+        PropertyReadPage propertyFirst = await repository.ListPropertiesAsync(
             new PageRequest(1, 2),
             CancellationToken.None);
-        PropertyListResponse propertyLast = await repository.ListPropertiesAsync(
+        PropertyReadPage propertyLast = await repository.ListPropertiesAsync(
             new PageRequest(2, 2),
             CancellationToken.None);
         RoomListResponse roomFirst = await repository.ListRoomsAsync(
@@ -83,6 +84,40 @@ public sealed class PropertiesOperationalReadRepositoryTests
         Assert.False(bedLast.HasMore);
     }
 
+    [Fact]
+    public async Task Raw_property_reads_preserve_legacy_time_zone_without_classifying_it()
+    {
+        await using PropertiesDbContext dbContext = CreateDbContext();
+        Property property = CreateProperty("Legacy hostel", "legacy-hostel");
+        typeof(Property).GetProperty(nameof(Property.TimeZoneId))!
+            .SetValue(
+                property,
+                PropertyTimeZoneId.RestorePersisted("UTC"));
+        Assert.True(property.Retire(
+            property.Version,
+            Guid.NewGuid(),
+            Now.AddMinutes(1),
+            "user:owner").IsSuccess);
+        dbContext.Properties.Add(property);
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+        PropertiesReadRepository repository = CreateRepository(dbContext);
+
+        Property detail = Assert.IsType<Property>(
+            await repository.GetPropertyAsync(
+                property.Id,
+                CancellationToken.None));
+        PropertyListReadModel listed = Assert.Single(
+            (await repository.ListPropertiesAsync(
+                    new PageRequest(1, 20),
+                    CancellationToken.None))
+                .Properties);
+
+        Assert.Equal("UTC", detail.TimeZoneId.Value);
+        Assert.Equal(detail.TimeZoneId.Value, listed.TimeZoneId);
+        Assert.Equal(PropertyState.Retired, listed.Status);
+    }
+
     private static Property CreateProperty(string name, string code) =>
         Property.Create(
             Guid.NewGuid(),
@@ -111,6 +146,9 @@ public sealed class PropertiesOperationalReadRepositoryTests
             .Options;
         return new PropertiesDbContext(options, new TestScopeContext());
     }
+
+    private static PropertiesReadRepository CreateRepository(
+        PropertiesDbContext dbContext) => new(dbContext);
 
     private sealed class TestScopeContext : IScopeContext
     {

@@ -9,10 +9,14 @@ using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
 using BunkFy.Modules.Guests.Domain.Aggregates;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.TimeZones;
 
 internal sealed class GuestRetentionEligibilityEvaluator(
     CountryPolicyRegistry countryPolicies)
 {
+    private static readonly TimeZoneCatalog TimeZones =
+        TimeZoneCatalog.Default;
+
     public GuestRetentionEligibilityResult Evaluate(
         GuestRetentionCandidateSnapshot snapshot,
         DateTimeOffset evaluatedAtUtc)
@@ -24,6 +28,7 @@ internal sealed class GuestRetentionEligibilityEvaluator(
             snapshot.GuestVersion < 1 ||
             snapshot.ProjectionOrdinal < 1 ||
             snapshot.OriginPropertyId == Guid.Empty ||
+            snapshot.AssociationOverflowed ||
             snapshot.GuestState is not (
                 GuestProfileState.Active or GuestProfileState.Archived))
         {
@@ -72,18 +77,41 @@ internal sealed class GuestRetentionEligibilityEvaluator(
 
         Dictionary<Guid, GuestRetentionPropertySnapshot> properties =
             snapshot.Properties.ToDictionary(property => property.PropertyId);
+        Dictionary<Guid, string> canonicalTimeZones = [];
+        foreach (Guid propertyId in propertyIds)
+        {
+            if (!properties.TryGetValue(
+                    propertyId,
+                    out GuestRetentionPropertySnapshot? property))
+            {
+                return Failed(
+                    GuestRetentionEligibilityCode.ProjectionUnavailable);
+            }
+
+            if (!TryGetCanonicalTimeZone(
+                    property,
+                    out string? canonicalTimeZoneId))
+            {
+                return Failed(
+                    GuestRetentionEligibilityCode.TimeZoneUnavailable);
+            }
+
+            canonicalTimeZones[propertyId] = canonicalTimeZoneId;
+        }
+
         Dictionary<Guid, DateTimeOffset> propertyTriggers = [];
         foreach (GuestRetentionStaySnapshot stay in terminalStays)
         {
-            if (!properties.TryGetValue(
+            if (!canonicalTimeZones.TryGetValue(
                     stay.PropertyId,
-                    out GuestRetentionPropertySnapshot? property) ||
-                !TryTrigger(
-                    property.TimeZoneId,
+                    out string? canonicalTimeZoneId) ||
+                !TimeZoneCalendarMath.TryGetStartOfNextLocalDay(
                     stay.LatestTerminalBusinessDate!.Value,
+                    canonicalTimeZoneId,
                     out DateTimeOffset trigger))
             {
-                return Failed(GuestRetentionEligibilityCode.ProjectionUnavailable);
+                return Failed(
+                    GuestRetentionEligibilityCode.TimeZoneUnavailable);
             }
 
             propertyTriggers[stay.PropertyId] = trigger;
@@ -157,6 +185,7 @@ internal sealed class GuestRetentionEligibilityEvaluator(
                 propertyIds.Length,
                 latestDeadline,
                 PolicySetSha256: null,
+                TimeZoneCatalogVersion: null,
                 HoldReviewDueAtUtc: null);
         }
 
@@ -168,6 +197,7 @@ internal sealed class GuestRetentionEligibilityEvaluator(
                 propertyIds.Length,
                 latestDeadline,
                 PolicySetSha256: null,
+                TimeZoneCatalogVersion: null,
                 snapshot.ActiveHolds.Min(hold => hold.PlacedAtUtc));
         }
 
@@ -177,6 +207,7 @@ internal sealed class GuestRetentionEligibilityEvaluator(
             propertyIds.Length,
             latestDeadline,
             HashLines(policyLines),
+            TimeZones.CatalogVersion,
             HoldReviewDueAtUtc: null);
     }
 
@@ -195,43 +226,62 @@ internal sealed class GuestRetentionEligibilityEvaluator(
         property.PolicySourceVersion > 0 &&
         !string.IsNullOrWhiteSpace(property.TimeZoneId);
 
-    private static bool TryTrigger(
-        string? timeZoneId,
-        DateOnly terminalDate,
-        out DateTimeOffset trigger)
+    private static bool TryGetCanonicalTimeZone(
+        GuestRetentionPropertySnapshot property,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+        out string? canonicalTimeZoneId)
     {
-        trigger = default;
-        if (string.IsNullOrWhiteSpace(timeZoneId))
+        canonicalTimeZoneId = null;
+        if (property.TimeZoneEvidenceSource is not (
+                GuestPropertyTimeZoneEvidenceSource.Generic or
+                GuestPropertyTimeZoneEvidenceSource.Dedicated or
+                GuestPropertyTimeZoneEvidenceSource.Rebuild) ||
+            property.TimeZoneEvidenceSourceVersion < 1 ||
+            property.TopologySourceVersion < 1 ||
+            property.TimeZoneEvidenceSourceVersion >
+                property.TopologySourceVersion ||
+            string.IsNullOrWhiteSpace(property.TimeZoneId) ||
+            string.IsNullOrWhiteSpace(property.CanonicalTimeZoneId) ||
+            !string.Equals(
+                property.TimeZoneCatalogVersion,
+                TimeZones.CatalogVersion,
+                StringComparison.Ordinal) ||
+            !TimeZones.TryResolve(
+                property.TimeZoneId,
+                out TimeZoneCatalogResolution? resolution))
         {
             return false;
         }
 
-        try
-        {
-            TimeZoneInfo timeZone =
-                TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
-            DateTime nextLocalMidnight = terminalDate
-                .AddDays(1)
-                .ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
-            trigger = new(
-                TimeZoneInfo.ConvertTimeToUtc(
-                    nextLocalMidnight,
-                    timeZone),
-                TimeSpan.Zero);
-            return true;
-        }
-        catch (ArgumentException)
+        bool canonicalEvidence =
+            property.TimeZoneStatus == PropertyTimeZoneStatus.Canonical &&
+            resolution.Kind == TimeZoneCatalogResolutionKind.Canonical &&
+            string.Equals(
+                property.TimeZoneId,
+                property.CanonicalTimeZoneId,
+                StringComparison.Ordinal) &&
+            string.Equals(
+                property.CanonicalTimeZoneId,
+                resolution.CanonicalTimeZoneId,
+                StringComparison.Ordinal);
+        bool retiredAliasEvidence =
+            property.Status == PropertyStatus.Retired &&
+            property.TimeZoneStatus == PropertyTimeZoneStatus.Alias &&
+            resolution.Kind == TimeZoneCatalogResolutionKind.Alias &&
+            property.TimeZoneEvidenceSource is
+                GuestPropertyTimeZoneEvidenceSource.Generic or
+                GuestPropertyTimeZoneEvidenceSource.Rebuild &&
+            string.Equals(
+                property.CanonicalTimeZoneId,
+                resolution.CanonicalTimeZoneId,
+                StringComparison.Ordinal);
+        if (!canonicalEvidence && !retiredAliasEvidence)
         {
             return false;
         }
-        catch (TimeZoneNotFoundException)
-        {
-            return false;
-        }
-        catch (InvalidTimeZoneException)
-        {
-            return false;
-        }
+
+        canonicalTimeZoneId = resolution.CanonicalTimeZoneId;
+        return true;
     }
 
     private static CountryPolicyBinding ToBinding(
@@ -262,6 +312,14 @@ internal sealed class GuestRetentionEligibilityEvaluator(
             property.TopologySourceVersion.ToString(CultureInfo.InvariantCulture),
             property.PolicySourceVersion.ToString(CultureInfo.InvariantCulture),
             property.TimeZoneId,
+            property.CanonicalTimeZoneId,
+            ((int)property.TimeZoneStatus).ToString(
+                CultureInfo.InvariantCulture),
+            property.TimeZoneCatalogVersion,
+            ((int)property.TimeZoneEvidenceSource).ToString(
+                CultureInfo.InvariantCulture),
+            property.TimeZoneEvidenceSourceVersion.ToString(
+                CultureInfo.InvariantCulture),
             evidence.OperatingCountryCode,
             evidence.PolicyId,
             evidence.PolicyVersion.ToString(CultureInfo.InvariantCulture),
@@ -292,6 +350,7 @@ internal sealed class GuestRetentionEligibilityEvaluator(
             AffectedPropertyCount: 0,
             RetentionDeadlineUtc: null,
             PolicySetSha256: null,
+            TimeZoneCatalogVersion: null,
             HoldReviewDueAtUtc: null);
 
     private static GuestRetentionEligibilityResult Failed(
@@ -302,6 +361,7 @@ internal sealed class GuestRetentionEligibilityEvaluator(
             AffectedPropertyCount: 0,
             RetentionDeadlineUtc: null,
             PolicySetSha256: null,
+            TimeZoneCatalogVersion: null,
             HoldReviewDueAtUtc: null);
 }
 
@@ -311,6 +371,7 @@ internal sealed record GuestRetentionEligibilityResult(
     int AffectedPropertyCount,
     DateTimeOffset? RetentionDeadlineUtc,
     string? PolicySetSha256,
+    string? TimeZoneCatalogVersion,
     DateTimeOffset? HoldReviewDueAtUtc);
 
 internal enum GuestRetentionEligibilityStatus
@@ -329,5 +390,6 @@ internal enum GuestRetentionEligibilityCode
     PeriodNotElapsed = 3,
     ActiveDataHold = 4,
     ProjectionUnavailable = 5,
-    PolicyUnavailable = 6
+    PolicyUnavailable = 6,
+    TimeZoneUnavailable = 7
 }

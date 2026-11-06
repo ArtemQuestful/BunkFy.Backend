@@ -2,15 +2,23 @@ namespace BunkFy.Modules.Ingestion.Persistence.Repositories;
 
 using BunkFy.Modules.Ingestion.Application.Ports;
 using BunkFy.Modules.Properties.Contracts;
+using Gma.Framework.Persistence.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 internal sealed class IngestionPropertyProjectionRepository(IngestionDbContext dbContext)
     : IIngestionPropertyProjectionRepository, IRetentionFenceRepository
 {
+    private const string PropertyProjectionLockPrefix =
+        "bunkfy:ingestion:property-projection:";
+
     public async Task ApplyTopologyAsync(
         IngestionPropertyTopologyWriteModel property,
         CancellationToken cancellationToken)
     {
+        await this.AcquirePropertyProjectionLockAsync(
+            property.ScopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         IngestionPropertyProjection projection = await this.GetOrCreateAsync(
             property.ScopeId,
             property.PropertyId,
@@ -23,6 +31,10 @@ internal sealed class IngestionPropertyProjectionRepository(IngestionDbContext d
         IngestionPropertyPolicyWriteModel property,
         CancellationToken cancellationToken)
     {
+        await this.AcquirePropertyProjectionLockAsync(
+            property.ScopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         IngestionPropertyProjection projection = await this.GetOrCreateAsync(
             property.ScopeId,
             property.PropertyId,
@@ -35,6 +47,10 @@ internal sealed class IngestionPropertyProjectionRepository(IngestionDbContext d
         IngestionPropertyProjectionWriteModel property,
         CancellationToken cancellationToken)
     {
+        await this.AcquirePropertyProjectionLockAsync(
+            property.ScopeId,
+            property.PropertyId,
+            cancellationToken).ConfigureAwait(false);
         IngestionPropertyProjection projection = await this.GetOrCreateAsync(
             property.ScopeId,
             property.PropertyId,
@@ -102,6 +118,37 @@ internal sealed class IngestionPropertyProjectionRepository(IngestionDbContext d
         }
 
         return projection;
+    }
+
+    private async Task AcquirePropertyProjectionLockAsync(
+        string tenantId,
+        Guid propertyId,
+        CancellationToken cancellationToken)
+    {
+        string scopeId = tenantId?.Trim() ?? string.Empty;
+        if (scopeId.Length == 0 ||
+            !string.Equals(scopeId, dbContext.CurrentScopeId, StringComparison.Ordinal) ||
+            propertyId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                "An Ingestion property projection lock requires valid scoped coordinates.");
+        }
+
+        if (!dbContext.Database.IsRelational())
+        {
+            return;
+        }
+
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                "An Ingestion property projection lock requires an active database transaction.");
+        }
+
+        await EfTransactionKeyLock.AcquireAsync(
+            dbContext,
+            PropertyProjectionLockPrefix + scopeId + ':' + propertyId.ToString("N"),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static PropertyGovernancePolicyBinding? MapPolicy(IngestionPropertyPolicyBinding? policy) =>

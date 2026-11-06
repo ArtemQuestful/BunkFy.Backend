@@ -92,7 +92,7 @@ public sealed class RequestDataRightsExportCommandHandlerTests
     }
 
     [Fact]
-    public async Task Equivalent_retry_after_failure_enqueues_a_new_generation_run()
+    public async Task Creation_replay_after_failure_does_not_enqueue_retry()
     {
         DataRightsCase dataRightsCase = ApprovedStaffCase();
         RecordingArtifactRepository artifacts = new();
@@ -128,14 +128,11 @@ public sealed class RequestDataRightsExportCommandHandlerTests
 
         Assert.True(retry.IsSuccess);
         Assert.Equal(DataRightsExportArtifactStatus.Failed, retry.Value.Status);
-        Assert.Equal(2, outbox.Events.Count);
-        Assert.NotEqual(
-            ((DataRightsExportArtifactRequestedIntegrationEvent)outbox.Events[0]).EventId,
-            ((DataRightsExportArtifactRequestedIntegrationEvent)outbox.Events[1]).EventId);
+        Assert.Single(outbox.Events);
     }
 
     [Fact]
-    public async Task Failed_export_can_be_retried_with_a_fresh_client_idempotency_key()
+    public async Task Fresh_creation_key_cannot_bypass_explicit_retry_endpoint()
     {
         DataRightsCase dataRightsCase = ApprovedStaffCase();
         RecordingArtifactRepository artifacts = new();
@@ -169,9 +166,10 @@ public sealed class RequestDataRightsExportCommandHandlerTests
             firstCommand with { IdempotencyKey = Guid.NewGuid() },
             CancellationToken.None);
 
-        Assert.True(retry.IsSuccess);
-        Assert.Equal(artifact.Id, retry.Value.Id);
-        Assert.Equal(2, outbox.Events.Count);
+        Assert.Equal(
+            DataRightsApplicationErrors.ExportArtifactAlreadyRequested.Code,
+            retry.Error.Code);
+        Assert.Single(outbox.Events);
     }
 
     [Fact]

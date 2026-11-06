@@ -30,7 +30,8 @@ public sealed class ListRetentionScheduleHealthQueryHandlerTests
                 overdue.DataClassKey,
                 propertyId,
                 overdue.ExecutionPolicyVersion,
-                (int)RetentionExecutionState.Failed,
+                Version: 4,
+                State: (int)RetentionExecutionState.Failed,
                 runId,
                 Now.AddHours(-2),
                 Now.AddHours(-2).AddMinutes(1),
@@ -40,7 +41,8 @@ public sealed class ListRetentionScheduleHealthQueryHandlerTests
                 0,
                 10,
                 "owner-timeout",
-                null)),
+                HoldReviewDueAtUtc: null,
+                Retry: null)),
             [
                 new Contributor(neverRun),
                 new Contributor(overdue)
@@ -67,7 +69,7 @@ public sealed class ListRetentionScheduleHealthQueryHandlerTests
         Assert.Equal(1, firstPage.Value.PageSize);
         Assert.True(firstPage.Value.HasMore);
         Assert.Equal(
-            new RetentionScheduleHealthSummaryDto(2, 0, 0, 1),
+            new RetentionScheduleHealthSummaryDto(2, 0, 0, 2),
             firstPage.Value.Summary);
 
         Assert.True(secondPage.IsSuccess);
@@ -160,9 +162,35 @@ public sealed class ListRetentionScheduleHealthQueryHandlerTests
         params RetentionScheduleStateSnapshot[] snapshots)
         : IRetentionScheduleHealthReader
     {
+        public Task<RetentionScheduleStateSnapshot?> GetAsync(
+            string tenantId,
+            string ownerKey,
+            string dataClassKey,
+            Guid? propertyId,
+            int executionPolicyVersion,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(snapshots.SingleOrDefault(snapshot =>
+                string.Equals(
+                    snapshot.OwnerKey,
+                    ownerKey,
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    snapshot.DataClassKey,
+                    dataClassKey,
+                    StringComparison.Ordinal) &&
+                snapshot.PropertyId == propertyId &&
+                snapshot.ExecutionPolicyVersion == executionPolicyVersion));
+
         public Task<IReadOnlyList<RetentionScheduleStateSnapshot>> ListAsync(
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<RetentionScheduleStateSnapshot>>(snapshots);
+
+        public Task<RetentionScheduleStateSnapshot?> GetByLastExecutionIdAsync(
+            string tenantId,
+            Guid lastExecutionId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(snapshots.SingleOrDefault(snapshot =>
+                snapshot.LastExecutionId == lastExecutionId));
     }
 
     private sealed class TestClock : ISystemClock

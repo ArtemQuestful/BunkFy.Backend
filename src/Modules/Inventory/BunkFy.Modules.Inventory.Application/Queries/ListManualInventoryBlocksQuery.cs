@@ -8,5 +8,7 @@ public sealed record ListManualInventoryBlocksQuery(
     Guid? InventoryUnitId,
     bool IncludeReleased,
     int Page,
-    int PageSize)
+    int PageSize,
+    DateOnly? OverlapsFrom = null,
+    DateOnly? OverlapsTo = null)
     : IQuery<ManualInventoryBlockListResponse>;

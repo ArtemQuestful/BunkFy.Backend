@@ -99,25 +99,40 @@ public sealed class ReservationProcessingRestrictionCommandHandlerTests
             restrictions.Restrictions[0];
         ReservationProcessingRestriction secondRestriction =
             restrictions.Restrictions[1];
+        ReleaseReservationProcessingRestrictionCommand firstReleaseCommand =
+            CreateReleaseCommand(
+                reservation,
+                firstRestriction,
+                expectedProjectionRevision: 2);
+        ReleaseReservationProcessingRestrictionCommand secondReleaseCommand =
+            CreateReleaseCommand(
+                reservation,
+                secondRestriction,
+                expectedProjectionRevision: 3) with
+            {
+                LegacyUnboundTarget = true
+            };
         Result<ReservationProcessingRestrictionReceiptDto> firstRelease =
             await release.HandleAsync(
-                CreateReleaseCommand(
-                    reservation,
-                    firstRestriction,
-                    expectedProjectionRevision: 2),
+                firstReleaseCommand,
                 CancellationToken.None);
         Result<ReservationProcessingRestrictionReceiptDto> secondRelease =
             await release.HandleAsync(
-                CreateReleaseCommand(
-                    reservation,
-                    secondRestriction,
-                    expectedProjectionRevision: 3),
+                secondReleaseCommand,
+                CancellationToken.None);
+        Result<ReservationProcessingRestrictionReceiptDto> changedActorReplay =
+            await release.HandleAsync(
+                firstReleaseCommand with { ActorId = "user:other-operator" },
                 CancellationToken.None);
 
         Assert.True(firstRelease.IsSuccess, firstRelease.Error.Code);
         Assert.True(firstRelease.Value.EffectiveRestricted);
         Assert.True(secondRelease.IsSuccess, secondRelease.Error.Code);
         Assert.False(secondRelease.Value.EffectiveRestricted);
+        Assert.Equal(
+            ReservationsApplicationErrors
+                .ProcessingRestrictionIdempotencyConflict,
+            changedActorReplay.Error);
         Assert.False(projection.IsRestricted);
         Assert.Equal(0, projection.ActiveRestrictionCount);
         Assert.Equal(4, projection.Revision);
@@ -130,6 +145,22 @@ public sealed class ReservationProcessingRestrictionCommandHandlerTests
                 ReservationProcessingRestrictionAction.Release
             ],
             restrictions.Receipts.Select(receipt => receipt.Action));
+        Assert.Collection(
+            approval.Requests.Skip(2),
+            request =>
+            {
+                Assert.Equal(
+                    firstReleaseCommand.RestrictionId,
+                    request.RestrictionTargetOwnerOperationId);
+                Assert.Equal(
+                    firstReleaseCommand.ExpectedRestrictionVersion,
+                    request.RestrictionTargetOwnerOperationVersion);
+            },
+            request =>
+            {
+                Assert.Null(request.RestrictionTargetOwnerOperationId);
+                Assert.Null(request.RestrictionTargetOwnerOperationVersion);
+            });
         Assert.DoesNotContain(
             typeof(ReservationProcessingRestrictionReceipt).GetProperties(),
             property => property.Name is
@@ -164,6 +195,10 @@ public sealed class ReservationProcessingRestrictionCommandHandlerTests
             await handler.HandleAsync(command, CancellationToken.None);
         Result<ReservationProcessingRestrictionReceiptDto> replay =
             await handler.HandleAsync(command, CancellationToken.None);
+        Result<ReservationProcessingRestrictionReceiptDto> changedActorReplay =
+            await handler.HandleAsync(
+                command with { ActorId = "user:other-operator" },
+                CancellationToken.None);
         Result<ReservationProcessingRestrictionReceiptDto> conflict =
             await handler.HandleAsync(
                 command with { CaseId = Guid.NewGuid() },
@@ -180,6 +215,10 @@ public sealed class ReservationProcessingRestrictionCommandHandlerTests
         Assert.True(applied.IsSuccess, applied.Error.Code);
         Assert.True(replay.IsSuccess, replay.Error.Code);
         Assert.Equal(applied.Value.ReceiptId, replay.Value.ReceiptId);
+        Assert.Equal(
+            ReservationsApplicationErrors
+                .ProcessingRestrictionIdempotencyConflict,
+            changedActorReplay.Error);
         Assert.Equal(
             ReservationsApplicationErrors.ProcessingRestrictionIdempotencyConflict,
             conflict.Error);
@@ -456,6 +495,25 @@ public sealed class ReservationProcessingRestrictionCommandHandlerTests
                 restriction =>
                     restriction.PropertyId == propertyId &&
                     restriction.Id == restrictionId));
+
+        public Task<IReadOnlyCollection<ReservationProcessingRestriction>>
+            ListActiveAsync(
+                Guid propertyId,
+                Guid reservationId,
+                PageRequest pageRequest,
+                CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ReservationProcessingRestriction>>(
+                this.Restrictions
+                    .Where(restriction =>
+                        restriction.PropertyId == propertyId &&
+                        restriction.ReservationId == reservationId &&
+                        restriction.Status ==
+                            ReservationProcessingRestrictionStatus.Active)
+                    .OrderBy(restriction => restriction.AppliedAtUtc)
+                    .ThenBy(restriction => restriction.Id)
+                    .Skip(pageRequest.SkipCount)
+                    .Take(pageRequest.PageSize)
+                    .ToArray());
 
         public Task AddAsync(
             ReservationProcessingRestriction restriction,

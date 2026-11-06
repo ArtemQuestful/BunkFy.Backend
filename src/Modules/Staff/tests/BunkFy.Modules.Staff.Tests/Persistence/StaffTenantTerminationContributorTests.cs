@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Staff.Tests.Persistence;
 
 using System.Text.Json;
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Staff.Application.Ports;
 using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Staff.Domain.Aggregates;
@@ -17,6 +18,7 @@ using Gma.Framework.Messaging.Infrastructure;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -24,6 +26,8 @@ public sealed class StaffTenantTerminationContributorTests
 {
     private const string TenantId =
         "10000000-0000-0000-0000-000000000001";
+    private const string ForeignTenantId =
+        "10000000-0000-0000-0000-000000000002";
     private const string Digest =
         "0123456789abcdef0123456789abcdef" +
         "0123456789abcdef0123456789abcdef";
@@ -384,7 +388,7 @@ public sealed class StaffTenantTerminationContributorTests
             TenantId,
             PropertyId,
             "Closed property",
-            BunkFy.Modules.Properties.Contracts.PropertyStatus.Active,
+            PropertyStatus.Active,
             version: 1));
         StaffOperationalAdmissionException closedFailure =
             await Assert.ThrowsAsync<StaffOperationalAdmissionException>(
@@ -409,6 +413,83 @@ public sealed class StaffTenantTerminationContributorTests
         Assert.Equal(
             StaffOperationalAdmissionFailure.Restricted,
             messageFailure.Failure);
+    }
+
+    [Fact]
+    public async Task Destroy_preserves_foreign_property_projection_with_same_id()
+    {
+        InMemoryDatabaseRoot root = new();
+        string databaseName = $"staff-destroy-scope-{Guid.NewGuid():N}";
+        MutableFenceReader fences = new();
+
+        await using (StaffDbContext tenantA = CreateContext(
+            fences,
+            root,
+            databaseName,
+            TenantId))
+        {
+            SeedGraph(tenantA);
+            await tenantA.SaveChangesAsync();
+            StaffDataHold hold = await tenantA.DataHolds.SingleAsync();
+            Assert.True(hold.Release(
+                hold.Version,
+                "user:privacy-controller",
+                Now.AddMinutes(8)).IsSuccess);
+            await tenantA.SaveChangesAsync();
+            tenantA.ChangeTracker.Clear();
+
+            await using (StaffDbContext tenantB = CreateContext(
+                new MutableFenceReader(),
+                root,
+                databaseName,
+                ForeignTenantId))
+            {
+                tenantB.PropertyProjections.Add(new StaffPropertyProjection(
+                    ForeignTenantId,
+                    PropertyId,
+                    "Foreign property",
+                    PropertyStatus.Active,
+                    version: 1));
+                await tenantB.SaveChangesAsync();
+            }
+
+            fences.Current = FrozenFence();
+            StaffTenantTerminationContributor contributor = new(
+                tenantA,
+                new TestScopeContext(),
+                new TestClock(Now.AddHours(1)),
+                fences);
+            TenantTerminationContributionResult result =
+                await contributor.ExecuteAsync(
+                    DestroyRequest(),
+                    CancellationToken.None);
+            int attempts = 1;
+            while (result.Status ==
+                    TenantTerminationContributionStatus.RetryRequired &&
+                attempts < 100)
+            {
+                result = await contributor.ExecuteAsync(
+                    DestroyRequest(),
+                    CancellationToken.None);
+                attempts++;
+            }
+
+            Assert.Equal(
+                TenantTerminationContributionStatus.Completed,
+                result.Status);
+            Assert.Empty(await tenantA.PropertyProjections.ToArrayAsync());
+        }
+
+        await using StaffDbContext verifyTenantB = CreateContext(
+            new MutableFenceReader(),
+            root,
+            databaseName,
+            ForeignTenantId);
+        StaffPropertyProjection foreignProjection =
+            await verifyTenantB.PropertyProjections.SingleAsync();
+        Assert.Equal(PropertyId, foreignProjection.Id);
+        Assert.Equal(ForeignTenantId, foreignProjection.ScopeId);
+        Assert.Equal("Foreign property", foreignProjection.Name);
     }
 
     [Fact]
@@ -919,6 +1000,22 @@ public sealed class StaffTenantTerminationContributorTests
             fences);
     }
 
+    private static StaffDbContext CreateContext(
+        IWorkspaceTerminationFenceReader fences,
+        InMemoryDatabaseRoot root,
+        string databaseName,
+        string scopeId)
+    {
+        DbContextOptions<StaffDbContext> options =
+            new DbContextOptionsBuilder<StaffDbContext>()
+                .UseInMemoryDatabase(databaseName, root)
+                .Options;
+        return new StaffDbContext(
+            options,
+            new TestScopeContext(scopeId),
+            fences);
+    }
+
     private sealed class CollectingSink : IDataRightsExportSink
     {
         public List<DataRightsExportRecord> Records { get; } = [];
@@ -954,10 +1051,11 @@ public sealed class StaffTenantTerminationContributorTests
             throw new InvalidOperationException("Fence store unavailable.");
     }
 
-    private sealed class TestScopeContext : IScopeContext
+    private sealed class TestScopeContext(string scopeId = TenantId)
+        : IScopeContext
     {
         public bool IsEnabled => true;
-        public string ScopeId => TenantId;
+        public string ScopeId { get; } = scopeId;
     }
 
     private sealed class TestClock(DateTimeOffset? utcNow = null) : ISystemClock

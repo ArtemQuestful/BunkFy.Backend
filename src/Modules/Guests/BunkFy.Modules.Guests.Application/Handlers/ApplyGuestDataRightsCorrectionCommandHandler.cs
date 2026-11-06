@@ -133,7 +133,8 @@ internal sealed class ApplyGuestDataRightsCorrectionCommandHandler(
             command.ExpectedVersion,
             requested.Value.ActorId,
             eventId,
-            nowUtc);
+            nowUtc,
+            requested.Value.LanguageTags);
         if (updated.IsFailure)
         {
             return Result.Failure<GuestDataRightsCorrectionReceiptDto>(updated.Error);
@@ -211,7 +212,8 @@ internal sealed class ApplyGuestDataRightsCorrectionCommandHandler(
         command.PreferredLanguageTag,
         command.Notes,
         command.ActorId,
-        nowUtc);
+        nowUtc,
+        command.LanguageTags);
 
     private static DateTimeOffset ToPersistencePrecision(DateTimeOffset value)
     {

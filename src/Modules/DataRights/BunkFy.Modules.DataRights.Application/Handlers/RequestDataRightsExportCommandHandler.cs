@@ -64,48 +64,7 @@ internal sealed class RequestDataRightsExportCommandHandler(
                     DataRightsApplicationErrors.ExportArtifactAlreadyRequested);
             }
 
-            if (byCase.State == DataRightsExportArtifactState.Failed &&
-                nowUtc < byCase.ExpiresAtUtc)
-            {
-                if (!IsEligible(dataRightsCase, command, subjects))
-                {
-                    return Result.Failure<DataRightsExportArtifactDto>(
-                        DataRightsApplicationErrors.ExportNotEligible);
-                }
-
-                if (!byCase.Matches(
-                        command.IdempotencyKey,
-                        command.CaseId,
-                        decisionRevision,
-                        selectionSha256))
-                {
-                    DataRightsExportArtifact? idempotencyCollision =
-                        await artifacts.GetByIdempotencyKeyAsync(
-                            command.IdempotencyKey,
-                            cancellationToken).ConfigureAwait(false);
-                    if (idempotencyCollision is not null &&
-                        idempotencyCollision.Id != byCase.Id)
-                    {
-                        return Result.Failure<DataRightsExportArtifactDto>(
-                            DataRightsApplicationErrors.ExportArtifactAlreadyRequested);
-                    }
-                }
-
-                await this.EnqueueRequestedAsync(
-                    byCase,
-                    command.Scope.CaseType,
-                    nowUtc,
-                    cancellationToken).ConfigureAwait(false);
-                await audit.RecordAsync(
-                    DataRightsExportAuditFacts.Create(
-                        byCase,
-                        DataRightsExportAuditAction.GenerationRequested,
-                        command.ActorId,
-                        "retry-requested",
-                        nowUtc),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            else if (!byCase.Matches(
+            if (!byCase.Matches(
                 command.IdempotencyKey,
                 command.CaseId,
                 decisionRevision,
@@ -127,7 +86,11 @@ internal sealed class RequestDataRightsExportCommandHandler(
                 DataRightsApplicationErrors.ExportArtifactAlreadyRequested);
         }
 
-        if (!IsEligible(dataRightsCase, command, subjects))
+        if (!DataRightsExportGenerationCase.IsEligible(
+                dataRightsCase,
+                command.Scope,
+                command.ExpectedVersion,
+                subjects))
         {
             return Result.Failure<DataRightsExportArtifactDto>(
                 DataRightsApplicationErrors.ExportNotEligible);
@@ -200,22 +163,6 @@ internal sealed class RequestDataRightsExportCommandHandler(
                 artifact.ExpiresAtUtc),
             cancellationToken).ConfigureAwait(false);
     }
-
-    private static bool IsEligible(
-        DataRightsCase dataRightsCase,
-        RequestDataRightsExportCommand command,
-        DataRightsSubjectCoordinate[] subjects) =>
-        dataRightsCase.Version == command.ExpectedVersion &&
-        dataRightsCase.Status == DataRightsCaseState.Approved &&
-        dataRightsCase.Decision == DataRightsCaseDecision.Approved &&
-        dataRightsCase.DecisionReason ==
-            DataRightsCaseDecisionReason.RequestValidated &&
-        dataRightsCase.RequestedOperations ==
-            DataRightsCaseOperation.AccessExport &&
-        dataRightsCase.DecisionRevision is > 0 &&
-        dataRightsCase.Kind == (DataRightsCaseKind)command.Scope.CaseType &&
-        dataRightsCase.PropertyId == command.Scope.PropertyId &&
-        subjects.Length is > 0 and <= DataRightsCase.MaxSelectedSubjects;
 
     internal static DataRightsSubjectCoordinate[] ToCoordinates(
         DataRightsCase dataRightsCase) =>

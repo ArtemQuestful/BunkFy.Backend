@@ -24,14 +24,20 @@ public sealed class WorkspaceTenantTerminationContributorTests
         new(2026, 7, 31, 7, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public void Catalog_v15_with_personal_data_v15_has_one_manifest_identity()
+    public void Catalog_v18_has_one_immutable_manifest_identity()
     {
-        Assert.Equal(15, WorkspacesTenantTerminationMetadata.CatalogVersion);
+        Assert.Equal(18, WorkspacesTenantTerminationMetadata.CatalogVersion);
         Assert.Equal(
-            15,
+            18,
             WorkspacesTenantTerminationMetadata.PersonalDataCatalogVersion);
         Assert.Equal(
-            "fad13bd461804b84b0021d633053517f8b52f338d0858fc0d5f99b39046a7bd4",
+            "42aa9dfcd930dcda5762f29de60f38b6b6f2db2409747f6c3cddce9065439657",
+            WorkspacesTenantTerminationMetadata.CatalogSha256);
+        Assert.NotEqual(
+            "1bcd7fe166bf42633894f6259969941ee98ad58725f3d0d38911ccc2c90005db",
+            WorkspacesTenantTerminationMetadata.CatalogSha256);
+        Assert.NotEqual(
+            "94f1ba98e62e97f9617af8e3a6abcac5520e9b087d2a0e9cc567513562e65b57",
             WorkspacesTenantTerminationMetadata.CatalogSha256);
         Assert.NotEqual(
             "29475cb08300f9bbee923231b2059dc0de55b64875bfb21d32be64c18728b301",

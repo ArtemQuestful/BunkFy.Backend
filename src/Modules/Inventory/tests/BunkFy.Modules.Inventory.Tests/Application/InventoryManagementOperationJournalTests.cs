@@ -27,8 +27,27 @@ public sealed class InventoryManagementOperationJournalTests
         InventoryManagementOperationJournal journal = new(repository);
         Guid operationId = Guid.NewGuid();
         ManualInventoryBlock block = CreateBlock();
-        ManualInventoryBlockCreationResult creation = new(
+        ManualInventoryBlockGroup group = ManualInventoryBlockGroup.Create(
             block.BlockGroupId,
+            block.ScopeId,
+            PropertyId,
+            ManualInventoryBlockGroupTargetKind.Unit,
+            null,
+            null,
+            null,
+            block.InventoryUnitId,
+            block.Arrival,
+            block.Departure,
+            block.Reason,
+            new string('a', 64),
+            new string('b', 64),
+            ManualInventoryBlockGroup.CurrentMembershipDigestVersion,
+            1,
+            null,
+            Now,
+            "user:operator").Value;
+        ManualInventoryBlockCreationResult creation = new(
+            group,
             [block]);
         string fingerprint = new('a', 64);
 

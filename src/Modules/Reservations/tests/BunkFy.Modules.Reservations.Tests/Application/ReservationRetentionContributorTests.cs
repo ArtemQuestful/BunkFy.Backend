@@ -166,18 +166,65 @@ public sealed class ReservationRetentionContributorTests
             result.OutcomeCode);
     }
 
+    [Fact]
+    public async Task Attempt_and_utc_microsecond_completion_are_exact()
+    {
+        ReservationRetentionPolicyFixture policy =
+            ReservationRetentionTestData.CreatePolicy();
+        FakeDispatcher dispatcher = new(
+            initialAffectedCount: 0,
+            new ReservationRetentionMutationResult(
+                ReservationRetentionMutationStatus.Applied));
+        DateTimeOffset clockValue =
+            ReservationRetentionTestData.Now
+                .ToOffset(TimeSpan.FromHours(2))
+                .AddTicks(7);
+        ReservationRetentionContributor contributor =
+            CreateContributor(
+                dispatcher,
+                new(new(
+                    [ReservationRetentionTestData.Snapshot(
+                        policy.Binding)],
+                    ReachedEnd: true)),
+                new(),
+                policy,
+                clockValue);
+
+        RetentionContributionResult result =
+            await contributor.ExecuteAsync(
+                Request(attempt: 2),
+                CancellationToken.None);
+
+        ApplyReservationRetentionCommand applied =
+            Assert.IsType<ApplyReservationRetentionCommand>(
+                dispatcher.AppliedCommand);
+        CompleteReservationRetentionExecutionCommand completed =
+            Assert.IsType<
+                CompleteReservationRetentionExecutionCommand>(
+                dispatcher.CompletedCommand);
+        Assert.Equal(2, applied.Attempt);
+        Assert.Equal(2, completed.Attempt);
+        Assert.Equal(
+            ReservationRetentionTestData.Now,
+            completed.CompletedAtUtc);
+        Assert.Equal(TimeSpan.Zero, completed.CompletedAtUtc.Offset);
+        Assert.Equal(completed.CompletedAtUtc, result.CompletedAtUtc);
+    }
+
     private static ReservationRetentionContributor CreateContributor(
         FakeDispatcher dispatcher,
         FakeCandidateRepository repository,
         ReservationRetentionOptions options,
-        ReservationRetentionPolicyFixture policy) =>
+        ReservationRetentionPolicyFixture policy,
+        DateTimeOffset? nowUtc = null) =>
         new(
             dispatcher,
             repository,
             new ReservationRetentionEligibilityEvaluator(
                 policy.Registry),
             Options.Create(options),
-            new FakeClock());
+            new FakeClock(
+                nowUtc ?? ReservationRetentionTestData.Now));
 
     private static RetentionContributionRequest Request(
         int attempt = 1) =>
@@ -193,10 +240,10 @@ public sealed class ReservationRetentionContributorTests
             ReservationRetentionTestData.Now.AddMinutes(-1),
             ReservationRetentionTestData.Now.AddMinutes(10));
 
-    private sealed class FakeClock : ISystemClock
+    private sealed class FakeClock(DateTimeOffset nowUtc)
+        : ISystemClock
     {
-        public DateTimeOffset UtcNow =>
-            ReservationRetentionTestData.Now;
+        public DateTimeOffset UtcNow => nowUtc;
     }
 
     private sealed class FakeCandidateRepository(
@@ -225,6 +272,7 @@ public sealed class ReservationRetentionContributorTests
             mutations = new(mutationResults);
 
         public int ApplyCount { get; private set; }
+        public object? AppliedCommand { get; private set; }
         public object? CompletedCommand { get; private set; }
         private int AppliedCount { get; set; }
 
@@ -240,8 +288,8 @@ public sealed class ReservationRetentionContributorTests
                         StartingProjectionOrdinal: 0,
                         AffectedCount: initialAffectedCount,
                         CompletedResult: null),
-                ApplyReservationRetentionCommand =>
-                    this.NextMutation(),
+                ApplyReservationRetentionCommand applied =>
+                    this.NextMutation(applied),
                 CompleteReservationRetentionExecutionCommand completed =>
                     this.Complete(completed),
                 _ => throw new NotSupportedException(
@@ -256,9 +304,11 @@ public sealed class ReservationRetentionContributorTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        private ReservationRetentionMutationResult NextMutation()
+        private ReservationRetentionMutationResult NextMutation(
+            ApplyReservationRetentionCommand command)
         {
             this.ApplyCount++;
+            this.AppliedCommand = command;
             ReservationRetentionMutationResult result =
                 this.mutations.Dequeue();
             if (result.Status ==

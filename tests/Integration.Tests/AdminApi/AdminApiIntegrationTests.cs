@@ -75,6 +75,27 @@ public sealed class AdminApiIntegrationTests
             .ConfigureAwait(false);
         Assert.Equal(HttpStatusCode.OK, admitted.StatusCode);
 
+        // Control uses the same real persisted global Auth session and database.
+        // Binding its token scope to a selected tenant blocks the owner before
+        // the administrator's RBAC policy can decide authority for that tenant.
+        await using (AdminApiTestApplication tenantClaimControl = new(
+                         "PostgreSql", postgreSql.GetConnectionString(),
+                         AuthTestContainers.GetNatsConnectionString(nats),
+                         useActiveSessionAdmission: true,
+                         requireTenantClaimMatch: true))
+        {
+            using HttpClient controlClient = tenantClaimControl.CreateClient();
+            controlClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", ownerToken);
+            controlClient.DefaultRequestHeaders.Add("X-Tenant-Id", "tenant-not-auth-scope");
+            using HttpResponseMessage scopeRejected = await controlClient.GetAsync(
+                "/api/admin/workspaces/access-bootstrap").ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.Forbidden, scopeRejected.StatusCode);
+            Assert.Contains("Admin.TenantClaimMismatch",
+                await scopeRejected.Content.ReadAsStringAsync().ConfigureAwait(false),
+                StringComparison.Ordinal);
+        }
+
         using HttpResponseMessage revoke = await ownerClient.PostAsJsonAsync(
             $"/api/admin/auth/members/{ownerId:D}/revoke-sessions",
             new { confirmed = true }).ConfigureAwait(false);
