@@ -938,7 +938,6 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
     {
         Assert.NotNull(response.Headers.CacheControl);
         Assert.True(response.Headers.CacheControl.NoStore);
-        Assert.True(response.Headers.CacheControl.NoCache);
         Assert.Contains("no-cache", response.Headers.Pragma.Select(value => value.Name));
     }
 

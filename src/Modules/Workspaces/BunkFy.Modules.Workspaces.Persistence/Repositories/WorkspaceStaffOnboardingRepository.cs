@@ -161,6 +161,7 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
                     WorkspaceStaffOnboardingProcessingRestrictionContract
                         .CurrentVersion &&
                 !projection.IsRestricted
+            orderby application.CreatedAtUtc, application.Id
             select new WorkspaceStaffOnboardingActionableSummaryDto(
                 application.Id,
                 (WorkspaceStaffOnboardingSourceKind)application.SourceKind,
@@ -174,8 +175,6 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
                 application.LastChangedAtUtc,
                 application.StaffMemberId.HasValue)
         )
-            .OrderBy(application => application.CreatedAtUtc)
-            .ThenBy(application => application.ApplicationId)
             .Skip(page.SkipCount)
             .Take(page.PageSize + 1)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);

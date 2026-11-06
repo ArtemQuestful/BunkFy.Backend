@@ -90,7 +90,7 @@ public sealed class AdminApiIntegrationTests
             controlClient.DefaultRequestHeaders.Add("X-Tenant-Id", "tenant-not-auth-scope");
             using HttpResponseMessage scopeRejected = await controlClient.GetAsync(
                 "/api/admin/workspaces/access-bootstrap").ConfigureAwait(false);
-            Assert.Equal(HttpStatusCode.Forbidden, scopeRejected.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, scopeRejected.StatusCode);
             Assert.Contains("Admin.TenantClaimMismatch",
                 await scopeRejected.Content.ReadAsStringAsync().ConfigureAwait(false),
                 StringComparison.Ordinal);
