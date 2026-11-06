@@ -13,4 +13,30 @@ public sealed record SubmitWorkspaceStaffOnboardingCommand(
     string? WorkPhone,
     string? EmployeeNumber,
     string? JobTitle,
-    string? Department) : ITransactionalCommand<WorkspaceStaffOnboardingDto>;
+    string? Department)
+    : ITransactionalCommand<WorkspaceStaffOnboardingSubmissionOutcome>;
+
+public sealed record WorkspaceStaffOnboardingSubmissionOutcome(
+    WorkspaceStaffOnboardingSubmissionOutcomeKind Kind,
+    WorkspaceStaffOnboardingDto? Application)
+{
+    public static WorkspaceStaffOnboardingSubmissionOutcome Applied(
+        WorkspaceStaffOnboardingDto application) =>
+        new(
+            WorkspaceStaffOnboardingSubmissionOutcomeKind.Applied,
+            application ?? throw new ArgumentNullException(nameof(application)));
+
+    public static WorkspaceStaffOnboardingSubmissionOutcome
+        AuthorityMovedToStaff() =>
+        new(
+            WorkspaceStaffOnboardingSubmissionOutcomeKind
+                .AuthorityMovedToStaff,
+            Application: null);
+}
+
+public enum WorkspaceStaffOnboardingSubmissionOutcomeKind
+{
+    Unknown = 0,
+    Applied = 1,
+    AuthorityMovedToStaff = 2
+}

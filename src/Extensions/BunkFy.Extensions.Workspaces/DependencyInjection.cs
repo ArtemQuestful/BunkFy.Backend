@@ -86,6 +86,12 @@ public static class DependencyInjection
             OrganizationOwnerStaffBootstrapHandler>(
             StaffModuleMetadata.Name,
             OrganizationsModuleMetadata.Name);
+        services.AddIntegrationEventHandler<
+            WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent,
+            WorkspaceStaffOnboardingIdentityAnchorResolutionHandler>(
+            StaffModuleMetadata.Name,
+            WorkspacesModuleMetadata.Name);
+
         return services;
     }
 

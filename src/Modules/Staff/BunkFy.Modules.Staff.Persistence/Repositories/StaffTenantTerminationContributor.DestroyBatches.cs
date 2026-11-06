@@ -118,6 +118,26 @@ internal sealed partial class StaffTenantTerminationContributor
                     dbContext.OperationLocks,
                     resourceLock => resourceLock.Id,
                     cancellationToken),
+            StaffTenantDestroyStage.IdentityProvisioningAnchorResolutions =>
+                this.RemoveBatchAsync(
+                    operation,
+                    dbContext.IdentityProvisioningAnchorResolutions
+                        .OrderBy(resolution => resolution.SourceKind)
+                        .ThenBy(resolution => resolution.SourceId),
+                    resolution =>
+                        $"{(int)resolution.SourceKind}|" +
+                        $"{resolution.SourceId:N}|" +
+                        $"{resolution.StaffMemberId:N}",
+                    cancellationToken),
+            StaffTenantDestroyStage.IdentityProvisioningAnchors =>
+                this.RemoveBatchAsync(
+                    operation,
+                    dbContext.IdentityProvisioningAnchors
+                        .OrderBy(anchor => anchor.SourceKind)
+                        .ThenBy(anchor => anchor.SourceId),
+                    anchor =>
+                        $"{(int)anchor.SourceKind}|{anchor.SourceId:N}",
+                    cancellationToken),
             StaffTenantDestroyStage.StaffMembers =>
                 this.RemoveGuidBatchAsync(
                     operation,
@@ -244,6 +264,10 @@ internal sealed partial class StaffTenantTerminationContributor
             .ConfigureAwait(false) ||
         await dbContext.OperationLocks.AnyAsync(cancellationToken)
             .ConfigureAwait(false) ||
+        await dbContext.IdentityProvisioningAnchorResolutions
+            .AnyAsync(cancellationToken).ConfigureAwait(false) ||
+        await dbContext.IdentityProvisioningAnchors
+            .AnyAsync(cancellationToken).ConfigureAwait(false) ||
         await dbContext.StaffMembers.AnyAsync(cancellationToken)
             .ConfigureAwait(false) ||
         await dbContext.ProcessingRestrictionProjections

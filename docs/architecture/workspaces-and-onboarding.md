@@ -203,6 +203,8 @@ A module-owned EF inbox already provides the transaction for its handler. Module
 
 Workspace creation and invitation acceptance are durable processes with explicit states such as `Pending`, `Provisioning`, `Completed`, `Failed`, `Revoked`, and `Superseded`. Process steps are replay-safe. The client can poll/read current status and never treats an HTTP timeout as proof that a command failed.
 
+A Staff identity-anchor continuation commits an explicit partial-provisioning domain failure as `Failed` with its existing Staff target. Subsequent delivery and the legacy retry route cannot reopen that application; an authorized owner's receipted recovery verifies the current membership, Staff and access facts. This also covers a lost response after another authority has committed. Admission or lifecycle precondition failures and infrastructure exceptions keep the inbox delivery retryable. A completed resolution is immutable and cannot be rewritten into a failed application.
+
 The membership gate and AccessControl both fail closed. A partially provisioned membership without grants cannot enter PMS operations. Removing membership blocks access even if stale role assignments still await cleanup.
 
 ## Migration Direction
@@ -219,6 +221,76 @@ BunkFy's current composition uses global Auth identities and no workspace-id log
 - document a reset-only path for disposable local/preview data separately from production upgrades.
 
 The migration and the steady-state schema must be covered against PostgreSQL. Provider-specific migration code remains outside Auth domain/application behavior.
+
+The deferred Staff claim withdrawal migration is appended as
+`20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals`, after the published
+Workspaces recovery migration. Its earlier, unpublished PR identifier
+`20260811044039_AddWorkspaceStaffDeferredClaimWithdrawals` was never part of the
+canonical dev history. The application migration host requires the applied
+history to be an exact prefix of its loaded catalogue. Keep that guard intact:
+both fresh databases and the nonempty published history use the appended
+migration; a database that applied the unpublished identifier requires a
+separately inspected recovery path and is refused automatically. Do not rename,
+insert or delete applied history rows to make admission pass. The new migration's
+`Down` also refuses to discard nonempty durable withdrawal observations.
+### Identity-Anchor Stop/Drain Deployment Contract
+
+The following migrations form one non-rolling-compatible release boundary:
+
+- Staff `20261102220100_AddStaffIdentityProvisioningAnchors`;
+- Workspaces `20261102220200_AddWorkspaceStaffIdentityProvisioningAnchors`.
+
+The generic [Migrations Host Production Safety](../operations/migrations-host-production-safety.md)
+contract still applies. This feature additionally requires one stop-the-world
+cutover:
+
+1. Freeze one reviewed immutable release whose Migrations, API, Admin, and
+   Worker artifacts have the same source identity and contain the two expected
+   migration artifacts. Retain the matching Production `Plan` output.
+2. Stop every API, Admin, Worker, scheduled-task, and ad hoc maintenance
+   instance that can write Staff or Workspaces on the target database,
+   including old replicas and canaries. Block new traffic and task delivery.
+3. Wait for active Staff and Workspaces database transactions to finish. Drain
+   identity-anchor inbox/outbox deliveries and reconciliation tasks to reviewed
+   safe states: processed/terminal, or an explicitly recorded retry/failed item
+   whose coordinates and forward-replay owner have been reviewed. Unknown or
+   still-running work is not a safe drain state.
+4. Apply `20261102220100_AddStaffIdentityProvisioningAnchors` first and
+   `20261102220200_AddWorkspaceStaffIdentityProvisioningAnchors` second from the
+   same approved Migrations artifact. A partial run remains stopped and uses
+   the approved same-release forward-resume or restore procedure.
+5. Deploy the matching API, Admin, and Worker binaries together before any
+   ordinary writer resumes. Keep external traffic, schedules, and general
+   consumer delivery paused while controlled cutover checks run. Once the
+   Staff migration has committed, no pre-cutover binary may reconnect to the
+   advanced database.
+6. For every tenant, run `workspaces.identity-anchors.status` with the reviewed
+   owner manifest, reconcile only against the accepted evidence hashes, and
+   rerun status until it reports a ready, conflict-free state. Complete a
+   bounded identity-anchor sweep under the stable-universe barrier and verify
+   its checkpoint, high-water mark, and zero deferred/conflict backlog.
+   Reconcile the Staff anchor/resolution ledger with Workspaces application and
+   historical-review receipts, and confirm that identity-anchor inbox/outbox
+   and task backlogs contain no unreviewed pending, retryable, running, or
+   failed work.
+7. Resume the new Worker consumers and maintenance schedules deliberately,
+   verify the ledgers and backlogs remain converged, and only then reopen API
+   and Admin write traffic.
+
+The `Down` methods are safety guards, not the rollback plan. Staff refuses a
+downgrade while durable anchors or resolutions exist. Workspaces refuses while
+identity-anchor receipts or checkpoints, active new destruction stages,
+onboarding anchor coordinates, suppressed restorations, irreversible
+redactions, pending identity-anchor messages, or reconciliation tasks remain.
+A guard refusal is a hard stop: keep writers stopped and use reviewed forward
+repair or restore the complete pre-change database and artifact set.
+
+This section defines repository procedure only. Its presence, review, or
+passing repository checks is not evidence that any environment was stopped,
+drained, migrated, verified, or resumed. Environment-specific evidence must
+record the stopped instance set, drain observations, exact artifact identities,
+Plan/Apply output, cutover status, sweep/ledger/backlog results, approvals, and
+resume decision.
 
 ## Rejected Shapes
 

@@ -23,7 +23,7 @@ internal sealed class StaffTenantDestroyOperationConfiguration
             table.HasCheckConstraint(
                 "CK_staff_tenant_destroy_operation_progress",
                 $"\"Stage\" BETWEEN 1 AND " +
-                $"{(int)StaffTenantDestroyStage.MemberMutationOperations} AND " +
+                $"{(int)StaffTenantDestroyStage.IdentityProvisioningAnchorResolutions} AND " +
                 "\"RemovedRecordCount\" >= 0 AND " +
                 "\"CompletedBatchCount\" >= 0 AND " +
                 "\"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");

@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using BunkFy.Modules.Staff.Contracts;
 using System.Globalization;
 using System.Text.Json;
 using BunkFy.Modules.DataRights.Contracts;
@@ -625,6 +626,9 @@ public sealed partial class PropertiesPersistenceIntegrationTests
         builder.Services.AddSingleton<ISystemClock>(
             clock ?? new TestClock(ExportNowUtc));
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddPropertiesPersistence();
         return builder.Services.BuildServiceProvider();
     }

@@ -160,6 +160,9 @@ internal sealed class WorkspaceStaffAnonymisationAccessPrerequisite(
                     return StaffRetentionAnonymisationPrerequisiteResult
                         .Blocked(CorrelationReceiptInvalid);
                 }
+
+                return StaffRetentionAnonymisationPrerequisiteResult
+                    .Completed();
             }
 
             Result<WorkspaceStaffRetentionCorrelationReceipt> scrubbed =

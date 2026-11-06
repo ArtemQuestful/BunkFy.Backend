@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Workspaces.Api;
 
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Workspaces.Api.Requests;
+using BunkFy.Modules.Workspaces.Application;
 using BunkFy.Modules.Workspaces.Application.Commands;
 using BunkFy.Modules.Workspaces.Application.Queries;
 using BunkFy.Modules.Workspaces.Contracts;
@@ -11,6 +12,7 @@ using Gma.Framework.Api.Observability;
 using Gma.Framework.Api.Results;
 using Gma.Framework.Api.Tenancy;
 using Gma.Framework.Cqrs;
+using Gma.Framework.Results;
 using Gma.Framework.Tenancy.AccessControl.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -82,7 +84,8 @@ internal static class WorkspaceStaffOnboardingDataRightsEndpoints
                 return Results.Unauthorized();
             }
 
-            return (await dispatcher.SendAsync(
+            Result<WorkspaceStaffOnboardingDataRightsCorrectionOutcome>
+                outcome = await dispatcher.SendAsync(
                 new ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommand(
                     request.ExecutionId,
                     request.CaseId,
@@ -97,8 +100,9 @@ internal static class WorkspaceStaffOnboardingDataRightsEndpoints
                     request.JobTitle,
                     request.Department,
                     FormatActor(actor)),
-                cancellationToken).ConfigureAwait(false))
-                .ToHttpResult(WorkspacesApiEndpointSupport.ErrorStatusCodes);
+                cancellationToken).ConfigureAwait(false);
+            return MapCorrectionOutcome(outcome).ToHttpResult(
+                WorkspacesApiEndpointSupport.ErrorStatusCodes);
         })
             .Produces<
                 WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
@@ -110,4 +114,35 @@ internal static class WorkspaceStaffOnboardingDataRightsEndpoints
 
     private static string FormatActor(AccessSubject actor) =>
         $"{AccessSubjectKindNames.GetName(actor.Kind)}:{actor.Id}";
+
+    internal static Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>
+        MapCorrectionOutcome(
+            Result<WorkspaceStaffOnboardingDataRightsCorrectionOutcome>
+                outcome)
+    {
+        if (outcome.IsFailure)
+        {
+            return Result.Failure<
+                WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
+                outcome.Error);
+        }
+
+        return outcome.Value.Kind switch
+        {
+            WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind.Applied
+                when outcome.Value.Receipt is not null =>
+                Result.Success(outcome.Value.Receipt),
+            WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind
+                .AuthorityMovedToStaff
+                when outcome.Value.Receipt is null =>
+                Result.Failure<
+                    WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .CorrectionTargetUnavailable),
+            _ => Result.Failure<
+                WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .IdentityAnchorConflict)
+        };
+    }
 }

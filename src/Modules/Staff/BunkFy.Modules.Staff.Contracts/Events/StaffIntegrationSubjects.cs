@@ -21,4 +21,13 @@ public static class StaffIntegrationSubjects
 
     public static string CreatePropertyAssignmentChanged(string prefix = IntegrationEventNaming.DefaultSubjectPrefix) =>
         IntegrationEventNaming.CreateSubject(prefix, StaffModuleMetadata.Name, StaffPropertyAssignmentChangedIntegrationEvent.EventType, StaffPropertyAssignmentChangedIntegrationEvent.EventVersion);
+
+    public static string CreateIdentityProvisioningAnchorCreated(
+        string prefix = IntegrationEventNaming.DefaultSubjectPrefix) =>
+        IntegrationEventNaming.CreateSubject(
+            prefix,
+            StaffModuleMetadata.Name,
+            StaffIdentityProvisioningAnchorCreatedIntegrationEvent.EventType,
+            StaffIdentityProvisioningAnchorCreatedIntegrationEvent
+                .EventVersion);
 }

@@ -35,6 +35,7 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
         CancellationToken cancellationToken) =>
         (
             from application in dbContext.StaffOnboardingApplications
+                .ExcludeExactlyReviewed(dbContext)
             join projection in
                 dbContext.StaffOnboardingProcessingRestrictionProjections
                 on new
@@ -66,6 +67,7 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
         return (
             from application in dbContext.StaffOnboardingApplications
                 .AsNoTracking()
+                .ExcludeExactlyReviewed(dbContext)
             join projection in
                 dbContext.StaffOnboardingProcessingRestrictionProjections
                     .AsNoTracking()
@@ -130,13 +132,14 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
             .ThenBy(application => application.Id)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
-    public async Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+    public async Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
         PageRequest page,
         CancellationToken cancellationToken)
     {
-        WorkspaceStaffOnboarding[] fetched = await (
+        WorkspaceStaffOnboardingActionableSummaryDto[] fetched = await (
             from application in dbContext.StaffOnboardingApplications
                 .AsNoTracking()
+                .ExcludeExactlyReviewed(dbContext)
             join projection in
                 dbContext.StaffOnboardingProcessingRestrictionProjections
                     .AsNoTracking()
@@ -158,16 +161,26 @@ internal sealed class WorkspaceStaffOnboardingRepository(WorkspacesDbContext dbC
                     WorkspaceStaffOnboardingProcessingRestrictionContract
                         .CurrentVersion &&
                 !projection.IsRestricted
-            select application
+            orderby application.CreatedAtUtc, application.Id
+            select new WorkspaceStaffOnboardingActionableSummaryDto(
+                application.Id,
+                (WorkspaceStaffOnboardingSourceKind)application.SourceKind,
+                application.SourceId,
+                application.ClaimId,
+                application.ClaimVersion,
+                (WorkspaceStaffOnboardingStatus)application.Status,
+                application.Version,
+                application.FailureCode,
+                application.CreatedAtUtc,
+                application.LastChangedAtUtc,
+                application.StaffMemberId.HasValue)
         )
-            .OrderBy(application => application.CreatedAtUtc)
-            .ThenBy(application => application.Id)
             .Skip(page.SkipCount)
             .Take(page.PageSize + 1)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
         bool hasMore = fetched.Length > page.PageSize;
-        return new WorkspaceStaffOnboardingListResponse(
-            fetched.Take(page.PageSize).Select(application => application.ToDto()).ToArray(),
+        return new WorkspaceStaffOnboardingSummaryListResponse(
+            fetched.Take(page.PageSize).ToArray(),
             page.Page,
             page.PageSize,
             hasMore);

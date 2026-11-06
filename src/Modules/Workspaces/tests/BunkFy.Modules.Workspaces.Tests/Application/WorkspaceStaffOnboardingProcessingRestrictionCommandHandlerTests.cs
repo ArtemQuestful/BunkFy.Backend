@@ -134,6 +134,8 @@ public sealed class
             Now.AddMinutes(-5)).IsSuccess);
         Assert.True(application.MarkStaffReady(
             Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
             Now.AddMinutes(-4)).IsSuccess);
         WorkspaceStaffOnboardingProcessingRestrictionProjection projection =
             CreateProjection(application);
@@ -380,7 +382,7 @@ public sealed class
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse>
+        public Task<WorkspaceStaffOnboardingSummaryListResponse>
             ListActionableAsync(
                 PageRequest page,
                 CancellationToken cancellationToken) =>

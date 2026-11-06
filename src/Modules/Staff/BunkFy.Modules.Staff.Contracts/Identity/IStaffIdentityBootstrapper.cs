@@ -9,6 +9,7 @@ public interface IStaffIdentityBootstrapper
 
 public sealed record StaffIdentityBootstrapRequest(
     Guid OperationId,
+    Guid SourceId,
     string AuthSubjectId,
     string DisplayName,
     string? WorkEmail,

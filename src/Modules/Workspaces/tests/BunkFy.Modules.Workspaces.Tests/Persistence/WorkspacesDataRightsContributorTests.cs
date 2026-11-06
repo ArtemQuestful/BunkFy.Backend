@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Workspaces.Tests;
 
 using System.Text.Json;
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using BunkFy.Modules.Workspaces.Domain.DataRights;
@@ -9,7 +10,10 @@ using BunkFy.Modules.Workspaces.Persistence;
 using BunkFy.Modules.Workspaces.Persistence.Repositories;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
+using DomainResolutionDisposition =
+    Workspaces.Domain.WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition;
 
 [Trait("Category", "Unit")]
 public sealed class WorkspacesDataRightsContributorTests
@@ -85,8 +89,23 @@ public sealed class WorkspacesDataRightsContributorTests
                 CancellationToken.None);
         DataRightsSubjectCandidate activeCandidate =
             Assert.Single(activeDiscovered.Candidates);
-        Assert.Equal("a***@example.test", activeCandidate.EmailHint);
-        Assert.Equal("***0456", activeCandidate.PhoneHint);
+        Assert.Equal(
+            "Workspace onboarding: Submitted",
+            activeCandidate.DisplayName);
+        Assert.Null(activeCandidate.EmailHint);
+        Assert.Null(activeCandidate.PhoneHint);
+        Assert.DoesNotContain(
+            "Active Staff",
+            activeCandidate.DisplayName,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "active@example.test",
+            activeCandidate.DisplayName,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "active-subject",
+            activeCandidate.DisplayName,
+            StringComparison.Ordinal);
 
         DataRightsSubjectDiscoveryResult weak =
             await contributor.DiscoverAsync(
@@ -291,7 +310,7 @@ public sealed class WorkspacesDataRightsContributorTests
         }
 
         WorkspacesDataRightsExportContributor exporter =
-            new(context, new TestScopeContext());
+            CreateExportContributor(context);
         CollectingSink sink = new();
         DataRightsSubjectExportResult exported = await exporter.ExportAsync(
             ExportRequest(
@@ -400,7 +419,9 @@ public sealed class WorkspacesDataRightsContributorTests
         SeededGraph graph = SeedGraph(context);
         await context.SaveChangesAsync();
         WorkspacesDataRightsExportContributor contributor =
-            new(context, new TestScopeContext());
+            CreateExportContributor(
+                context,
+                OutcomeReaderFor(graph.Onboarding));
 
         CollectingSink onboardingSink = new();
         DataRightsSubjectExportResult onboarding =
@@ -442,6 +463,60 @@ public sealed class WorkspacesDataRightsContributorTests
             Field(
                 onboardingSink.Records[0],
                 "workspaces.auth-subject-id").GetString());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorExpectedResolutionEventId,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.expected-resolution-event-id")
+            .GetGuid());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorContinuationEventId,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.continuation-event-id")
+            .GetGuid());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorResolutionEventId,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.resolution-event-id")
+            .GetGuid());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorResolutionStaffMemberId,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.resolution-staff-member-id")
+            .GetGuid());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorResolutionApplicationVersion,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.resolution-application-version")
+            .GetInt64());
+        Assert.Equal(
+            "completed-redacted",
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.resolution-disposition")
+            .GetString());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorResolutionIntentAtUtc,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.resolution-intent-at-utc")
+            .GetDateTimeOffset());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorResolutionObservedAtUtc,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.resolution-observed-at-utc")
+            .GetDateTimeOffset());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorSweepOrdinal,
+            Field(
+                onboardingSink.Records[0],
+                "workspaces.identity-anchor.sweep-ordinal")
+            .GetInt64());
         Assert.Equal(
             graph.CorrectionReceipt.ExecutionId,
             Field(
@@ -494,6 +569,12 @@ public sealed class WorkspacesDataRightsContributorTests
                 processSink,
                 CancellationToken.None);
         Assert.Equal(3, process.RecordCount);
+        Assert.Equal(
+            "not-applicable",
+            Field(
+                processSink.Records[0],
+                "workspaces.access-process-restoration-disposition")
+            .GetString());
         Assert.Equal(
             [
                 WorkspacesDataRightsCoordinates
@@ -591,7 +672,9 @@ public sealed class WorkspacesDataRightsContributorTests
         SeededGraph graph = SeedGraph(context);
         await context.SaveChangesAsync();
         WorkspacesDataRightsExportContributor contributor =
-            new(context, new TestScopeContext());
+            CreateExportContributor(
+                context,
+                OutcomeReaderFor(graph.Onboarding));
         CollectingSink sink = new();
 
         DataRightsSubjectExportResult stale =
@@ -630,6 +713,173 @@ public sealed class WorkspacesDataRightsContributorTests
         Assert.Equal(
             DataRightsSubjectExportStatus.ScopeUnavailable,
             propertyScoped.Status);
+        Assert.Empty(sink.Records);
+    }
+
+    [Fact]
+    public async Task Onboarding_export_discloses_staged_profile_only_for_exact_absence()
+    {
+        await using WorkspacesDbContext context = CreateContext();
+        WorkspaceStaffOnboarding onboarding =
+            WorkspaceStaffOnboarding.Create(
+                Guid.NewGuid(),
+                TenantId,
+                WorkspaceStaffOnboardingSource.Invitation,
+                Guid.NewGuid(),
+                SubjectId,
+                "verified@example.test",
+                "Ada Operator",
+                "Ada Example",
+                "work@example.test",
+                "+44 20 5555 0100",
+                "E-42",
+                "Manager",
+                "Operations",
+                Now).Value;
+        context.StaffOnboardingApplications.Add(onboarding);
+        await context.SaveChangesAsync();
+        WorkspacesDataRightsExportContributor contributor =
+            CreateExportContributor(context);
+        CollectingSink sink = new();
+
+        DataRightsSubjectExportResult result =
+            await contributor.ExportAsync(
+                ExportRequest(
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecordType,
+                    onboarding.Id,
+                    onboarding.Version),
+                sink,
+                CancellationToken.None);
+
+        Assert.Equal(DataRightsSubjectExportStatus.Succeeded, result.Status);
+        DataRightsExportRecord record = Assert.Single(sink.Records);
+        Assert.Equal(
+            "Ada Operator",
+            Field(record, "workspaces.proposed-display-name").GetString());
+        Assert.Equal(
+            "verified@example.test",
+            Field(record, "workspaces.verified-account-email").GetString());
+    }
+
+    [Fact]
+    public async Task Onboarding_export_accepts_observed_resolution_after_local_subject_pseudonymisation()
+    {
+        await using WorkspacesDbContext context = CreateContext();
+        SeededGraph graph = SeedGraph(context);
+        await context.SaveChangesAsync();
+        string pseudonym = "workspaces-erased:subject-pseudonym";
+        context.Entry(graph.Onboarding)
+            .Property(application => application.SubjectId)
+            .CurrentValue = pseudonym;
+        context.Entry(graph.Onboarding)
+            .Property(application => application.Version)
+            .CurrentValue = graph.Onboarding.Version + 1;
+        context.Entry(graph.Onboarding)
+            .Property(application => application.LastChangedAtUtc)
+            .CurrentValue = Now.AddMinutes(5);
+        await context.SaveChangesAsync();
+        WorkspacesDataRightsExportContributor contributor =
+            CreateExportContributor(
+                context,
+                OutcomeReaderFor(
+                    graph.Onboarding,
+                    StaffWorkspaceOnboardingIdentityAnchorSubjectMatch
+                        .Mismatch));
+        CollectingSink sink = new();
+
+        DataRightsSubjectExportResult result =
+            await contributor.ExportAsync(
+                ExportRequest(
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecordType,
+                    graph.Onboarding.Id,
+                    graph.Onboarding.Version),
+                sink,
+                CancellationToken.None);
+
+        Assert.Equal(DataRightsSubjectExportStatus.Succeeded, result.Status);
+        DataRightsExportRecord record = Assert.Single(
+            sink.Records,
+            candidate => candidate.RecordType ==
+                WorkspacesDataRightsCoordinates.StaffOnboardingRecordType);
+        Assert.Equal(
+            pseudonym,
+            Field(record, "workspaces.auth-subject-id").GetString());
+        Assert.Equal(
+            graph.Onboarding.IdentityAnchorResolutionEventId,
+            Field(
+                record,
+                "workspaces.identity-anchor.resolution-event-id").GetGuid());
+    }
+
+    [Theory]
+    [InlineData(StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Unresolved)]
+    [InlineData(StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Corrupt)]
+    [InlineData(StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Resolved)]
+    public async Task Onboarding_export_fails_closed_before_writing_for_non_authoritative_anchor_state(
+        StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus status)
+    {
+        await using WorkspacesDbContext context = CreateContext();
+        WorkspaceStaffOnboarding onboarding =
+            WorkspaceStaffOnboarding.Create(
+                Guid.NewGuid(),
+                TenantId,
+                WorkspaceStaffOnboardingSource.Invitation,
+                Guid.NewGuid(),
+                SubjectId,
+                "verified@example.test",
+                "Ada Operator",
+                legalName: null,
+                workEmail: null,
+                workPhone: null,
+                employeeNumber: null,
+                jobTitle: null,
+                department: null,
+                Now).Value;
+        context.StaffOnboardingApplications.Add(onboarding);
+        await context.SaveChangesAsync();
+        Guid anchorTarget = Guid.NewGuid();
+        Guid resolutionEventId = Guid.NewGuid();
+        StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader reader = new(
+            request => new(
+                request.ApplicationId,
+                status,
+                anchorTarget,
+                StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Active,
+                status ==
+                    StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Resolved
+                        ? StaffWorkspaceOnboardingIdentityAnchorSubjectMatch
+                            .Mismatch
+                        : StaffWorkspaceOnboardingIdentityAnchorSubjectMatch
+                            .Exact,
+                status ==
+                    StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Resolved
+                        ? 1
+                        : null,
+                status ==
+                    StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Resolved
+                        ? StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                            .CompletedRedacted
+                        : null,
+                resolutionEventId));
+        WorkspacesDataRightsExportContributor contributor =
+            CreateExportContributor(context, reader);
+        CollectingSink sink = new();
+
+        DataRightsSubjectExportResult result =
+            await contributor.ExportAsync(
+                ExportRequest(
+                    WorkspacesDataRightsCoordinates
+                        .StaffOnboardingRecordType,
+                    onboarding.Id,
+                    onboarding.Version),
+                sink,
+                CancellationToken.None);
+
+        Assert.Equal(
+            DataRightsSubjectExportStatus.ScopeUnavailable,
+            result.Status);
         Assert.Empty(sink.Records);
     }
 
@@ -681,7 +931,7 @@ public sealed class WorkspacesDataRightsContributorTests
 
         await context.SaveChangesAsync();
         WorkspacesDataRightsExportContributor contributor =
-            new(context, new TestScopeContext());
+            CreateExportContributor(context);
         CollectingSink sink = new();
 
         DataRightsSubjectExportResult result =
@@ -728,10 +978,19 @@ public sealed class WorkspacesDataRightsContributorTests
         Assert.True(
             onboarding.MarkStaffReady(
                 StaffMemberId,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
                 Now.AddMinutes(2)).IsSuccess);
         Assert.True(
             onboarding.Complete(
                 Now.AddMinutes(3)).IsSuccess);
+        Assert.True(
+            onboarding.ObserveResolution(
+                onboarding.IdentityAnchorResolutionEventId!.Value,
+                StaffMemberId,
+                onboarding.IdentityAnchorResolutionApplicationVersion!.Value,
+                onboarding.IdentityAnchorResolutionDisposition!.Value,
+                Now.AddMinutes(4)).IsSuccess);
 
         WorkspaceStaffAccessProcess process =
             WorkspaceStaffAccessProcess.Create(
@@ -954,6 +1213,63 @@ public sealed class WorkspacesDataRightsContributorTests
                 .Options;
         return new(options, new TestScopeContext());
     }
+
+    private static WorkspacesDataRightsExportContributor
+        CreateExportContributor(
+            WorkspacesDbContext context,
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader? reader =
+                null) => new(
+            context,
+            new TestScopeContext(),
+            new WorkspaceStaffOnboardingSerializedReadBoundary(context),
+            new WorkspaceStaffOnboardingOperationLock(context),
+            new WorkspaceStaffOnboardingRepository(context),
+            reader ?? new StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader(),
+            NullLogger<WorkspacesDataRightsExportContributor>.Instance);
+
+    private static StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader
+        OutcomeReaderFor(
+            WorkspaceStaffOnboarding application,
+            StaffWorkspaceOnboardingIdentityAnchorSubjectMatch subjectMatch =
+                StaffWorkspaceOnboardingIdentityAnchorSubjectMatch.Exact) =>
+        new(request =>
+            request.ApplicationId == application.Id &&
+            application.IdentityAnchorResolutionObservedAtUtc.HasValue
+                ? new StaffWorkspaceOnboardingIdentityAnchorOutcome(
+                    application.Id,
+                    StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus.Resolved,
+                    application.StaffMemberId,
+                    StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle.Active,
+                    subjectMatch,
+                    application.IdentityAnchorResolutionApplicationVersion,
+                    ToStaffDisposition(
+                        application.IdentityAnchorResolutionDisposition!.Value),
+                    application.IdentityAnchorResolutionEventId)
+                : StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader
+                    .Absent(request));
+
+    private static StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+        ToStaffDisposition(DomainResolutionDisposition disposition) =>
+        disposition switch
+        {
+            DomainResolutionDisposition.CompletedRedacted =>
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                    .CompletedRedacted,
+            DomainResolutionDisposition.RejectedRedacted =>
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                    .RejectedRedacted,
+            DomainResolutionDisposition.SupersededRedacted =>
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                    .SupersededRedacted,
+            DomainResolutionDisposition.ExpiredRedacted =>
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                    .ExpiredRedacted,
+            DomainResolutionDisposition.WithdrawnRedacted =>
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                    .WithdrawnRedacted,
+            _ => throw new InvalidOperationException(
+                "The test resolution disposition is invalid.")
+        };
 
     private sealed class CollectingSink : IDataRightsExportSink
     {

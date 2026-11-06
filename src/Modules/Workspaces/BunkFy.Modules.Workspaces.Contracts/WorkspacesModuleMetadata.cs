@@ -30,6 +30,10 @@ public static class WorkspacesModuleMetadata
     public const string PropertyRetiredHandlerName = "workspace-property-retired";
     public const string StaffOnboardingRestrictionRecoveryHandlerName =
         "staff-onboarding-restriction-release-recovery";
+    public const string StaffOnboardingIdentityAnchorCreatedHandlerName =
+        "staff-onboarding-identity-anchor-created";
+    public const string StaffOnboardingIdentityAnchorContinuationHandlerName =
+        "staff-onboarding-identity-anchor-continuation";
     public const string PropertiesProjectionName = "properties";
     public const int PropertiesProjectionVersion = 1;
     public const string ProjectionWorkerGroup = "projection-workers";
@@ -84,11 +88,23 @@ public static class WorkspacesModuleMetadata
             WorkspaceStaffOnboardingProcessingRestrictionChangedIntegrationEvent>(
             Name,
             StaffOnboardingRestrictionRecoveryHandlerName)
+        .WithSubscription<StaffIdentityProvisioningAnchorCreatedIntegrationEvent>(
+            StaffModuleMetadata.Name,
+            StaffOnboardingIdentityAnchorCreatedHandlerName)
+        .WithSubscription<
+            WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent>(
+            Name,
+            StaffOnboardingIdentityAnchorContinuationHandlerName)
         .WithPublishedEvent<
             DataRightsTenantCorrectionAppliedIntegrationEvent>()
         .WithPublishedEvent<
             WorkspaceStaffOnboardingProcessingRestrictionChangedIntegrationEvent>()
+        .WithPublishedEvent<
+            WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent>()
+        .WithPublishedEvent<
+            WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent>()
         .WithTask<RebuildWorkspacePropertiesPayload>()
+        .WithTask<ReconcileWorkspaceStaffIdentityAnchorsPayload>()
         .WithProfile(WorkspacesProfiles.Default)
         .Build();
 }

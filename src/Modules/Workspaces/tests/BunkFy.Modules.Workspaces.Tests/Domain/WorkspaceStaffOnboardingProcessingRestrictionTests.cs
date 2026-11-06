@@ -24,6 +24,8 @@ public sealed class WorkspaceStaffOnboardingProcessingRestrictionTests
 
         Assert.True(onboarding.MarkStaffReady(
             Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
             Now.AddMinutes(2)).IsSuccess);
         Assert.False(onboarding.HasApplicantAuthority);
     }

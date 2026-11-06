@@ -8,6 +8,7 @@ using BunkFy.Modules.Workspaces.Api;
 using BunkFy.Modules.Workspaces.Api.Requests;
 using BunkFy.Modules.Workspaces.Application;
 using BunkFy.Modules.Workspaces.Application.Commands;
+using BunkFy.Modules.Workspaces.Application.Models;
 using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Application.Queries;
 using BunkFy.Modules.Workspaces.Contracts;
@@ -33,8 +34,12 @@ public sealed class WorkspacesPersonalDataCatalogTests
     private static readonly Dictionary<Type, HashSet<string>> NonPersonalMembers = new()
     {
         [typeof(WorkspaceStaffOnboardingListResponse)] = PaginationMembers(),
+        [typeof(WorkspaceStaffOnboardingSummaryListResponse)] = PaginationMembers(),
         [typeof(WorkspaceStaffAccessProcessListResponse)] = PaginationMembers(),
-        [typeof(WorkspaceStaffJoinSourceListResponse)] = PaginationMembers()
+        [typeof(WorkspaceStaffJoinSourceListResponse)] = PaginationMembers(),
+        [typeof(WorkspaceStaffIdentityAnchorSourcePage)] =
+            new([nameof(WorkspaceStaffIdentityAnchorSourcePage.HasMore)],
+                StringComparer.Ordinal)
     };
 
     [Fact]
@@ -48,7 +53,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
             Type? type = assembly.GetType(binding.Type, throwOnError: false, ignoreCase: false);
             Assert.NotNull(type);
             Assert.True(
-                type.GetProperty(binding.Member, BindingFlags.Instance | BindingFlags.Public) is not null,
+                BindingResolves(type, binding.Member),
                 $"Unknown member '{binding.Member}' on '{binding.Type}' in assembly '{binding.Assembly}'.");
         }
     }
@@ -76,6 +81,142 @@ public sealed class WorkspacesPersonalDataCatalogTests
         {
             AssertType(type, surface);
         }
+
+        foreach ((PersonalDataSurface surface, Type type, string method) in
+                 BoundaryMethods())
+        {
+            AssertMethod(type, method, surface);
+        }
+    }
+
+    [Fact]
+    public void Identity_anchor_cutover_evidence_is_pseudonymous_and_transient()
+    {
+        Assert.Equal(18, Catalogue.CatalogVersion);
+        Assert.Equal(
+            WorkspacesTenantTerminationMetadata.PersonalDataCatalogVersion,
+            Catalogue.CatalogVersion);
+        foreach (string fieldId in new[]
+                 {
+                     "workspaces.identity-anchor-cutover.historical-evidence-digest",
+                     "workspaces.identity-anchor-cutover.owner-manifest-digest",
+                     "workspaces.identity-anchor-cutover.source-evidence-digest",
+                     "workspaces.identity-anchor-cutover.state-digest"
+                 })
+        {
+            PersonalDataFieldDefinition field = Assert.Single(
+                Catalogue.Fields,
+                candidate => candidate.Id == fieldId);
+            Assert.Equal(
+                PersonalDataClassification.PseudonymousIdentifier,
+                field.Classification);
+            Assert.Equal(PersonalDataSensitivity.Elevated, field.Sensitivity);
+            Assert.Equal("transient-response", field.RetentionPolicy);
+            Assert.Equal(
+                "identity-anchor-cutover-evidence-control",
+                field.RightsPolicy);
+        }
+
+        AssertBinding(
+            typeof(WorkspaceStaffIdentityAnchorCutoverStatus),
+            nameof(WorkspaceStaffIdentityAnchorCutoverStatus
+                .SourceEvidenceSha256),
+            PersonalDataSurface.AdminOutput);
+        AssertBinding(
+            typeof(WorkspaceStaffIdentityAnchorCutoverStatus),
+            nameof(WorkspaceStaffIdentityAnchorCutoverStatus
+                .AnchorStateSha256),
+            PersonalDataSurface.AdminOutput);
+        AssertBinding(
+            typeof(WorkspaceStaffIdentityAnchorCutoverStatus),
+            nameof(WorkspaceStaffIdentityAnchorCutoverStatus
+                .OwnerManifestSha256),
+            PersonalDataSurface.AdminOutput);
+        AssertBinding(
+            typeof(WorkspaceStaffIdentityAnchorCutoverStatus),
+            nameof(WorkspaceStaffIdentityAnchorCutoverStatus
+                .HistoricalEvidenceSha256),
+            PersonalDataSurface.AdminOutput);
+        AssertBinding(
+            typeof(WorkspaceStaffIdentityAnchorHistoricalEvidence),
+            nameof(WorkspaceStaffIdentityAnchorHistoricalEvidence
+                .EvidenceSha256),
+            PersonalDataSurface.ApplicationCommand);
+        AssertBinding(
+            typeof(WorkspaceStaffIdentityAnchorHistoricalEvidence),
+            nameof(WorkspaceStaffIdentityAnchorHistoricalEvidence
+                .EvidenceSha256),
+            PersonalDataSurface.ApplicationQuery);
+        AssertBinding(
+            typeof(ReconcileWorkspaceStaffIdentityAnchorsCommand),
+            nameof(ReconcileWorkspaceStaffIdentityAnchorsCommand
+                .ExpectedSourceEvidenceSha256),
+            PersonalDataSurface.ApplicationCommand);
+        AssertBinding(
+            typeof(ReconcileWorkspaceStaffIdentityAnchorsCommand),
+            nameof(ReconcileWorkspaceStaffIdentityAnchorsCommand
+                .ExpectedAnchorStateSha256),
+            PersonalDataSurface.ApplicationCommand);
+        AssertBinding(
+            typeof(ReconcileWorkspaceStaffIdentityAnchorsCommand),
+            nameof(ReconcileWorkspaceStaffIdentityAnchorsCommand
+                .ExpectedOwnerManifestSha256),
+            PersonalDataSurface.ApplicationCommand);
+    }
+
+    [Fact]
+    public void Historical_no_provision_receipt_has_a_tenant_audit_proof_policy_and_actor_attribution()
+    {
+        PersonalDataFieldDefinition[] proofFields = Catalogue.Fields
+            .Where(field => field.Id.StartsWith(
+                "workspaces.identity-anchor-historical-no-provision.",
+                StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(21, proofFields.Length);
+        Assert.All(proofFields, field =>
+        {
+            Assert.Equal(
+                "workspace-historical-no-provision-proof",
+                field.RetentionPolicy);
+            Assert.Equal(
+                "workspace-historical-no-provision-proof-control",
+                field.RightsPolicy);
+            Assert.Equal(
+                "workspaces-identity-anchor-historical-no-provision",
+                field.AccessPolicy);
+            Assert.DoesNotContain(
+                field.Classification,
+                new[]
+                {
+                    PersonalDataClassification.DirectIdentifier,
+                    PersonalDataClassification.Contact,
+                    PersonalDataClassification.FreeText
+                });
+        });
+
+        PersonalDataFieldDefinition reviewer = Assert.Single(
+            Catalogue.Fields,
+            field => field.Id == "workspaces.actor-subject-id");
+        Assert.Equal(
+            PersonalDataClassification.AuditAttribution,
+            reviewer.Classification);
+        Assert.Equal("auth", reviewer.AuthoritativeOwner);
+        Assert.Equal("audit-attribution", reviewer.RightsPolicy);
+        AssertBinding(
+            typeof(WorkspaceStaffHistoricalNoProvisionReceipt),
+            nameof(WorkspaceStaffHistoricalNoProvisionReceipt.ReviewerId),
+            PersonalDataSurface.Persistence);
+        AssertBinding(
+            typeof(ReviewWorkspaceStaffHistoricalNoProvisionCommand),
+            nameof(ReviewWorkspaceStaffHistoricalNoProvisionCommand
+                .ExpectedOrganizationsSourceStatus),
+            PersonalDataSurface.ApplicationCommand);
+        AssertBinding(
+            typeof(
+                WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport),
+            nameof(WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport
+                .OrganizationsSourceStatus),
+            PersonalDataSurface.DataRightsExport);
     }
 
     [Fact]
@@ -149,6 +290,51 @@ public sealed class WorkspacesPersonalDataCatalogTests
         Assert.True(found, $"Missing {surface} classification for {type.FullName}.{member}.");
     }
 
+    private static void AssertMethod(
+        Type type,
+        string methodName,
+        PersonalDataSurface surface)
+    {
+        MethodInfo method = Assert.Single(
+            type.GetMethods(BindingFlags.Instance | BindingFlags.Public),
+            candidate => candidate.Name == methodName);
+        foreach (ParameterInfo parameter in method.GetParameters()
+                     .Where(parameter =>
+                         parameter.ParameterType != typeof(CancellationToken)))
+        {
+            AssertBinding(
+                type,
+                $"{method.Name}.{parameter.Name}",
+                surface);
+        }
+    }
+
+    private static bool BindingResolves(Type type, string member)
+    {
+        if (type.GetProperty(
+                member,
+                BindingFlags.Instance | BindingFlags.Public) is not null)
+        {
+            return true;
+        }
+
+        int separator = member.IndexOf('.', StringComparison.Ordinal);
+        if (separator <= 0 || separator == member.Length - 1)
+        {
+            return false;
+        }
+
+        string methodName = member[..separator];
+        string parameterName = member[(separator + 1)..];
+        return type.GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Where(method => method.Name == methodName)
+            .SelectMany(method => method.GetParameters())
+            .Any(parameter => string.Equals(
+                parameter.Name,
+                parameterName,
+                StringComparison.Ordinal));
+    }
+
     private static IEnumerable<PersonalDataMemberBinding> Bindings() =>
         Catalogue.Fields.SelectMany(field => field.Bindings);
 
@@ -156,6 +342,7 @@ public sealed class WorkspacesPersonalDataCatalogTests
     [
         typeof(WorkspaceStaffOnboarding),
         typeof(WorkspaceStaffOnboardingRecoveryReceipt),
+        typeof(WorkspaceStaffDeferredClaimWithdrawal),
         typeof(WorkspaceStaffOnboardingCorrectionReceipt),
         typeof(WorkspaceStaffOnboardingProcessingRestriction),
         typeof(WorkspaceStaffOnboardingProcessingRestrictionProjection),
@@ -169,6 +356,8 @@ public sealed class WorkspacesPersonalDataCatalogTests
         typeof(WorkspaceStaffAccessPlanProperty),
         typeof(WorkspaceStaffRetentionCorrelationReceipt),
         typeof(WorkspaceStaffOnboardingRetentionExecution),
+        typeof(WorkspaceStaffIdentityAnchorSweepCheckpoint),
+        typeof(WorkspaceStaffHistoricalNoProvisionReceipt),
         typeof(WorkspaceTerminationFence),
         typeof(WorkspaceTerminationFenceReceipt),
         typeof(WorkspaceTenantDestroyOperation),
@@ -236,6 +425,17 @@ public sealed class WorkspacesPersonalDataCatalogTests
                          ReconcileWorkspaceStaffOnboardingRetentionCandidateCommand),
                      typeof(
                          CompleteWorkspaceStaffOnboardingRetentionExecutionCommand),
+                     typeof(
+                         PrepareWorkspaceStaffIdentityAnchorSweepPageCommand),
+                     typeof(
+                         AdvanceWorkspaceStaffIdentityAnchorSweepCommand),
+                     typeof(
+                         ReconcileWorkspaceStaffIdentityAnchorSweepCandidateCommand),
+                     typeof(WorkspaceStaffIdentityAnchorSweepAdvance),
+                     typeof(WorkspaceStaffIdentityAnchorSweepPageCounts),
+                     typeof(ReconcileWorkspaceStaffIdentityAnchorsPayload),
+                     typeof(
+                         ReviewWorkspaceStaffHistoricalNoProvisionCommand),
                      typeof(ApplyWorkspaceTerminationFenceCommand),
                      typeof(ReleaseWorkspaceTerminationFenceCommand)
                  })
@@ -244,9 +444,28 @@ public sealed class WorkspacesPersonalDataCatalogTests
         }
 
         yield return (PersonalDataSurface.ApplicationQuery, typeof(GetOwnWorkspaceStaffOnboardingQuery));
+        yield return (PersonalDataSurface.ApplicationQuery, typeof(GetWorkspaceStaffOnboardingReviewQuery));
         yield return (
             PersonalDataSurface.ApplicationQuery,
             typeof(GetLatestWorkspaceStaffOnboardingRecoveryAttemptQuery));
+        yield return (
+            PersonalDataSurface.ApplicationQuery,
+            typeof(GetWorkspaceStaffIdentityAnchorSweepStatusQuery));
+        yield return (
+            PersonalDataSurface.ProjectionExport,
+            typeof(WorkspaceStaffIdentityAnchorSweepCandidate));
+        yield return (
+            PersonalDataSurface.ProjectionExport,
+            typeof(WorkspaceStaffIdentityAnchorSweepPage));
+        yield return (
+            PersonalDataSurface.ProjectionExport,
+            typeof(WorkspaceStaffIdentityAnchorSweepCandidateResult));
+        yield return (
+            PersonalDataSurface.ProjectionExport,
+            typeof(WorkspaceStaffIdentityAnchorSourceRecord));
+        yield return (
+            PersonalDataSurface.ProjectionExport,
+            typeof(WorkspaceStaffIdentityAnchorSourcePage));
         yield return (
             PersonalDataSurface.ApplicationQuery,
             typeof(
@@ -271,6 +490,8 @@ public sealed class WorkspacesPersonalDataCatalogTests
                  {
                      typeof(WorkspaceStaffOnboardingDto),
                      typeof(WorkspaceStaffOnboardingListResponse),
+                     typeof(WorkspaceStaffOnboardingSummaryListResponse),
+                     typeof(WorkspaceStaffOnboardingActionableSummaryDto),
                      typeof(WorkspaceMemberAccessDto),
                      typeof(WorkspaceMemberAccessAssignmentDto),
                      typeof(WorkspaceStaffJoinSourceDto),
@@ -294,10 +515,21 @@ public sealed class WorkspacesPersonalDataCatalogTests
             PersonalDataSurface.AdminOutput,
             typeof(
                 WorkspaceStaffOnboardingProcessingRestrictionReceiptDto));
+        yield return (
+            PersonalDataSurface.AdminOutput,
+            typeof(WorkspaceStaffIdentityAnchorSweepStatus));
+        yield return (
+            PersonalDataSurface.AdminOutput,
+            typeof(WorkspaceStaffIdentityAnchorSweepPageCounts));
+        yield return (
+            PersonalDataSurface.AdminOutput,
+            typeof(WorkspaceStaffHistoricalNoProvisionDispositionResult));
 
         foreach (Type type in new[]
                  {
                      typeof(WorkspaceStaffOnboardingDataRightsExport),
+                     typeof(
+                         WorkspaceStaffDeferredClaimWithdrawalDataRightsExport),
                      typeof(WorkspaceStaffAccessProcessDataRightsExport),
                      typeof(WorkspaceStaffAccessProfileDataRightsExport),
                      typeof(WorkspaceStaffAccessPlanDataRightsExport),
@@ -314,7 +546,9 @@ public sealed class WorkspacesPersonalDataCatalogTests
                      typeof(
                          WorkspaceStaffOnboardingProcessingRestrictionReceiptDataRightsExport),
                      typeof(
-                         WorkspaceStaffOnboardingRetentionExecutionDataRightsExport)
+                         WorkspaceStaffOnboardingRetentionExecutionDataRightsExport),
+                     typeof(
+                         WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport)
                  })
         {
             yield return (PersonalDataSurface.DataRightsExport, type);
@@ -328,6 +562,14 @@ public sealed class WorkspacesPersonalDataCatalogTests
             PersonalDataSurface.DomainEvent,
             typeof(
                 WorkspaceStaffOnboardingProcessingRestrictionChangedDomainEvent));
+        yield return (
+            PersonalDataSurface.DomainEvent,
+            typeof(
+                WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent));
+        yield return (
+            PersonalDataSurface.DomainEvent,
+            typeof(
+                WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent));
 
         foreach (Type type in new[]
                  {
@@ -341,11 +583,44 @@ public sealed class WorkspacesPersonalDataCatalogTests
                      typeof(OrganizationMembershipChangedIntegrationEvent),
                      typeof(StaffMemberLifecycleChangedIntegrationEvent),
                      typeof(
+                         WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent),
+                     typeof(
+                         WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent),
+                     typeof(
                          WorkspaceStaffOnboardingProcessingRestrictionChangedIntegrationEvent)
                  })
         {
             yield return (PersonalDataSurface.IntegrationEvent, type);
         }
+    }
+
+    private static IEnumerable<(
+        PersonalDataSurface Surface,
+        Type Type,
+        string Method)> BoundaryMethods()
+    {
+        yield return (
+            PersonalDataSurface.ApplicationQuery,
+            typeof(
+                IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence),
+            nameof(
+                IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence
+                    .CanMutateAsync));
+        yield return (
+            PersonalDataSurface.ApplicationQuery,
+            typeof(IWorkspaceStaffHistoricalNoProvisionReceiptRepository),
+            nameof(IWorkspaceStaffHistoricalNoProvisionReceiptRepository
+                .FindByOperationIdAsync));
+        yield return (
+            PersonalDataSurface.ApplicationQuery,
+            typeof(IWorkspaceStaffHistoricalNoProvisionReceiptRepository),
+            nameof(IWorkspaceStaffHistoricalNoProvisionReceiptRepository
+                .FindByApplicationIdAsync));
+        yield return (
+            PersonalDataSurface.ApplicationCommand,
+            typeof(IWorkspaceStaffHistoricalNoProvisionReceiptRepository),
+            nameof(IWorkspaceStaffHistoricalNoProvisionReceiptRepository
+                .AddAsync));
     }
 
     private static Dictionary<string, Assembly> CreateAssemblyIndex() =>

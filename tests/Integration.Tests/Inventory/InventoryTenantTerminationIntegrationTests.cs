@@ -11,6 +11,7 @@ using BunkFy.Modules.Inventory.Contracts;
 using BunkFy.Modules.Inventory.Domain.Aggregates;
 using BunkFy.Modules.Inventory.Domain.DataRights;
 using BunkFy.Modules.Inventory.Persistence;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using BunkFy.Modules.Workspaces.Persistence;
@@ -505,6 +506,8 @@ public sealed partial class InventoryTenantTerminationIntegrationTests
         builder.Services.AddSingleton<ISystemClock>(
             clock ?? new TestClock(ExportNowUtc));
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddInventoryPersistence();
         return builder.Services.BuildServiceProvider();
     }

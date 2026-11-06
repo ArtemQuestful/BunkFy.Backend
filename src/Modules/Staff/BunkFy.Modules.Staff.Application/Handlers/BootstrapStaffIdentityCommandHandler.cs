@@ -13,7 +13,9 @@ using Gma.Framework.Scoping;
 
 internal sealed class BootstrapStaffIdentityCommandHandler(
     IStaffMemberRepository members,
+    IStaffIdentityProvisioningAnchorRepository anchors,
     IStaffCreationOperationLock creationLock,
+    StaffMemberMutationCoordinator mutations,
     IScopeContext scopeContext,
     ISystemClock clock,
     IIdGenerator ids) : ICommandHandler<BootstrapStaffIdentityCommand, Unit>
@@ -28,10 +30,18 @@ internal sealed class BootstrapStaffIdentityCommandHandler(
             return Result.Failure<Unit>(StaffApplicationErrors.TenantRequired);
         }
 
+        string scopeId = scopeContext.ScopeId;
+
         if (command.OperationId == Guid.Empty)
         {
             return Result.Failure<Unit>(
                 StaffApplicationErrors.CreationOperationInvalid);
+        }
+
+        if (command.SourceId == Guid.Empty)
+        {
+            return Result.Failure<Unit>(
+                StaffApplicationErrors.IdentityProvisioningSourceInvalid);
         }
 
         Result<StaffAuthSubject> authSubject = StaffAuthSubject.Create(
@@ -44,29 +54,73 @@ internal sealed class BootstrapStaffIdentityCommandHandler(
         string normalizedAuthSubject = authSubject.Value.Value;
 
         await creationLock.AcquireAsync(
-                scopeContext.ScopeId,
-                command.OperationId,
+                scopeId,
+                command.SourceId,
                 cancellationToken)
             .ConfigureAwait(false);
-        StaffMember? operationOwner = await members.GetForSafetyTransitionAsync(
+        StaffIdentityProvisioningAnchorRecord? existingAnchor =
+            await anchors.GetAsync(
+                StaffIdentityProvisioningSourceKind.OrganizationMembership,
+                command.SourceId,
+                cancellationToken).ConfigureAwait(false);
+        if (existingAnchor is not null)
+        {
+            return await this.ValidateExistingAnchorAsync(
+                existingAnchor,
+                normalizedAuthSubject,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        StaffMember? operationOwner =
+            await mutations.AcquireSafetyTransitionAsync(
             command.OperationId,
             cancellationToken).ConfigureAwait(false);
         if (operationOwner is not null)
         {
-            return string.Equals(
-                operationOwner.AuthSubjectId,
-                normalizedAuthSubject,
-                StringComparison.Ordinal)
-                ? Result.Success(Unit.Value)
-                : Result.Failure<Unit>(
+            if (operationOwner.AuthSubjectId is not null &&
+                !string.Equals(
+                    operationOwner.AuthSubjectId,
+                    normalizedAuthSubject,
+                    StringComparison.Ordinal))
+            {
+                return Result.Failure<Unit>(
                     StaffApplicationErrors.CreationOperationConflict);
+            }
+
+            await this.AddAnchorAsync(
+                scopeId,
+                command.SourceId,
+                operationOwner.Id,
+                clock.UtcNow,
+                cancellationToken).ConfigureAwait(false);
+            return Result.Success(Unit.Value);
         }
 
-        if (await members.AuthSubjectExistsAsync(
+        StaffMember? subjectOwner =
+            await members.GetForSafetyTransitionByAuthSubjectAsync(
                 normalizedAuthSubject,
-                exceptStaffMemberId: null,
-                cancellationToken).ConfigureAwait(false))
+                cancellationToken).ConfigureAwait(false);
+        if (subjectOwner is not null)
         {
+            subjectOwner = await mutations.AcquireSafetyTransitionAsync(
+                subjectOwner.Id,
+                cancellationToken).ConfigureAwait(false);
+            if (subjectOwner is null ||
+                !string.Equals(
+                    subjectOwner.AuthSubjectId,
+                    normalizedAuthSubject,
+                    StringComparison.Ordinal))
+            {
+                return Result.Failure<Unit>(
+                    StaffApplicationErrors.CreationOperationConflict);
+            }
+
+            await this.AddAnchorAsync(
+                scopeId,
+                command.SourceId,
+                subjectOwner.Id,
+                clock.UtcNow,
+                cancellationToken).ConfigureAwait(false);
             return Result.Success(Unit.Value);
         }
 
@@ -90,9 +144,10 @@ internal sealed class BootstrapStaffIdentityCommandHandler(
             return Result.Failure<Unit>(actor.Error);
         }
 
+        DateTimeOffset nowUtc = clock.UtcNow;
         Result<StaffMember> created = StaffMember.Create(
             command.OperationId,
-            scopeContext.ScopeId,
+            scopeId,
             profile.Value.DisplayName,
             profile.Value.LegalName,
             profile.Value.WorkEmail,
@@ -103,7 +158,7 @@ internal sealed class BootstrapStaffIdentityCommandHandler(
             profile.Value.AuthSubjectId,
             actor.Value.Value,
             ids.NewId(),
-            clock.UtcNow);
+            nowUtc);
         if (created.IsFailure)
         {
             return Result.Failure<Unit>(created.Error);
@@ -111,6 +166,51 @@ internal sealed class BootstrapStaffIdentityCommandHandler(
 
         await members.AddAsync(created.Value, cancellationToken)
             .ConfigureAwait(false);
+        await this.AddAnchorAsync(
+            scopeId,
+            command.SourceId,
+            created.Value.Id,
+            nowUtc,
+            cancellationToken).ConfigureAwait(false);
         return Result.Success(Unit.Value);
     }
+
+    private async Task<Result<Unit>> ValidateExistingAnchorAsync(
+        StaffIdentityProvisioningAnchorRecord anchor,
+        string normalizedAuthSubject,
+        CancellationToken cancellationToken)
+    {
+        StaffMember? target = await mutations.AcquireSafetyTransitionAsync(
+            anchor.StaffMemberId,
+            cancellationToken).ConfigureAwait(false);
+        if (target is null)
+        {
+            return Result.Failure<Unit>(
+                StaffApplicationErrors.IdentityProvisioningAnchorCorrupt);
+        }
+
+        return target.AuthSubjectId is null ||
+            string.Equals(
+                target.AuthSubjectId,
+                normalizedAuthSubject,
+                StringComparison.Ordinal)
+            ? Result.Success(Unit.Value)
+            : Result.Failure<Unit>(
+                StaffApplicationErrors.IdentityProvisioningAnchorConflict);
+    }
+
+    private Task AddAnchorAsync(
+        string scopeId,
+        Guid sourceId,
+        Guid staffMemberId,
+        DateTimeOffset anchoredAtUtc,
+        CancellationToken cancellationToken) =>
+        anchors.AddAsync(
+            new StaffIdentityProvisioningAnchorRecord(
+                scopeId,
+                StaffIdentityProvisioningSourceKind.OrganizationMembership,
+                sourceId,
+                staffMemberId,
+                anchoredAtUtc),
+            cancellationToken);
 }

@@ -240,7 +240,9 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
             enableWorkspaceStaffOnboardingRecovery: true);
         await api.MigrateWorkspaceOnboardingDatabaseAsync().ConfigureAwait(false);
         using HttpClient client = api.CreateClient();
-        using IHost worker = CreateWorker(connectionString, natsConnectionString);
+        ScopedProfileAcknowledgementFault accessFault = new();
+        using IHost worker = CreateWorker(
+            connectionString, natsConnectionString, accessFault.Install);
         await worker.StartAsync().ConfigureAwait(false);
 
         try
@@ -280,56 +282,45 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                 propertyIds,
                 AsyncTimeout).ConfigureAwait(false);
 
-            VerifiedAccount manager = await RegisterVerifiedAsync(
-                api,
-                client,
-                "manager-recovery@workspace-onboarding.test")
-                .ConfigureAwait(false);
-            Guid invitationId = Guid.NewGuid();
-            WorkspaceStaffJoinSourceIssuanceDto invitation = await IssueInvitationAsync(
-                client,
-                workspaceId,
-                owner.AccessToken,
-                invitationId,
-                "manager-recovery@workspace-onboarding.test",
-                WorkspaceAccessProfileSeeds.ManagerKey,
-                propertyIds).ConfigureAwait(false);
-            string invitationToken = Assert.IsType<string>(invitation.Token);
-            await SubmitApplicationAsync(
-                client,
-                manager,
-                WorkspaceStaffOnboardingSourceKind.Invitation,
-                invitationToken,
-                "Riley Manager").ConfigureAwait(false);
-            using (HttpResponseMessage acceptance = await SendAsync(
-                       client,
-                       HttpMethod.Post,
-                       "/api/organization-invitations/accept",
-                       GlobalScopeId,
-                       manager.AccessToken,
-                       new { token = invitationToken }).ConfigureAwait(false))
-            {
-                await ReadSuccessAsync<OrganizationInvitationAcceptanceDto>(acceptance)
-                    .ConfigureAwait(false);
-            }
-
-            WorkspaceStaffOnboardingDto completed =
-                await WaitForApplicationStatusAsync(
+            (VerifiedAccount manager, WorkspaceStaffOnboardingDto failed) =
+                await CreateFailedPartialAsync(
                     api,
                     client,
                     workspace.Organization.OrganizationId,
-                    invitationId,
-                    WorkspaceStaffOnboardingSourceKind.Invitation,
-                    manager.AccessToken,
-                    WorkspaceStaffOnboardingStatus.Completed,
-                    AsyncTimeout).ConfigureAwait(false);
-            Guid staffMemberId = Assert.IsType<Guid>(completed.StaffMemberId);
-            WorkspaceStaffOnboardingDto failed = await InduceFailedPartialAsync(
-                api,
-                workspaceId,
-                completed.ApplicationId).ConfigureAwait(false);
+                    owner.AccessToken,
+                    propertyIds,
+                    accessFault,
+                    "manager-recovery@workspace-onboarding.test")
+                    .ConfigureAwait(false);
+            Guid staffMemberId = Assert.IsType<Guid>(failed.StaffMemberId);
             Assert.Equal(WorkspaceStaffOnboardingStatus.Failed, failed.Status);
-            Assert.Equal(staffMemberId, failed.StaffMemberId);
+            Assert.Equal("Workspaces.AccessProvisioningFailed", failed.FailureCode);
+            Assert.True(accessFault.AttemptCount(manager.SubjectId) > 0);
+
+            await AssertStaffOwnedManagerReviewUnavailableAsync(
+                client, workspaceId, owner.AccessToken,
+                failed.ApplicationId).ConfigureAwait(false);
+            using (HttpResponseMessage legacyFailure = await SendAsync(
+                       client, HttpMethod.Get,
+                       "/api/workspace-staff-enrollment/applications?page=1&pageSize=25",
+                       workspaceId, owner.AccessToken).ConfigureAwait(false))
+            {
+                await AssertStatusAsync(HttpStatusCode.Conflict, legacyFailure).ConfigureAwait(false);
+                AssertNoStore(legacyFailure);
+            }
+            using (HttpResponseMessage summaries = await SendAsync(
+                       client, HttpMethod.Get,
+                       "/api/workspace-staff-enrollment/applications/summary?page=1&pageSize=25",
+                       workspaceId, owner.AccessToken).ConfigureAwait(false))
+            {
+                WorkspaceStaffOnboardingSummaryListResponse status =
+                    await ReadSuccessAsync<WorkspaceStaffOnboardingSummaryListResponse>(summaries).ConfigureAwait(false);
+                WorkspaceStaffOnboardingActionableSummaryDto row = Assert.Single(status.Items,
+                    item => item.ApplicationId == failed.ApplicationId);
+                Assert.True(row.HasStaffTarget);
+                Assert.Equal(WorkspaceStaffOnboardingStatus.Failed, row.Status);
+                AssertNoStore(summaries);
+            }
 
             ExternalProofCoordinates before = await ObserveExternalProofAsync(
                 api,
@@ -457,16 +448,52 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                     propertyScopedManager).ConfigureAwait(false);
             }
 
-            WorkspaceStaffOnboardingDto driftCandidate =
-                await InduceFailedPartialAsync(
+            // A completed receipt is immutable. Exercise drift on a second
+            // genuinely failed application instead of reopening the first one.
+            (VerifiedAccount driftManager,
+                WorkspaceStaffOnboardingDto driftCandidate) =
+                await CreateFailedPartialAsync(
+                    api,
+                    client,
+                    workspace.Organization.OrganizationId,
+                    owner.AccessToken,
+                    propertyIds,
+                    accessFault,
+                    "manager-drift@workspace-onboarding.test")
+                    .ConfigureAwait(false);
+            Guid driftStaffMemberId = Assert.IsType<Guid>(
+                driftCandidate.StaffMemberId);
+            Npgsql.PostgresException relinkRejected = await Assert.ThrowsAsync<
+                Npgsql.PostgresException>(() => SetStaffAuthSubjectAsync(
                     api,
                     workspaceId,
-                    failed.ApplicationId).ConfigureAwait(false);
-            await SetStaffAuthSubjectAsync(
+                    driftStaffMemberId,
+                    "auth:test-drift"));
+            Assert.Equal("P0001", relinkRejected.SqlState);
+            Assert.Contains("requires access closure", relinkRejected.MessageText);
+            await ObserveExternalProofAsync(
                 api,
                 workspaceId,
-                staffMemberId,
-                "auth:test-drift").ConfigureAwait(false);
+                driftCandidate.ApplicationId,
+                driftStaffMemberId,
+                driftManager.SubjectId,
+                propertyIds).ConfigureAwait(false);
+            PropertyMutationReceiptDto extraProperty = await CreatePropertyAsync(
+                client,
+                workspaceId,
+                owner.AccessToken,
+                "Recovery Drift Annex",
+                "RDA").ConfigureAwait(false);
+            await WaitForWorkspacePropertyProjectionAsync(
+                api,
+                workspaceId,
+                [extraProperty.PropertyId],
+                AsyncTimeout).ConfigureAwait(false);
+            await SetStaffPropertyAssignmentsAsync(
+                api,
+                workspaceId,
+                driftStaffMemberId,
+                [.. propertyIds, extraProperty.PropertyId]).ConfigureAwait(false);
             WorkspaceStaffOnboardingRecoveryAttemptDto staffConflict =
                 await AttemptRecoveryReviewAsync(
                     client,
@@ -476,16 +503,16 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                     WorkspaceStaffOnboardingRecoveryAttemptReason.StaffConflict)
                     .ConfigureAwait(false);
             Assert.Equal(driftCandidate.Version, staffConflict.ApplicationVersion);
-            await SetStaffAuthSubjectAsync(
+            await SetStaffPropertyAssignmentsAsync(
                 api,
                 workspaceId,
-                staffMemberId,
-                manager.SubjectId.ToString("D")).ConfigureAwait(false);
+                driftStaffMemberId,
+                propertyIds).ConfigureAwait(false);
 
             await SetLegacyAccessAsync(
                 api,
                 workspaceId,
-                manager.SubjectId,
+                driftManager.SubjectId,
                 present: true).ConfigureAwait(false);
             WorkspaceStaffOnboardingRecoveryAttemptDto accessConflict =
                 await AttemptRecoveryReviewAsync(
@@ -499,13 +526,13 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
             await SetLegacyAccessAsync(
                 api,
                 workspaceId,
-                manager.SubjectId,
+                driftManager.SubjectId,
                 present: false).ConfigureAwait(false);
 
             await SuspendMembershipAsync(
                 api,
                 workspace.Organization.OrganizationId,
-                manager.SubjectId).ConfigureAwait(false);
+                driftManager.SubjectId).ConfigureAwait(false);
             WorkspaceStaffOnboardingRecoveryAttemptDto membershipConflict =
                 await AttemptRecoveryReviewAsync(
                     client,
@@ -516,7 +543,13 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                     .ConfigureAwait(false);
             Assert.Equal(driftCandidate.Version, membershipConflict.ApplicationVersion);
             Assert.Equal(
-                4,
+                3,
+                await CountRecoveryReceiptsAsync(
+                    api,
+                    workspaceId,
+                    driftCandidate.ApplicationId).ConfigureAwait(false));
+            Assert.Equal(
+                1,
                 await CountRecoveryReceiptsAsync(
                     api,
                     workspaceId,
@@ -727,7 +760,7 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                 await AssertStatusAsync(HttpStatusCode.Conflict, capacityClaim).ConfigureAwait(false);
             }
 
-            await WaitForApplicationStatusAsync(
+            WorkspaceStaffOnboardingDto reviewableApplication = await WaitForApplicationStatusAsync(
                 api,
                 client,
                 workspace.Organization.OrganizationId,
@@ -736,6 +769,9 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                 applicant.AccessToken,
                 WorkspaceStaffOnboardingStatus.PendingApproval,
                 AsyncTimeout).ConfigureAwait(false);
+            await AssertManagerApplicantReviewHttpAsync(
+                client, workspaceId, owner, invited, applicant,
+                reviewableApplication).ConfigureAwait(false);
             await AssertPropertyAccessAsync(
                 client, workspaceId, applicant.AccessToken, propertyB.PropertyId, HttpStatusCode.Forbidden)
                 .ConfigureAwait(false);
@@ -773,6 +809,9 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                 applicant.AccessToken,
                 WorkspaceStaffOnboardingStatus.Completed,
                 AsyncTimeout).ConfigureAwait(false);
+            await AssertStaffOwnedManagerReviewUnavailableAsync(
+                client, workspaceId, owner.AccessToken,
+                completedEnrollment.ApplicationId).ConfigureAwait(false);
             StaffMemberDto enrolledStaff = await GetCurrentStaffAsync(
                 client, workspaceId, applicant.AccessToken).ConfigureAwait(false);
             Assert.Equal(completedEnrollment.StaffMemberId, enrolledStaff.StaffMemberId);
@@ -803,6 +842,103 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                 await initialWorker.StopAsync().ConfigureAwait(false);
             }
         }
+    }
+
+    private static async Task AssertManagerApplicantReviewHttpAsync(
+        HttpClient client,
+        string workspaceId,
+        VerifiedAccount owner,
+        VerifiedAccount unprivilegedMember,
+        VerifiedAccount applicant,
+        WorkspaceStaffOnboardingDto application)
+    {
+        string legacyPath = "/api/workspace-staff-enrollment/applications?page=1&pageSize=25";
+        string summaryPath = "/api/workspace-staff-enrollment/applications/summary?page=1&pageSize=25";
+        string reviewPath = $"/api/workspace-staff-enrollment/applications/{application.ApplicationId:D}/review";
+        foreach (string path in new[] { legacyPath, summaryPath, reviewPath })
+        {
+            using HttpResponseMessage anonymous = await SendAsync(
+                client, HttpMethod.Get, path, workspaceId).ConfigureAwait(false);
+            await AssertStatusAsync(HttpStatusCode.Unauthorized, anonymous).ConfigureAwait(false);
+            using HttpResponseMessage nonManager = await SendAsync(
+                client, HttpMethod.Get, path, workspaceId,
+                unprivilegedMember.AccessToken).ConfigureAwait(false);
+            await AssertStatusAsync(HttpStatusCode.Forbidden, nonManager).ConfigureAwait(false);
+            using HttpResponseMessage wrongTenant = await SendAsync(
+                client, HttpMethod.Get, path, Guid.NewGuid().ToString("D"),
+                owner.AccessToken).ConfigureAwait(false);
+            await AssertStatusAsync(HttpStatusCode.Forbidden, wrongTenant).ConfigureAwait(false);
+        }
+
+        using (HttpResponseMessage legacy = await SendAsync(
+                   client, HttpMethod.Get, legacyPath, workspaceId,
+                   owner.AccessToken).ConfigureAwait(false))
+        {
+            WorkspaceStaffOnboardingListResponse list =
+                await ReadSuccessAsync<WorkspaceStaffOnboardingListResponse>(legacy).ConfigureAwait(false);
+            WorkspaceStaffOnboardingDto oldClient = Assert.Single(list.Items,
+                item => item.ApplicationId == application.ApplicationId);
+            Assert.Equal("Quinn Reception", oldClient.DisplayName);
+            Assert.Equal(applicant.SubjectId.ToString("D"), oldClient.SubjectId);
+            Assert.Equal(application.ClaimId, oldClient.ClaimId);
+            Assert.Equal(application.ClaimVersion, oldClient.ClaimVersion);
+            Assert.Equal(application.Version, oldClient.Version);
+            AssertNoStore(legacy);
+        }
+
+        using (HttpResponseMessage response = await SendAsync(
+                   client, HttpMethod.Get, reviewPath, workspaceId,
+                   owner.AccessToken).ConfigureAwait(false))
+        {
+            WorkspaceStaffOnboardingDto review =
+                await ReadSuccessAsync<WorkspaceStaffOnboardingDto>(response).ConfigureAwait(false);
+            Assert.Equal("Quinn Reception", review.DisplayName);
+            Assert.Equal(application.ApplicationId, review.ApplicationId);
+            Assert.Equal(application.Version, review.Version);
+            AssertNoStore(response);
+        }
+
+        using HttpResponseMessage summaries = await SendAsync(
+            client, HttpMethod.Get, summaryPath, workspaceId,
+            owner.AccessToken).ConfigureAwait(false);
+        string json = await summaries.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.Equal(HttpStatusCode.OK, summaries.StatusCode);
+        JsonElement row = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray(),
+            item => item.GetProperty("applicationId").GetGuid() == application.ApplicationId);
+        foreach (string forbidden in new[] { "subjectId", "staffMemberId", "displayName", "verifiedAccountEmail", "legalName", "workEmail", "workPhone", "employeeNumber", "jobTitle", "department" })
+        {
+            Assert.False(row.TryGetProperty(forbidden, out _), forbidden);
+        }
+        Assert.False(row.GetProperty("hasStaffTarget").GetBoolean());
+        AssertNoStore(summaries);
+    }
+
+    private static async Task AssertStaffOwnedManagerReviewUnavailableAsync(
+        HttpClient client,
+        string workspaceId,
+        string ownerAccessToken,
+        Guid applicationId)
+    {
+        using HttpResponseMessage review = await SendAsync(
+            client, HttpMethod.Get,
+            $"/api/workspace-staff-enrollment/applications/{applicationId:D}/review",
+            workspaceId, ownerAccessToken).ConfigureAwait(false);
+        await AssertStatusAsync(HttpStatusCode.Conflict, review).ConfigureAwait(false);
+        AssertNoStore(review);
+        string json = await review.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.Contains("Workspaces.StaffOnboardingProfileReviewUnavailable", json, StringComparison.Ordinal);
+        foreach (string forbidden in new[] { "subjectId", "staffMemberId", "displayName", "verifiedAccountEmail", "legalName", "workEmail", "workPhone", "employeeNumber", "jobTitle", "department" })
+        {
+            Assert.DoesNotContain("\"" + forbidden + "\"", json, StringComparison.Ordinal);
+        }
+    }
+
+    private static void AssertNoStore(HttpResponseMessage response)
+    {
+        Assert.NotNull(response.Headers.CacheControl);
+        Assert.True(response.Headers.CacheControl.NoStore);
+        Assert.Contains("no-cache", response.Headers.Pragma.Select(value => value.Name));
     }
 
     private static async Task<VerifiedAccount> RegisterVerifiedAsync(
@@ -1172,48 +1308,61 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
             $"{observed}. {messaging}");
     }
 
-    private static async Task<WorkspaceStaffOnboardingDto> InduceFailedPartialAsync(
+    private static async Task<(VerifiedAccount Account,
+        WorkspaceStaffOnboardingDto Application)> CreateFailedPartialAsync(
         AuthTestApplication api,
-        string workspaceId,
-        Guid applicationId)
+        HttpClient client,
+        Guid organizationId,
+        string ownerAccessToken,
+        Guid[] propertyIds,
+        ScopedProfileAcknowledgementFault accessFault,
+        string email)
     {
-        using IServiceScope scope = api.Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<ITenantContextAccessor>()
-            .SetTenant(workspaceId);
-        WorkspacesDbContext dbContext = scope.ServiceProvider
-            .GetRequiredService<WorkspacesDbContext>();
-        DateTimeOffset changedAtUtc = DateTimeOffset.UtcNow;
-        int affected = await dbContext.StaffOnboardingApplications
-            .Where(application => application.Id == applicationId)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(
-                    application => application.Status,
-                    WorkspaceStaffOnboardingState.Failed)
-                .SetProperty(
-                    application => application.FailureCode,
-                    "Test.InducedAfterExactExternalState")
-                .SetProperty(
-                    application => application.VerifiedAccountEmail,
-                    "manager-recovery@workspace-onboarding.test")
-                .SetProperty(
-                    application => application.DisplayName,
-                    "Riley Manager")
-                .SetProperty(
-                    application => application.Version,
-                    application => application.Version + 1)
-                .SetProperty(
-                    application => application.LastChangedAtUtc,
-                    changedAtUtc))
-            .ConfigureAwait(false);
-        Assert.Equal(1, affected);
-        WorkspaceStaffOnboarding application = await dbContext
-            .StaffOnboardingApplications
-            .AsNoTracking()
-            .SingleAsync(item => item.Id == applicationId)
-            .ConfigureAwait(false);
-        Assert.NotNull(application.AcceptedMembershipId);
-        Assert.NotNull(application.AcceptedMembershipVersion);
-        return application.ToDto();
+        VerifiedAccount manager = await RegisterVerifiedAsync(
+            api, client, email).ConfigureAwait(false);
+        accessFault.Arm(manager.SubjectId);
+        Guid invitationId = Guid.NewGuid();
+        WorkspaceStaffJoinSourceIssuanceDto invitation =
+            await IssueInvitationAsync(
+                client,
+                organizationId.ToString("D"),
+                ownerAccessToken,
+                invitationId,
+                email,
+                WorkspaceAccessProfileSeeds.ManagerKey,
+                propertyIds).ConfigureAwait(false);
+        string token = Assert.IsType<string>(invitation.Token);
+        await SubmitApplicationAsync(
+            client,
+            manager,
+            WorkspaceStaffOnboardingSourceKind.Invitation,
+            token,
+            "Riley Manager").ConfigureAwait(false);
+        using (HttpResponseMessage acceptance = await SendAsync(
+                   client,
+                   HttpMethod.Post,
+                   "/api/organization-invitations/accept",
+                   GlobalScopeId,
+                   manager.AccessToken,
+                   new { token }).ConfigureAwait(false))
+        {
+            await ReadSuccessAsync<OrganizationInvitationAcceptanceDto>(acceptance)
+                .ConfigureAwait(false);
+        }
+
+        WorkspaceStaffOnboardingDto failed = await WaitForApplicationStatusAsync(
+            api,
+            client,
+            organizationId,
+            invitationId,
+            WorkspaceStaffOnboardingSourceKind.Invitation,
+            manager.AccessToken,
+            WorkspaceStaffOnboardingStatus.Failed,
+            AsyncTimeout).ConfigureAwait(false);
+        Assert.NotNull(failed.StaffMemberId);
+        Assert.Null(failed.DisplayName);
+        Assert.Null(failed.VerifiedAccountEmail);
+        return (manager, failed);
     }
 
     private static async Task<ExternalProofCoordinates> ObserveExternalProofAsync(
@@ -1448,6 +1597,27 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
                 authSubjectId))
             .ConfigureAwait(false);
         Assert.Equal(1, affected);
+    }
+
+    private static async Task SetStaffPropertyAssignmentsAsync(
+        AuthTestApplication api,
+        string workspaceId,
+        Guid staffMemberId,
+        Guid[] propertyIds)
+    {
+        using IServiceScope scope = api.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ITenantContextAccessor>()
+            .SetTenant(workspaceId);
+        StaffPropertyAssignmentProvisioningResult result = await scope
+            .ServiceProvider.GetRequiredService<IStaffPropertyAssignmentProvisioner>()
+            .ReconcileAsync(new(
+                staffMemberId,
+                propertyIds,
+                "test:recovery-property-drift",
+                "Exercise recovery review after an authoritative property change."))
+            .ConfigureAwait(false);
+        Assert.True(result.IsSuccess, result.ErrorCode);
+        Assert.Equal(propertyIds.Order(), result.PropertyIds.Order());
     }
 
     private static async Task SetLegacyAccessAsync(
@@ -1735,7 +1905,10 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
         await AssertStatusAsync(HttpStatusCode.Forbidden, response).ConfigureAwait(false);
     }
 
-    private static IHost CreateWorker(string connectionString, string natsConnectionString)
+    private static IHost CreateWorker(
+        string connectionString,
+        string natsConnectionString,
+        Action<IServiceCollection>? configureServices = null)
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder([]);
         builder.Environment.EnvironmentName = "Integration";
@@ -1766,6 +1939,7 @@ public sealed class WorkspaceStaffOnboardingEndToEndTests
         AuthTestConfiguration.ConfigureTokenHashing(builder.Configuration);
         builder.Services.AddGmaAccessControlPermissionPolicies(RetentionModuleMetadata.Descriptor);
         builder.AddWorkerHost();
+        configureServices?.Invoke(builder.Services);
         builder.ValidateModuleComposition();
         return builder.Build();
     }

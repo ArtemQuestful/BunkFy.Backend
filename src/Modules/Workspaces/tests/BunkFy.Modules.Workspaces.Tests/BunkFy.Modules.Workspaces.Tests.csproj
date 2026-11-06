@@ -11,8 +11,8 @@
     <PackageReference Include="xunit.runner.visualstudio"><PrivateAssets>all</PrivateAssets></PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\BunkFy.Modules.Workspaces.AdminCli\BunkFy.Modules.Workspaces.AdminCli.csproj" />
     <ProjectReference Include="..\..\BunkFy.Modules.Workspaces.AdminApi\BunkFy.Modules.Workspaces.AdminApi.csproj" />
+    <ProjectReference Include="..\..\BunkFy.Modules.Workspaces.AdminCli\BunkFy.Modules.Workspaces.AdminCli.csproj" />
     <ProjectReference Include="..\..\BunkFy.Modules.Workspaces.Api\BunkFy.Modules.Workspaces.Api.csproj" />
     <ProjectReference Include="..\..\BunkFy.Modules.Workspaces.Application\BunkFy.Modules.Workspaces.Application.csproj" />
     <ProjectReference Include="..\..\BunkFy.Modules.Workspaces.Contracts\BunkFy.Modules.Workspaces.Contracts.csproj" />
@@ -31,6 +31,7 @@
     <ProjectReference Include="$(GmaFrameworkRoot)Scoping\Gma.Framework.Scoping\Gma.Framework.Scoping.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.AccessControl\Gma.Framework.AccessControl.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.AccessControl.AspNetCore\Gma.Framework.AccessControl.AspNetCore.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Tasks\Gma.Framework.Tasks.Cqrs\Gma.Framework.Tasks.Cqrs.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\docs\personal-data-catalog.v1.json"

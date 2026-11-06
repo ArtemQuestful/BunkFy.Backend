@@ -12,6 +12,8 @@ using Gma.Framework.Runtime.Time;
 
 internal sealed class StaffOnboardingProvisioningCoordinator(
     IStaffMemberRepository members,
+    IStaffIdentityProvisioningAnchorRepository anchors,
+    IStaffIdentityProvisioningAnchorWriter anchorWriter,
     IStaffOnboardingProvisioningOperationRepository operations,
     IStaffCreationOperationLock operationLock,
     StaffMemberMutationCoordinator mutations,
@@ -62,12 +64,27 @@ internal sealed class StaffOnboardingProvisioningCoordinator(
                 command.OperationId,
                 cancellationToken)
             .ConfigureAwait(false);
+        StaffIdentityProvisioningAnchorRecord? existingAnchor =
+            await anchors.GetAsync(
+                StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+                command.OperationId,
+                cancellationToken).ConfigureAwait(false);
         StaffMemberMutationOperationRecord? existingOperation =
             await operations.GetAsync(
                 command.OperationId,
                 cancellationToken).ConfigureAwait(false);
-        if (existingOperation is not null)
+        if (existingAnchor is not null || existingOperation is not null)
         {
+            if (existingAnchor is null ||
+                existingOperation is null ||
+                !existingAnchor.ResolutionEventId.HasValue ||
+                existingAnchor.StaffMemberId !=
+                    existingOperation.StaffMemberId)
+            {
+                return Result.Failure<StaffMemberDto>(
+                    StaffApplicationErrors.OnboardingReplayUnavailable);
+            }
+
             return await this.ReplayAsync(
                 existingOperation,
                 profile.Value,
@@ -129,6 +146,14 @@ internal sealed class StaffOnboardingProvisioningCoordinator(
                 fingerprint,
                 StaffStatus.Active,
                 mutation.Member.Version,
+                nowUtc),
+            cancellationToken).ConfigureAwait(false);
+        await anchorWriter.AddAsync(
+            new StaffIdentityProvisioningAnchorRecord(
+                mutation.Member.ScopeId,
+                StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+                command.OperationId,
+                mutation.Member.Id,
                 nowUtc),
             cancellationToken).ConfigureAwait(false);
         return Result.Success(mutation.Member.ToDto());

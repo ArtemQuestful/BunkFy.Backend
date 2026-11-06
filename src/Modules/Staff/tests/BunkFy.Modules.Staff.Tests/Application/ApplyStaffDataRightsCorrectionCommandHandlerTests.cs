@@ -319,6 +319,11 @@ public sealed class ApplyStaffDataRightsCorrectionCommandHandlerTests
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<StaffMember?> GetForSafetyTransitionByAuthSubjectAsync(
+            string authSubjectId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<StaffMember?> GetByAuthSubjectAsync(
             string authSubjectId,
             CancellationToken cancellationToken) =>

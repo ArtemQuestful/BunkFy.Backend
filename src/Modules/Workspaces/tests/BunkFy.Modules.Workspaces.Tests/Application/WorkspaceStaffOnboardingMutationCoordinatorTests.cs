@@ -6,6 +6,7 @@ using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Pagination;
+using Gma.Modules.Organizations.Contracts;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -176,6 +177,17 @@ public sealed class WorkspaceStaffOnboardingMutationCoordinatorTests
     }
 
     [Theory]
+    [InlineData(typeof(SubmitWorkspaceStaffOnboardingCommandHandler))]
+    [InlineData(typeof(ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler))]
+    public void Enrollment_profile_mutations_require_organizations_claim_authority(
+        Type writerType)
+    {
+        AssertDependency(
+            writerType,
+            typeof(IOrganizationEnrollmentClaimInspector));
+    }
+
+    [Theory]
     [InlineData(typeof(RetryWorkspaceStaffOnboardingCommandHandler))]
     [InlineData(typeof(WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler))]
     public void Recovery_writers_continue_through_the_locked_processor(
@@ -340,7 +352,7 @@ public sealed class WorkspaceStaffOnboardingMutationCoordinatorTests
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

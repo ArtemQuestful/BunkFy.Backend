@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Workspaces.Tests;
 
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Application;
 using BunkFy.Modules.Workspaces.Application.Authorization;
 using BunkFy.Modules.Workspaces.Application.Commands;
@@ -14,6 +15,7 @@ using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
+using Gma.Modules.Organizations.Contracts;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -145,6 +147,247 @@ public sealed class
         Assert.Equal(1, correctionLock.AcquisitionCount);
     }
 
+    [Theory]
+    [InlineData(OrganizationEnrollmentClaimStatus.Unknown)]
+    [InlineData(OrganizationEnrollmentClaimStatus.Accepted)]
+    [InlineData(OrganizationEnrollmentClaimStatus.Rejected)]
+    [InlineData(OrganizationEnrollmentClaimStatus.Expired)]
+    [InlineData(OrganizationEnrollmentClaimStatus.Withdrawn)]
+    public async Task Terminal_or_unknown_enrollment_claim_rejects_profile_correction(
+        OrganizationEnrollmentClaimStatus status)
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        FakeOrganizationEnrollmentClaimInspector claims = new(
+            Claim(application, status));
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                claims);
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> result =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffOnboardingApplicationErrors
+                .CorrectionTargetUnavailable,
+            result.Error);
+        Assert.Equal("Ada Operator", application.DisplayName);
+        Assert.Single(claims.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Missing_or_exact_pending_enrollment_claim_allows_profile_correction(
+        bool hasPendingClaim)
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        FakeOrganizationEnrollmentClaimInspector claims = new(
+            hasPendingClaim
+                ? Claim(
+                    application,
+                    OrganizationEnrollmentClaimStatus.Pending)
+                : null);
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                claims);
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> result =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal("Changed", application.DisplayName);
+        Assert.Single(claims.Requests);
+    }
+
+    [Theory]
+    [InlineData(-10, false)]
+    [InlineData(0, false)]
+    [InlineData(9, false)]
+    [InlineData(10, true)]
+    public async Task Pending_claim_deadline_uses_strict_persistence_precision_boundary(
+        long deadlineTicksFromNow,
+        bool expectedAllowed)
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        OrganizationEnrollmentClaimDto claim = Claim(
+            application,
+            OrganizationEnrollmentClaimStatus.Pending) with
+        {
+            DecisionExpiresAtUtc = Now.AddTicks(deadlineTicksFromNow)
+        };
+        FakeOrganizationEnrollmentClaimInspector claims = new(claim);
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                claims);
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> result =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.Equal(expectedAllowed, result.IsSuccess);
+        Assert.Equal(
+            expectedAllowed ? "Changed" : "Ada Operator",
+            application.DisplayName);
+        if (!expectedAllowed)
+        {
+            Assert.Equal(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .CorrectionTargetUnavailable,
+                result.Error);
+        }
+    }
+
+    [Fact]
+    public async Task Pending_claim_without_decision_deadline_rejects_profile_correction()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        OrganizationEnrollmentClaimDto claim = Claim(
+            application,
+            OrganizationEnrollmentClaimStatus.Pending) with
+        {
+            DecisionExpiresAtUtc = null
+        };
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                new FakeOrganizationEnrollmentClaimInspector(claim));
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> result =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffOnboardingApplicationErrors
+                .CorrectionTargetUnavailable,
+            result.Error);
+        Assert.Equal("Ada Operator", application.DisplayName);
+    }
+
+    [Theory]
+    [InlineData("organization")]
+    [InlineData("source")]
+    [InlineData("subject")]
+    public async Task Mismatched_pending_enrollment_claim_rejects_profile_correction(
+        string coordinate)
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        OrganizationEnrollmentClaimDto claim = Claim(
+            application,
+            OrganizationEnrollmentClaimStatus.Pending);
+        claim = coordinate switch
+        {
+            "organization" => claim with { OrganizationId = Guid.NewGuid() },
+            "source" => claim with { EnrollmentLinkId = Guid.NewGuid() },
+            _ => claim with { SubjectId = "subject:other" }
+        };
+        FakeOrganizationEnrollmentClaimInspector claims = new(claim);
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                claims);
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> result =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffOnboardingApplicationErrors
+                .CorrectionTargetUnavailable,
+            result.Error);
+        Assert.Equal("Ada Operator", application.DisplayName);
+        Assert.Single(claims.Requests);
+    }
+
+    [Fact]
+    public async Task Invitation_profile_correction_does_not_query_enrollment_claims()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication(
+            WorkspaceStaffOnboardingSource.Invitation);
+        FakeOrganizationEnrollmentClaimInspector claims = new(
+            Claim(application, OrganizationEnrollmentClaimStatus.Accepted));
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                claims);
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> result =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal("Changed", application.DisplayName);
+        Assert.Empty(claims.Requests);
+    }
+
+    [Fact]
+    public async Task Version_and_local_status_errors_precede_external_claim_fence()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        FakeOrganizationEnrollmentClaimInspector claims = new(
+            Claim(application, OrganizationEnrollmentClaimStatus.Accepted));
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                new InMemoryReceiptRepository(),
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                claims);
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> stale =
+            await handler.HandleAsync(
+                Command(application) with
+                {
+                    ExpectedVersion = application.Version + 1,
+                    DisplayName = "Changed"
+                },
+                CancellationToken.None);
+        Assert.True(application.ObserveClaimRequested(
+            Guid.NewGuid(),
+            claimVersion: 1,
+            Now.AddMinutes(1)).IsSuccess);
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto> reviewed =
+            await handler.HandleAsync(
+                Command(application) with { DisplayName = "Changed" },
+                CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffOnboardingErrors.CorrectionVersionConflict,
+            stale.Error);
+        Assert.Equal(
+            WorkspaceStaffOnboardingErrors.CorrectionUnavailable,
+            reviewed.Error);
+        Assert.Empty(claims.Requests);
+    }
+
     [Fact]
     public async Task Receipt_committed_while_waiting_for_lock_is_replayed()
     {
@@ -268,13 +511,65 @@ public sealed class
         Assert.Equal(0, gate.EvaluationCount);
     }
 
+    [Fact]
+    public async Task Staff_anchor_found_after_lock_returns_commit_shaped_moved_outcome()
+    {
+        WorkspaceStaffOnboarding application = CreateApplication();
+        Guid staffMemberId = Guid.NewGuid();
+        Guid resolutionEventId = Guid.NewGuid();
+        InMemoryReceiptRepository receipts = new();
+        ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler handler =
+            CreateHandler(
+                application,
+                receipts,
+                new RecordingCorrectionLock(),
+                new RecordingExecutionGate(),
+                anchorOutcomes:
+                    new StubStaffWorkspaceOnboardingIdentityAnchorOutcomeReader(
+                        request => new(
+                            request.ApplicationId,
+                            StaffWorkspaceOnboardingIdentityAnchorOutcomeStatus
+                                .Unresolved,
+                            staffMemberId,
+                            StaffWorkspaceOnboardingIdentityAnchorTargetLifecycle
+                                .Active,
+                            StaffWorkspaceOnboardingIdentityAnchorSubjectMatch
+                                .Exact,
+                            WorkspaceApplicationVersion: null,
+                            ResolutionDisposition: null,
+                            resolutionEventId)));
+
+        Result<WorkspaceStaffOnboardingDataRightsCorrectionOutcome> result =
+            await handler.HandleWithAuthorityOutcomeAsync(
+                Command(application) with
+                {
+                    DisplayName = "Must not be written"
+                },
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal(
+            WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind
+                .AuthorityMovedToStaff,
+            result.Value.Kind);
+        Assert.Null(result.Value.Receipt);
+        Assert.Null(receipts.Receipt);
+        Assert.Equal(WorkspaceStaffOnboardingState.StaffReady, application.Status);
+        Assert.Equal(staffMemberId, application.StaffMemberId);
+        Assert.Null(application.DisplayName);
+        Assert.Null(application.VerifiedAccountEmail);
+    }
+
     private static
         ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommandHandler
         CreateHandler(
             WorkspaceStaffOnboarding application,
             InMemoryReceiptRepository receipts,
             RecordingCorrectionLock correctionLock,
-            RecordingExecutionGate gate)
+            RecordingExecutionGate gate,
+            FakeOrganizationEnrollmentClaimInspector? claims = null,
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader?
+                anchorOutcomes = null)
     {
         InMemoryApplicationRepository applications = new(application);
         return new(
@@ -282,9 +577,12 @@ public sealed class
             WorkspaceStaffOnboardingMutationTestSupport.Create(
                 applications,
                 correctionLock),
+            WorkspaceStaffOnboardingMutationTestSupport
+                .CreateIdentityAnchorConvergence(anchorOutcomes),
             new WorkspaceStaffOnboardingDataRightsCorrectionAuthorizer(
                 gate,
                 new TestScopeContext()),
+            claims ?? new FakeOrganizationEnrollmentClaimInspector(),
             new TestScopeContext(),
             new TestClock(),
             new SequenceIdGenerator());
@@ -307,11 +605,13 @@ public sealed class
             application.Department,
             "user:privacy-owner");
 
-    private static WorkspaceStaffOnboarding CreateApplication() =>
+    private static WorkspaceStaffOnboarding CreateApplication(
+        WorkspaceStaffOnboardingSource sourceKind =
+            WorkspaceStaffOnboardingSource.EnrollmentLink) =>
         WorkspaceStaffOnboarding.Create(
             Guid.Parse("40000000-0000-0000-0000-000000000001"),
             TenantId,
-            WorkspaceStaffOnboardingSource.EnrollmentLink,
+            sourceKind,
             Guid.Parse("50000000-0000-0000-0000-000000000001"),
             "subject:applicant",
             "verified@example.test",
@@ -323,6 +623,27 @@ public sealed class
             "Manager",
             "Operations",
             Now.AddHours(-1)).Value;
+
+    private static OrganizationEnrollmentClaimDto Claim(
+        WorkspaceStaffOnboarding application,
+        OrganizationEnrollmentClaimStatus status) => new(
+        Guid.Parse("60000000-0000-0000-0000-000000000001"),
+        application.SourceId,
+        Guid.Parse(TenantId),
+        application.SubjectId,
+        status,
+        status == OrganizationEnrollmentClaimStatus.Accepted
+            ? Guid.Parse("70000000-0000-0000-0000-000000000001")
+            : null,
+        Version: 2,
+        Now,
+        Now.AddMinutes(1))
+        {
+            DecisionExpiresAtUtc =
+            status == OrganizationEnrollmentClaimStatus.Pending
+                ? Now.AddMinutes(5)
+                : null
+        };
 
     private sealed class RecordingExecutionGate(bool allowed = true)
         : IDataRightsCorrectionExecutionGate
@@ -476,7 +797,7 @@ public sealed class
                 CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

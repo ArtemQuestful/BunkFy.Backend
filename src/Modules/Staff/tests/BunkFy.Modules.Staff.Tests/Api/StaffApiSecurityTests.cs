@@ -110,7 +110,9 @@ public sealed class StaffApiSecurityTests
         [
             StaffApplicationErrors.AuthSubjectUnlinkRequiresSuspension,
             StaffApplicationErrors.AuthSubjectReplacementRequiresUnlink,
-            StaffApplicationErrors.AuthSubjectLinkRequiresActive
+            StaffApplicationErrors.AuthSubjectLinkRequiresActive,
+            StaffApplicationErrors.IdentityAnchorResolutionRequired,
+            StaffApplicationErrors.IdentityAnchorAccessClosureRequired
         ];
 
         foreach (Error error in errors)

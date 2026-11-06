@@ -10,7 +10,7 @@ using BunkFy.Modules.DataRights.Contracts;
 internal static class StaffDataRightsExportSchema
 {
     public const string ExportSchemaId = "staff.subject-export";
-    public const int ExportSchemaVersion = 2;
+    public const int ExportSchemaVersion = 5;
 
     private const string CatalogResourceName =
         "BunkFy.Modules.Staff.Persistence.DataGovernance.personal-data-catalog.v1.json";
@@ -142,6 +142,52 @@ internal static class StaffDataRightsExportSchema
                 (nameof(operation.CompletedAtUtc), operation.CompletedAtUtc)
             ]);
 
+    public static DataRightsExportRecord
+        CreateIdentityProvisioningAnchorRecord(
+            StaffIdentityProvisioningAnchorDataRightsExport anchor) =>
+        CreateRecord(
+            StaffDataRightsExportContributor
+                .IdentityProvisioningAnchorRecordType,
+            IdentityProvisioningAnchorRecordId.Create(
+                anchor.StaffMemberId,
+                anchor.SourceKind,
+                anchor.SourceId),
+            recordVersion: 1,
+            typeof(StaffIdentityProvisioningAnchorDataRightsExport),
+            [
+                (nameof(anchor.StaffMemberId), anchor.StaffMemberId),
+                (nameof(anchor.SourceKind), anchor.SourceKind),
+                (nameof(anchor.SourceId), anchor.SourceId),
+                (nameof(anchor.ResolutionEventId),
+                    anchor.ResolutionEventId),
+                (nameof(anchor.AnchoredAtUtc), anchor.AnchoredAtUtc)
+            ]);
+
+    public static DataRightsExportRecord
+        CreateIdentityProvisioningAnchorResolutionRecord(
+            StaffIdentityProvisioningAnchorResolutionDataRightsExport
+                resolution) =>
+        CreateRecord(
+            StaffDataRightsExportContributor
+                .IdentityProvisioningAnchorResolutionRecordType,
+            IdentityProvisioningAnchorRecordId.CreateResolution(
+                resolution.StaffMemberId,
+                resolution.SourceKind,
+                resolution.SourceId),
+            resolution.WorkspaceApplicationVersion,
+            typeof(StaffIdentityProvisioningAnchorResolutionDataRightsExport),
+            [
+                (nameof(resolution.StaffMemberId), resolution.StaffMemberId),
+                (nameof(resolution.SourceKind), resolution.SourceKind),
+                (nameof(resolution.SourceId), resolution.SourceId),
+                (nameof(resolution.WorkspaceApplicationVersion),
+                    resolution.WorkspaceApplicationVersion),
+                (nameof(resolution.Disposition), resolution.Disposition),
+                (nameof(resolution.ResolutionEventId),
+                    resolution.ResolutionEventId),
+                (nameof(resolution.ResolvedAtUtc), resolution.ResolvedAtUtc)
+            ]);
+
     private static DataRightsExportRecord CreateRecord(
         string recordType,
         Guid recordId,
@@ -215,7 +261,9 @@ internal static class StaffDataRightsExportSchema
             typeof(StaffAssignmentDataRightsExport),
             typeof(StaffEmploymentGovernanceDataRightsExport),
             typeof(StaffDataHoldDataRightsExport),
-            typeof(StaffMemberMutationOperationDataRightsExport)
+            typeof(StaffMemberMutationOperationDataRightsExport),
+            typeof(StaffIdentityProvisioningAnchorDataRightsExport),
+            typeof(StaffIdentityProvisioningAnchorResolutionDataRightsExport)
         ];
         HashSet<string> expectedMembers = sourceTypes
             .SelectMany(type => type.GetProperties(BindingFlags.Instance | BindingFlags.Public)

@@ -6,6 +6,8 @@ using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Runtime.Time;
 using Gma.Modules.Organizations.Contracts;
 using Microsoft.Extensions.Logging;
+using DomainRestorationDisposition =
+    BunkFy.Modules.Workspaces.Domain.WorkspaceStaffAccessRestorationDisposition;
 
 internal sealed class WorkspaceStaffAccessRestorer(
     IOrganizationMembershipLifecycle memberships,
@@ -24,7 +26,9 @@ internal sealed class WorkspaceStaffAccessRestorer(
         }
 
         if (process.State != WorkspaceStaffAccessProcessState.RestorationPending ||
-            process.TargetState != WorkspaceStaffAccessTargetState.Active)
+            process.TargetState != WorkspaceStaffAccessTargetState.Active ||
+            process.RestorationDisposition !=
+                DomainRestorationDisposition.RestoreSnapshot)
         {
             return WorkspaceStaffAccessCoordinationOutcome.RetryRequired;
         }

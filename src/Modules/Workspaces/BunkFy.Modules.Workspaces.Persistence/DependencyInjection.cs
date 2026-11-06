@@ -34,6 +34,27 @@ public static class DependencyInjection
             IWorkspaceStaffOnboardingRepository,
             WorkspaceStaffOnboardingRepository>();
         builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingRestorationSuppressionReader,
+            WorkspaceStaffOnboardingRestorationSuppressionReader>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence,
+            WorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffIdentityAnchorCutoverSourceReader,
+            WorkspaceStaffIdentityAnchorCutoverSourceReader>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffIdentityAnchorSweepRepository,
+            WorkspaceStaffIdentityAnchorSweepRepository>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffHistoricalNoProvisionReceiptRepository,
+            WorkspaceStaffHistoricalNoProvisionReceiptRepository>();
+        builder.Services.TryAddScoped<
+            IWorkspaceIdentityAnchorCutoverExecutionBoundary,
+            WorkspaceIdentityAnchorCutoverExecutionBoundary>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffDeferredClaimWithdrawalRepository,
+            WorkspaceStaffDeferredClaimWithdrawalRepository>();
+        builder.Services.TryAddScoped<
             IWorkspaceStaffOnboardingRetentionRepository,
             WorkspaceStaffOnboardingRetentionRepository>();
         builder.Services.TryAddScoped<
@@ -60,6 +81,9 @@ public static class DependencyInjection
         builder.Services.TryAddScoped<
             IWorkspaceStaffOnboardingOperationLock,
             WorkspaceStaffOnboardingOperationLock>();
+        builder.Services.TryAddScoped<
+            IWorkspaceStaffOnboardingSerializedReadBoundary,
+            WorkspaceStaffOnboardingSerializedReadBoundary>();
         builder.Services.TryAddScoped<
             IWorkspaceStaffOnboardingDataRightsCorrectionTargetReader,
             WorkspaceStaffOnboardingDataRightsCorrectionTargetReader>();

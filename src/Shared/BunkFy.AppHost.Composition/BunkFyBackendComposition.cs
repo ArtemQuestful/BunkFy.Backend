@@ -217,7 +217,8 @@ public static class BunkFyBackendComposition
             .WithEnvironment("Tasks__Worker__WorkerGroups__5", "data-rights-workers")
             .WithEnvironment("Tasks__Worker__WorkerGroups__6", "retention-workers")
             .WithEnvironment("Tasks__Worker__WorkerGroups__7", "tenant-termination-workers")
-            .WithEnvironment("Tasks__Worker__WorkerGroups__8", "guest-record-link-workers");
+            .WithEnvironment("Tasks__Worker__WorkerGroups__8", "guest-record-link-workers")
+            .WithEnvironment("Tasks__Worker__WorkerGroups__9", "workspaces-maintenance-workers");
         if (sqlServer is { } configuredSqlServer)
         {
             worker.WithReference(configuredSqlServer).WaitFor(configuredSqlServer);

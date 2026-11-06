@@ -27,9 +27,12 @@ internal sealed class WorkspaceStaffOnboardingRetentionRepository(
                   plan.SourceExpiredAtUtc <= sourceExpiredBeforeUtc &&
                   application.SourceKind ==
                     WorkspaceStaffOnboardingSource.EnrollmentLink &&
-                  application.Status == WorkspaceStaffOnboardingState.Submitted &&
-                  application.ClaimId == null &&
-                  application.ClaimVersion == null
+                  ((application.Status == WorkspaceStaffOnboardingState.Submitted &&
+                    application.ClaimId == null &&
+                    application.ClaimVersion == null) ||
+                   (application.Status == WorkspaceStaffOnboardingState.PendingApproval &&
+                    application.ClaimId != null &&
+                    application.ClaimVersion != null))
             orderby plan.SourceExpiredAtUtc, application.LastChangedAtUtc, application.Id
             select new WorkspaceStaffOnboardingRetentionCandidate(
                 application.Id,

@@ -26,8 +26,8 @@ public sealed class StationProductionCompositionIntegrationTests
         await AssertProductionK0Async(
             publicApplication.Services,
             publicInventory,
-            expectedEndpointCount: 323,
-            expectedCanonicalSha256: "5f75b75ebdfe6895a28ae228b11f33515317841417983c6a38ecd03441633c26");
+            expectedEndpointCount: 325,
+            expectedCanonicalSha256: "8ebfbd4559bca9d31d3eaa68e85865bb01b35652dc5001381aa2ce90b8e677e8");
         await AssertProductionK0Async(
             adminApplication.Services,
             adminInventory,

@@ -52,6 +52,8 @@ internal static class WorkspacesApiEndpointSupport
         new(WorkspaceStaffOnboardingApplicationErrors.MembershipStateConflict.Code, StatusCodes.Status409Conflict),
         new(WorkspaceStaffOnboardingApplicationErrors.MembershipStateUnavailable.Code, StatusCodes.Status503ServiceUnavailable),
         new(WorkspaceStaffOnboardingApplicationErrors.AccessPlanUnavailable.Code, StatusCodes.Status409Conflict),
+        new(WorkspaceStaffOnboardingApplicationErrors.ProfileMutationAuthorityUnavailable.Code, StatusCodes.Status409Conflict),
+        new(WorkspaceStaffOnboardingApplicationErrors.ProfileReviewUnavailable.Code, StatusCodes.Status409Conflict),
         new(WorkspaceStaffOnboardingApplicationErrors.CorrectionRequestInvalid.Code, StatusCodes.Status400BadRequest),
         new(WorkspaceStaffOnboardingApplicationErrors.DataRightsApprovalRequired.Code, StatusCodes.Status403Forbidden),
         new(WorkspaceStaffOnboardingApplicationErrors.CorrectionTargetUnavailable.Code, StatusCodes.Status409Conflict),

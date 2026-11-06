@@ -13,14 +13,14 @@ internal sealed class StaffMemberMutationCoordinator(
         Guid staffMemberId,
         CancellationToken cancellationToken) => this.AcquireAndReloadAsync(
         staffMemberId,
-        members.GetAsync,
+        members.ReloadOperationalAsync,
         cancellationToken);
 
     public Task<StaffMember?> AcquireSafetyTransitionAsync(
         Guid staffMemberId,
         CancellationToken cancellationToken) => this.AcquireAndReloadAsync(
         staffMemberId,
-        members.GetForSafetyTransitionAsync,
+        members.ReloadForSafetyTransitionAsync,
         cancellationToken);
 
     private async Task<StaffMember?> AcquireAndReloadAsync(

@@ -869,6 +869,9 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<int>("RestorationDisposition")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -910,6 +913,8 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("staff_access_processes", "workspaces", t =>
                         {
+                            t.HasCheckConstraint("CK_staff_access_process_restoration_disposition", "(\"TargetState\" = 1 AND \"RestorationDisposition\" IN (2, 3)) OR (\"TargetState\" IN (2, 3) AND \"RestorationDisposition\" = 1)");
+
                             t.HasCheckConstraint("CK_staff_access_process_staff_version", "\"TargetStaffVersion\" >= 2");
 
                             t.HasCheckConstraint("CK_staff_access_process_state", "\"State\" BETWEEN 1 AND 4");
@@ -917,6 +922,298 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
                             t.HasCheckConstraint("CK_staff_access_process_target", "\"TargetState\" BETWEEN 1 AND 3");
 
                             t.HasCheckConstraint("CK_staff_access_process_version", "\"Version\" >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("ClaimId");
+
+                    b.Property<long>("ClaimVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("EnrollmentLinkId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScopeId", "Id");
+
+                    b.HasIndex("ScopeId", "EnrollmentLinkId", "ClaimVersion");
+
+                    b.ToTable("staff_deferred_claim_withdrawals", "workspaces", t =>
+                        {
+                            t.HasCheckConstraint("CK_staff_deferred_claim_withdrawal_coordinates", "\"ClaimId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"OrganizationId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"EnrollmentLinkId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"EventId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ScopeId\" = \"OrganizationId\"::text");
+
+                            t.HasCheckConstraint("CK_staff_deferred_claim_withdrawal_version", "\"ClaimVersion\" > 0");
+                        });
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CanonicalSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<int>("ContractVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ExpectedApplicationStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("ExpectedApplicationVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ExternalEvidenceManifestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExternalEvidenceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("OrganizationsScopeRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("OrganizationsSourceStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("OrganizationsSourceVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ResultApplicationStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("ResultApplicationVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("ReviewedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReviewerId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("SourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SourceKind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("StaffEvidenceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("ScopeId", "Id");
+
+                    b.HasIndex("ScopeId", "ApplicationId")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "ExternalEvidenceManifestId");
+
+                    b.HasIndex("ScopeId", "OperationId")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "SourceKind", "SourceId");
+
+                    b.ToTable("staff_historical_no_provision_receipts", "workspaces", t =>
+                        {
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_authority", "((\"SourceKind\" = 1 AND \"OrganizationsSourceStatus\" IN (3, 4, 5)) OR (\"SourceKind\" = 2 AND \"OrganizationsSourceStatus\" IN (7, 8, 9)))");
+
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_contract", "\"ContractVersion\" = 1");
+
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_hashes", "\"StaffEvidenceSha256\" ~ '^[0-9a-f]{64}$' AND \"ExternalEvidenceSha256\" ~ '^[0-9a-f]{64}$' AND \"CanonicalSha256\" ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_identifiers", "\"Id\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"OperationId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ApplicationId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"SourceId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ExternalEvidenceManifestId\" <> '00000000-0000-0000-0000-000000000000'::uuid");
+
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_reviewer", "char_length(\"ReviewerId\") BETWEEN 1 AND 256 AND \"ReviewerId\" = btrim(\"ReviewerId\") AND \"ReviewerId\" !~ '[[:cntrl:]]'");
+
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_transition", "((\"ExpectedApplicationStatus\" IN (5, 7, 8, 9, 10) AND \"ResultApplicationStatus\" = \"ExpectedApplicationStatus\") OR (\"ExpectedApplicationStatus\" IN (1, 2, 3, 4, 6) AND \"ResultApplicationStatus\" = 8 AND \"ResultApplicationVersion\" = \"ExpectedApplicationVersion\" + 1))");
+
+                            t.HasCheckConstraint("CK_ws_hist_no_prov_versions", "\"ExpectedApplicationVersion\" >= 1 AND \"ResultApplicationVersion\" >= \"ExpectedApplicationVersion\" AND \"ResultApplicationVersion\" <= \"ExpectedApplicationVersion\" + 1 AND \"OrganizationsScopeRevision\" >= 0 AND \"OrganizationsSourceVersion\" >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("AfterOrdinal")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleAlreadyObservedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleConflictCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleDeferredCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("CycleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CycleNoAnchorCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleObservedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CyclePassOneCommittedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleRemovedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleResolutionRecordConfirmedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CycleScannedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("CycleStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("CycleUpperOrdinal")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("LastAdvanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastAdvanceSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("LastCompletedAlreadyObservedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("LastCompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("LastCompletedConflictCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("LastCompletedCycleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("LastCompletedDeferredCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastCompletedNoAnchorCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastCompletedObservedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastCompletedPassOneCommittedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastCompletedRemovedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastCompletedResolutionRecordConfirmedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastCompletedScannedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("LastCompletedUpperOrdinal")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("LastRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ProtocolVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("ScopeId", "Id");
+
+                    b.HasIndex("ScopeId", "LastCompletedAtUtc");
+
+                    b.HasIndex("ScopeId", "ProtocolVersion")
+                        .IsUnique();
+
+                    b.ToTable("workspace_staff_identity_anchor_sweep_checkpoints", "workspaces", t =>
+                        {
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_cycle", "(\"CycleId\" IS NULL AND \"CycleUpperOrdinal\" IS NULL AND \"AfterOrdinal\" IS NULL AND \"CycleStartedAtUtc\" IS NULL AND \"CycleScannedCount\" = 0) OR (\"CycleId\" IS NOT NULL AND \"CycleUpperOrdinal\" > 0 AND (\"AfterOrdinal\" IS NULL OR (\"AfterOrdinal\" > 0 AND \"AfterOrdinal\" <= \"CycleUpperOrdinal\")) AND \"CycleStartedAtUtc\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_cycle_counts_nonnegative", "\"CycleScannedCount\" >= 0 AND \"CycleNoAnchorCount\" >= 0 AND \"CycleRemovedCount\" >= 0 AND \"CycleObservedCount\" >= 0 AND \"CycleAlreadyObservedCount\" >= 0 AND \"CycleDeferredCount\" >= 0 AND \"CycleConflictCount\" >= 0 AND \"CyclePassOneCommittedCount\" >= 0 AND \"CycleResolutionRecordConfirmedCount\" >= 0");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_cycle_counts_partition", "\"CycleScannedCount\" = \"CycleNoAnchorCount\" + \"CycleRemovedCount\" + \"CycleObservedCount\" + \"CycleAlreadyObservedCount\" + \"CycleDeferredCount\" + \"CycleConflictCount\" AND \"CyclePassOneCommittedCount\" <= \"CycleScannedCount\" AND \"CycleResolutionRecordConfirmedCount\" <= \"CycleScannedCount\"");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_identifiers", "\"Id\" <> '00000000-0000-0000-0000-000000000000'::uuid AND (\"CycleId\" IS NULL OR \"CycleId\" <> '00000000-0000-0000-0000-000000000000'::uuid) AND (\"LastCompletedCycleId\" IS NULL OR \"LastCompletedCycleId\" <> '00000000-0000-0000-0000-000000000000'::uuid) AND (\"LastAdvanceId\" IS NULL OR \"LastAdvanceId\" <> '00000000-0000-0000-0000-000000000000'::uuid) AND (\"LastRunId\" IS NULL OR \"LastRunId\" <> '00000000-0000-0000-0000-000000000000'::uuid)");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_last_advance", "(\"LastAdvanceId\" IS NULL AND \"LastAdvanceSha256\" IS NULL) OR (\"LastAdvanceId\" IS NOT NULL AND \"LastAdvanceSha256\" ~ '^[0-9a-f]{64}$')");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_last_counts_nonnegative", "\"LastCompletedScannedCount\" >= 0 AND \"LastCompletedNoAnchorCount\" >= 0 AND \"LastCompletedRemovedCount\" >= 0 AND \"LastCompletedObservedCount\" >= 0 AND \"LastCompletedAlreadyObservedCount\" >= 0 AND \"LastCompletedDeferredCount\" >= 0 AND \"LastCompletedConflictCount\" >= 0 AND \"LastCompletedPassOneCommittedCount\" >= 0 AND \"LastCompletedResolutionRecordConfirmedCount\" >= 0");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_last_counts_partition", "\"LastCompletedScannedCount\" = \"LastCompletedNoAnchorCount\" + \"LastCompletedRemovedCount\" + \"LastCompletedObservedCount\" + \"LastCompletedAlreadyObservedCount\" + \"LastCompletedDeferredCount\" + \"LastCompletedConflictCount\" AND \"LastCompletedPassOneCommittedCount\" <= \"LastCompletedScannedCount\" AND \"LastCompletedResolutionRecordConfirmedCount\" <= \"LastCompletedScannedCount\"");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_last_cycle", "(\"LastCompletedCycleId\" IS NULL AND \"LastCompletedUpperOrdinal\" IS NULL AND \"LastCompletedAtUtc\" IS NULL AND \"LastCompletedScannedCount\" = 0) OR (\"LastCompletedCycleId\" IS NOT NULL AND (\"LastCompletedUpperOrdinal\" > 0 OR (\"LastCompletedUpperOrdinal\" IS NULL AND \"LastCompletedScannedCount\" = 0)) AND \"LastCompletedAtUtc\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_protocol", "\"ProtocolVersion\" = 1");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_run", "(\"CycleId\" IS NULL AND \"LastCompletedCycleId\" IS NULL AND \"LastAdvanceId\" IS NULL AND \"LastRunId\" IS NULL) OR (\"LastRunId\" IS NOT NULL AND (\"CycleId\" IS NOT NULL OR \"LastCompletedCycleId\" IS NOT NULL))");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_times", "(\"CycleStartedAtUtc\" IS NULL OR \"CycleStartedAtUtc\" <= \"UpdatedAtUtc\") AND (\"LastCompletedAtUtc\" IS NULL OR \"LastCompletedAtUtc\" <= \"UpdatedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_ws_anchor_sweep_version", "\"Version\" >= 1");
                         });
                 });
 
@@ -956,6 +1253,36 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<string>("FailureCode")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("IdentityAnchorContinuationEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("IdentityAnchorExpectedResolutionEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("IdentityAnchorResolutionApplicationVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("IdentityAnchorResolutionDisposition")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("IdentityAnchorResolutionEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("IdentityAnchorResolutionIntentAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("IdentityAnchorResolutionObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("IdentityAnchorResolutionStaffMemberId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("IdentityAnchorSweepOrdinal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("IdentityAnchorSweepOrdinal"));
 
                     b.Property<string>("JobTitle")
                         .HasMaxLength(128)
@@ -1008,7 +1335,20 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("ScopeId", "Id");
+
+                    b.HasIndex("IdentityAnchorContinuationEventId")
+                        .IsUnique()
+                        .HasFilter("\"IdentityAnchorContinuationEventId\" IS NOT NULL");
+
+                    b.HasIndex("IdentityAnchorExpectedResolutionEventId")
+                        .IsUnique()
+                        .HasFilter("\"IdentityAnchorExpectedResolutionEventId\" IS NOT NULL");
+
                     b.HasIndex("ScopeId", "ClaimId")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "IdentityAnchorSweepOrdinal")
                         .IsUnique();
 
                     b.HasIndex("ScopeId", "StaffMemberId", "Id")
@@ -1023,19 +1363,33 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
 
                     b.ToTable("staff_onboarding_applications", "workspaces", t =>
                         {
+                            t.HasCheckConstraint("CK_staff_onboarding_anchor_bound_redaction", "\"StaffMemberId\" IS NULL OR (\"VerifiedAccountEmail\" IS NULL AND \"DisplayName\" IS NULL AND \"LegalName\" IS NULL AND \"WorkEmail\" IS NULL AND \"WorkPhone\" IS NULL AND \"EmployeeNumber\" IS NULL AND \"JobTitle\" IS NULL AND \"Department\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_staff_onboarding_anchor_expected_resolution", "(\"IdentityAnchorExpectedResolutionEventId\" IS NULL OR (\"StaffMemberId\" IS NOT NULL AND \"IdentityAnchorExpectedResolutionEventId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"IdentityAnchorExpectedResolutionEventId\" <> \"Id\")) AND (\"IdentityAnchorContinuationEventId\" IS NULL OR (\"IdentityAnchorExpectedResolutionEventId\" IS NOT NULL AND \"IdentityAnchorContinuationEventId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"IdentityAnchorContinuationEventId\" <> \"Id\" AND \"IdentityAnchorContinuationEventId\" <> \"IdentityAnchorExpectedResolutionEventId\"))");
+
+                            t.HasCheckConstraint("CK_staff_onboarding_anchor_resolution_coordinates", "\"IdentityAnchorResolutionEventId\" IS NULL OR (\"IdentityAnchorExpectedResolutionEventId\" IS NOT NULL AND \"IdentityAnchorResolutionEventId\" = \"IdentityAnchorExpectedResolutionEventId\" AND \"StaffMemberId\" IS NOT NULL AND \"IdentityAnchorResolutionStaffMemberId\" = \"StaffMemberId\")");
+
+                            t.HasCheckConstraint("CK_staff_onboarding_anchor_resolution_intent", "(\"IdentityAnchorResolutionEventId\" IS NULL AND \"IdentityAnchorResolutionStaffMemberId\" IS NULL AND \"IdentityAnchorResolutionApplicationVersion\" IS NULL AND \"IdentityAnchorResolutionDisposition\" IS NULL AND \"IdentityAnchorResolutionIntentAtUtc\" IS NULL) OR (\"IdentityAnchorResolutionEventId\" IS NOT NULL AND \"StaffMemberId\" IS NOT NULL AND \"IdentityAnchorResolutionStaffMemberId\" IS NOT NULL AND \"IdentityAnchorResolutionApplicationVersion\" > 0 AND \"IdentityAnchorResolutionApplicationVersion\" <= \"Version\" AND \"IdentityAnchorResolutionDisposition\" BETWEEN 1 AND 5 AND \"IdentityAnchorResolutionIntentAtUtc\" IS NOT NULL AND \"IdentityAnchorResolutionIntentAtUtc\" <= \"LastChangedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_staff_onboarding_anchor_resolution_observation", "\"IdentityAnchorResolutionObservedAtUtc\" IS NULL OR (\"IdentityAnchorResolutionEventId\" IS NOT NULL AND \"IdentityAnchorResolutionObservedAtUtc\" >= \"IdentityAnchorResolutionIntentAtUtc\" AND \"IdentityAnchorResolutionObservedAtUtc\" <= \"LastChangedAtUtc\")");
+
+                            t.HasCheckConstraint("CK_staff_onboarding_anchor_resolution_terminal", "\"IdentityAnchorResolutionEventId\" IS NULL OR ((\"Status\" = 5 AND \"IdentityAnchorResolutionDisposition\" = 1) OR (\"Status\" = 7 AND \"IdentityAnchorResolutionDisposition\" = 2) OR (\"Status\" = 8 AND \"IdentityAnchorResolutionDisposition\" = 3) OR (\"Status\" = 9 AND \"IdentityAnchorResolutionDisposition\" = 4) OR (\"Status\" = 10 AND \"IdentityAnchorResolutionDisposition\" = 5))");
+
                             t.HasCheckConstraint("CK_staff_onboarding_claim", "(\"ClaimId\" IS NULL AND \"ClaimVersion\" IS NULL) OR (\"ClaimId\" IS NOT NULL AND \"ClaimVersion\" > 0)");
 
                             t.HasCheckConstraint("CK_staff_onboarding_membership_binding", "(\"AcceptedMembershipId\" IS NULL AND \"AcceptedMembershipVersion\" IS NULL) OR (\"AcceptedMembershipId\" IS NOT NULL AND \"AcceptedMembershipVersion\" > 0)");
 
-                            t.HasCheckConstraint("CK_staff_onboarding_pending_profile", "\"Status\" IN (5, 7, 8, 9, 10) OR (\"VerifiedAccountEmail\" IS NOT NULL AND \"DisplayName\" IS NOT NULL)");
+                            t.HasCheckConstraint("CK_staff_onboarding_identity_anchor_sweep_ordinal", "\"IdentityAnchorSweepOrdinal\" > 0");
+
+                            t.HasCheckConstraint("CK_staff_onboarding_pending_profile", "\"StaffMemberId\" IS NOT NULL OR \"Status\" IN (5, 7, 8, 9, 10) OR (\"VerifiedAccountEmail\" IS NOT NULL AND \"DisplayName\" IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_staff_onboarding_source", "\"SourceKind\" IN (1, 2)");
 
-                            t.HasCheckConstraint("CK_staff_onboarding_staff", "\"Status\" NOT IN (4, 5) OR \"StaffMemberId\" IS NOT NULL");
+                            t.HasCheckConstraint("CK_staff_onboarding_staff", "(\"StaffMemberId\" IS NULL OR \"StaffMemberId\" <> '00000000-0000-0000-0000-000000000000'::uuid) AND (\"Status\" NOT IN (4, 5) OR \"StaffMemberId\" IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_staff_onboarding_status", "\"Status\" BETWEEN 1 AND 10");
 
-                            t.HasCheckConstraint("CK_staff_onboarding_terminal_redaction", "\"Status\" NOT IN (5, 7, 8, 9, 10) OR (\"VerifiedAccountEmail\" IS NULL AND \"DisplayName\" IS NULL AND \"LegalName\" IS NULL AND \"WorkEmail\" IS NULL AND \"WorkPhone\" IS NULL AND \"EmployeeNumber\" IS NULL AND \"JobTitle\" IS NULL AND \"Department\" IS NULL)");
+                            t.HasCheckConstraint("CK_staff_onboarding_terminal_redaction", "\"Status\" NOT IN (4, 5, 7, 8, 9, 10) OR (\"VerifiedAccountEmail\" IS NULL AND \"DisplayName\" IS NULL AND \"LegalName\" IS NULL AND \"WorkEmail\" IS NULL AND \"WorkPhone\" IS NULL AND \"EmployeeNumber\" IS NULL AND \"JobTitle\" IS NULL AND \"Department\" IS NULL)");
 
                             t.HasCheckConstraint("CK_staff_onboarding_version", "\"Version\" >= 1");
                         });
@@ -1431,7 +1785,7 @@ namespace BunkFy.Modules.Workspaces.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_workspaces_tenant_destroy_operation_batch", "\"BatchSize\" BETWEEN 1 AND 500");
 
-                            t.HasCheckConstraint("CK_workspaces_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 21 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
+                            t.HasCheckConstraint("CK_workspaces_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 23 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
 
                             t.HasCheckConstraint("CK_workspaces_tenant_destroy_operation_revisions", "\"SelectedFenceVersion\" >= 1 AND \"ResultingFenceVersion\" = \"SelectedFenceVersion\" + 2");
 

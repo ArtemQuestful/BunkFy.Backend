@@ -589,19 +589,21 @@ public sealed class WorkspacesModelTests
                 restricted.SubjectId,
                 CancellationToken.None));
 
-        WorkspaceStaffOnboardingListResponse firstPage =
+        WorkspaceStaffOnboardingSummaryListResponse firstPage =
             await repository.ListActionableAsync(
                 new Gma.Framework.Pagination.PageRequest(1, 1),
                 CancellationToken.None);
-        WorkspaceStaffOnboardingDto first = Assert.Single(firstPage.Items);
+        WorkspaceStaffOnboardingActionableSummaryDto first =
+            Assert.Single(firstPage.Items);
         Assert.Equal(unrestricted.Id, first.ApplicationId);
         Assert.True(firstPage.HasMore);
 
-        WorkspaceStaffOnboardingListResponse secondPage =
+        WorkspaceStaffOnboardingSummaryListResponse secondPage =
             await repository.ListActionableAsync(
                 new Gma.Framework.Pagination.PageRequest(2, 1),
                 CancellationToken.None);
-        WorkspaceStaffOnboardingDto second = Assert.Single(secondPage.Items);
+        WorkspaceStaffOnboardingActionableSummaryDto second =
+            Assert.Single(secondPage.Items);
         Assert.Equal(unrestrictedSecond.Id, second.ApplicationId);
         Assert.False(secondPage.HasMore);
     }

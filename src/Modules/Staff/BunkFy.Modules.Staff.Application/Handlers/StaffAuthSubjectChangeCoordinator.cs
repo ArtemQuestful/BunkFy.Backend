@@ -11,6 +11,7 @@ using Gma.Framework.Runtime.Time;
 internal sealed class StaffAuthSubjectChangeCoordinator(
     IStaffMemberRepository members,
     IStaffMemberMutationOperationRepository operations,
+    IStaffIdentityProvisioningAnchorRepository anchors,
     ISystemClock clock,
     IIdGenerator ids)
 {
@@ -55,6 +56,15 @@ internal sealed class StaffAuthSubjectChangeCoordinator(
 
         if (transition.Value)
         {
+            if (await anchors.HasWorkspaceOnboardingAsync(
+                    member.Id,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return Result.Failure<StaffMemberMutationReceiptDto>(
+                    StaffApplicationErrors
+                        .IdentityAnchorAccessClosureRequired);
+            }
+
             Result uniqueness = await StaffMemberUniqueness.EnsureAuthSubjectAsync(
                 members,
                 values.AuthSubject.Value,

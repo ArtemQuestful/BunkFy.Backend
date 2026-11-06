@@ -32,4 +32,8 @@ public static class WorkspaceStaffRetentionErrors
     public static readonly Error AccessMappingConflict = new(
         "Workspaces.StaffRetentionCorrelationAccessMappingConflict",
         "The workspace Staff departure mapping does not match the retention request.");
+
+    public static readonly Error IdentityAnchorUnavailable = new(
+        "Workspaces.StaffRetentionCorrelationIdentityAnchorUnavailable",
+        "Workspace Staff identity-anchor resolution must be exact and observed before retention correlation scrubbing.");
 }

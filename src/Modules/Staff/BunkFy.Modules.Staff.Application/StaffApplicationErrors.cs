@@ -23,6 +23,30 @@ public static class StaffApplicationErrors
     public static readonly Error CreationOperationConflict = new(
         "Staff.CreationOperationConflict",
         "The Staff creation operation was already used for different profile data.");
+    public static readonly Error IdentityProvisioningSourceInvalid = new(
+        "Staff.IdentityProvisioningSourceInvalid",
+        "A valid stable Staff identity provisioning source id is required.");
+    public static readonly Error IdentityProvisioningAnchorConflict = new(
+        "Staff.IdentityProvisioningAnchorConflict",
+        "The Staff identity provisioning source is anchored to a different identity.");
+    public static readonly Error IdentityProvisioningAnchorCorrupt = new(
+        "Staff.IdentityProvisioningAnchorCorrupt",
+        "The Staff identity provisioning anchor target is unavailable.");
+    public static readonly Error IdentityAnchorCutoverRequestInvalid = new(
+        "Staff.IdentityAnchorCutoverRequestInvalid",
+        "The Staff identity-anchor cutover request is invalid.");
+    public static readonly Error IdentityAnchorCutoverBlocked = new(
+        "Staff.IdentityAnchorCutoverBlocked",
+        "The Staff identity-anchor cutover contains ambiguous or conflicting evidence.");
+    public static readonly Error IdentityAnchorLifecycleRequestInvalid = new(
+        "Staff.IdentityAnchorLifecycleRequestInvalid",
+        "The Staff identity-anchor lifecycle request is invalid.");
+    public static readonly Error IdentityAnchorResolutionRequired = new(
+        "Staff.IdentityAnchorResolutionRequired",
+        "Workspace onboarding must finish redaction before this Staff identity lifecycle change can continue.");
+    public static readonly Error IdentityAnchorAccessClosureRequired = new(
+        "Staff.IdentityAnchorAccessClosureRequired",
+        "Workspace onboarding access must be closed before this Staff account link can change.");
     public static readonly Error OnboardingOperationInvalid = new(
         "Staff.OnboardingOperationInvalid",
         "A valid Staff onboarding operation id is required.");

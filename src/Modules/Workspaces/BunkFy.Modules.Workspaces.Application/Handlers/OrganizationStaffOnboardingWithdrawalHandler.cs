@@ -12,6 +12,7 @@ using Gma.Modules.Organizations.Contracts;
 internal sealed class OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler(
     IWorkspaceStaffOnboardingRepository applications,
     IWorkspaceStaffAccessPlanRepository plans,
+    IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
     ISystemClock clock)
     : IIntegrationEventHandler<OrganizationEnrollmentClaimWithdrawnIntegrationEvent>
@@ -27,10 +28,74 @@ internal sealed class OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler
         WorkspaceStaffOnboarding? application = await applications.GetByClaimAsync(
             integrationEvent.ClaimId,
             cancellationToken).ConfigureAwait(false);
+        WorkspaceStaffDeferredClaimWithdrawal? deferred =
+            await deferredWithdrawals.GetAsync(
+                integrationEvent.ClaimId,
+                cancellationToken).ConfigureAwait(false);
         if (application is null)
         {
-            throw new InvalidOperationException(
-                "A withdrawn organization enrollment claim had no BunkFy Staff onboarding application.");
+            IReadOnlyList<WorkspaceStaffOnboarding> active =
+                await applications.ListActiveBySourceAsync(
+                    WorkspaceStaffOnboardingSource.EnrollmentLink,
+                    integrationEvent.EnrollmentLinkId,
+                    cancellationToken).ConfigureAwait(false);
+            WorkspaceStaffAccessPlan? plan = await plans.GetAsync(
+                integrationEvent.EnrollmentLinkId,
+                cancellationToken).ConfigureAwait(false);
+            if (plan is null)
+            {
+                if (active.Count > 0 || deferred is not null)
+                {
+                    throw new InvalidOperationException(
+                        "A product-owned organization enrollment claim withdrawal lost its BunkFy Staff access plan.");
+                }
+
+                return;
+            }
+
+            EnsurePlanMatches(plan, integrationEvent);
+            if (plan.Status != WorkspaceStaffAccessPlanState.Active)
+            {
+                if (active.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        "A terminal BunkFy Staff access plan retained an active onboarding application.");
+                }
+
+                if (deferred is not null)
+                {
+                    EnsureDeferredMatches(deferred, integrationEvent);
+                    deferredWithdrawals.Remove(deferred);
+                }
+
+                return;
+            }
+
+            if (deferred is not null)
+            {
+                EnsureDeferredMatches(deferred, integrationEvent);
+                return;
+            }
+
+            Result<WorkspaceStaffDeferredClaimWithdrawal> created =
+                WorkspaceStaffDeferredClaimWithdrawal.Create(
+                    integrationEvent.ScopeId,
+                    integrationEvent.OrganizationId,
+                    integrationEvent.EnrollmentLinkId,
+                    integrationEvent.ClaimId,
+                    integrationEvent.ClaimVersion,
+                    integrationEvent.EventId,
+                    integrationEvent.OccurredAtUtc);
+            if (created.IsFailure)
+            {
+                throw new InvalidOperationException(
+                    $"Staff onboarding could not defer claim withdrawal: '{created.Error.Code}'.");
+            }
+
+            await deferredWithdrawals.AddAsync(
+                created.Value,
+                cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         if (!await mutations.AcquireTrackedUnderSourceAsync(
@@ -42,10 +107,29 @@ internal sealed class OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler
         }
 
         if (application.SourceKind != WorkspaceStaffOnboardingSource.EnrollmentLink ||
-            application.SourceId != integrationEvent.EnrollmentLinkId)
+            application.SourceId != integrationEvent.EnrollmentLinkId ||
+            !string.Equals(
+                application.ScopeId,
+                integrationEvent.ScopeId,
+                StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "A withdrawn organization enrollment claim did not match its BunkFy Staff onboarding source.");
+        }
+
+        WorkspaceStaffAccessPlan? applicationPlan = await plans.GetAsync(
+            integrationEvent.EnrollmentLinkId,
+            cancellationToken).ConfigureAwait(false);
+        if (applicationPlan is null)
+        {
+            throw new InvalidOperationException(
+                "A withdrawn organization enrollment claim matched a BunkFy Staff onboarding application without its access plan.");
+        }
+
+        EnsurePlanMatches(applicationPlan, integrationEvent);
+        if (deferred is not null)
+        {
+            EnsureDeferredMatches(deferred, integrationEvent);
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
@@ -59,12 +143,54 @@ internal sealed class OrganizationEnrollmentClaimWithdrawnStaffOnboardingHandler
                 $"Staff onboarding could not observe claim withdrawal: '{withdrawn.Error.Code}'.");
         }
 
+        if (deferred is not null)
+        {
+            deferredWithdrawals.Remove(deferred);
+        }
+
         await OrganizationEnrollmentClaimExpiredStaffOnboardingHandler
             .ExpirePlanWhenUnusedUnderSourceLockAsync(
                 applications,
                 plans,
+                deferredWithdrawals,
                 application.SourceId,
                 nowUtc,
                 cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void EnsurePlanMatches(
+        WorkspaceStaffAccessPlan plan,
+        OrganizationEnrollmentClaimWithdrawnIntegrationEvent integrationEvent)
+    {
+        if (plan.Id != integrationEvent.EnrollmentLinkId ||
+            plan.SourceKind != WorkspaceStaffOnboardingSource.EnrollmentLink ||
+            !string.Equals(
+                plan.ScopeId,
+                integrationEvent.ScopeId,
+                StringComparison.Ordinal) ||
+            !Guid.TryParse(integrationEvent.ScopeId, out Guid organizationId) ||
+            organizationId != integrationEvent.OrganizationId)
+        {
+            throw new InvalidOperationException(
+                "A withdrawn organization enrollment claim did not match its BunkFy Staff access plan.");
+        }
+    }
+
+    private static void EnsureDeferredMatches(
+        WorkspaceStaffDeferredClaimWithdrawal deferred,
+        OrganizationEnrollmentClaimWithdrawnIntegrationEvent integrationEvent)
+    {
+        if (!deferred.Matches(
+                integrationEvent.ScopeId,
+                integrationEvent.OrganizationId,
+                integrationEvent.EnrollmentLinkId,
+                integrationEvent.ClaimId,
+                integrationEvent.ClaimVersion,
+                integrationEvent.EventId,
+                integrationEvent.OccurredAtUtc))
+        {
+            throw new InvalidOperationException(
+                "A duplicate organization enrollment claim withdrawal conflicted with its durable BunkFy observation.");
+        }
     }
 }

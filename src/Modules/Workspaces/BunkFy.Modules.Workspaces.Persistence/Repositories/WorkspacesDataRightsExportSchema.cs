@@ -11,7 +11,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 internal static class WorkspacesDataRightsExportSchema
 {
     public const string ExportSchemaId = "workspaces.subject-export";
-    public const int ExportSchemaVersion = 3;
+    public const int ExportSchemaVersion = 5;
 
     private const string CatalogResourceName =
         "BunkFy.Modules.Workspaces.Persistence.DataGovernance." +
@@ -29,15 +29,17 @@ internal static class WorkspacesDataRightsExportSchema
     [
         "access-control",
         "auth",
+        "messaging",
         "organizations",
         "properties",
         "staff",
         WorkspacesDataRightsCoordinates.Owner
     ];
 
-    private static readonly Type[] SourceTypes =
+    private static readonly Type[] SubjectSourceTypes =
     [
         typeof(WorkspaceStaffOnboardingDataRightsExport),
+        typeof(WorkspaceStaffDeferredClaimWithdrawalDataRightsExport),
         typeof(
             WorkspaceStaffOnboardingCorrectionReceiptDataRightsExport),
         typeof(
@@ -53,6 +55,15 @@ internal static class WorkspacesDataRightsExportSchema
         typeof(WorkspaceStaffRetentionCorrelationDataRightsExport),
         typeof(
             WorkspaceStaffOnboardingRetentionExecutionDataRightsExport)
+    ];
+
+    private static readonly Type[] TenantTerminationSourceTypes =
+    [
+        .. SubjectSourceTypes,
+        typeof(
+            WorkspaceStaffIdentityAnchorSweepCheckpointDataRightsExport),
+        typeof(
+            WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport)
     ];
 
     private static readonly JsonSerializerOptions ValueSerializerOptions =
@@ -77,7 +88,7 @@ internal static class WorkspacesDataRightsExportSchema
         ArgumentNullException.ThrowIfNull(source);
 
         Type sourceType = source.GetType();
-        if (!SourceTypes.Contains(sourceType) ||
+        if (!TenantTerminationSourceTypes.Contains(sourceType) ||
             recordId == Guid.Empty ||
             recordVersion <= 0 ||
             string.IsNullOrWhiteSpace(recordType) ||
@@ -161,7 +172,9 @@ internal static class WorkspacesDataRightsExportSchema
         stream.CopyTo(buffer);
         PersonalDataCatalogDocument catalog =
             PersonalDataCatalogJson.Parse(buffer.ToArray());
-        if (!string.Equals(
+        if (catalog.CatalogVersion !=
+                WorkspacesTenantTerminationMetadata.PersonalDataCatalogVersion ||
+            !string.Equals(
                 catalog.CatalogId,
                 "workspaces.personal-data",
                 StringComparison.Ordinal) ||
@@ -174,7 +187,7 @@ internal static class WorkspacesDataRightsExportSchema
                 "The Workspaces personal-data catalogue identity is invalid.");
         }
 
-        HashSet<string> expectedMembers = SourceTypes
+        HashSet<string> expectedMembers = TenantTerminationSourceTypes
             .SelectMany(type => type
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public)
                 .Select(property => MemberKey(type, property.Name)))
@@ -234,10 +247,12 @@ internal static class WorkspacesDataRightsExportSchema
                 ".");
         }
 
-        string[] fieldIds = fieldIdsByMember.Values
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(fieldId => fieldId, StringComparer.Ordinal)
-            .ToArray();
+        string[] subjectFieldIds = FieldIdsFor(
+            SubjectSourceTypes,
+            fieldIdsByMember);
+        string[] tenantTerminationFieldIds = FieldIdsFor(
+            TenantTerminationSourceTypes,
+            fieldIdsByMember);
         DataRightsExportDescriptor descriptor = new(
             WorkspacesDataRightsCoordinates.Owner,
             catalog.CatalogId,
@@ -245,7 +260,7 @@ internal static class WorkspacesDataRightsExportSchema
             catalog.CatalogVersion,
             ExportSchemaId,
             ExportSchemaVersion,
-            Array.AsReadOnly(fieldIds));
+            Array.AsReadOnly(subjectFieldIds));
         DataRightsExportDescriptor tenantTerminationDescriptor = new(
             WorkspacesDataRightsCoordinates.Owner,
             catalog.CatalogId,
@@ -253,12 +268,24 @@ internal static class WorkspacesDataRightsExportSchema
             catalog.CatalogVersion,
             WorkspacesTenantTerminationMetadata.ExportSchemaId,
             WorkspacesTenantTerminationMetadata.ExportSchemaVersion,
-            Array.AsReadOnly(fieldIds));
+            Array.AsReadOnly(tenantTerminationFieldIds));
         return new SchemaState(
             descriptor,
             tenantTerminationDescriptor,
             fieldIdsByMember);
     }
+
+    private static string[] FieldIdsFor(
+        IEnumerable<Type> sourceTypes,
+        Dictionary<string, string> fieldIdsByMember) =>
+        sourceTypes
+            .SelectMany(type => type
+                .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Select(property =>
+                    fieldIdsByMember[MemberKey(type, property.Name)]))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(fieldId => fieldId, StringComparer.Ordinal)
+            .ToArray();
 
     private static string MemberKey(Type sourceType, string member) =>
         string.Join('|', sourceType.FullName, member);

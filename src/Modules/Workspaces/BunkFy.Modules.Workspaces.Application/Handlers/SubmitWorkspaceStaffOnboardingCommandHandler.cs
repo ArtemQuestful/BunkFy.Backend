@@ -12,6 +12,7 @@ using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Gma.Modules.Auth.Contracts;
+using Gma.Modules.Organizations.Contracts;
 using Microsoft.Extensions.Options;
 
 internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
@@ -19,17 +20,37 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
     IWorkspaceStaffOnboardingProcessingRestrictionProjectionRepository
         restrictionProjections,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
+    WorkspaceStaffOnboardingIdentityAnchorConvergence anchorConvergence,
     IWorkspaceStaffAccessPlanRepository plans,
     WorkspaceStaffJoinTokenAuthorityResolver authorityResolver,
     IAuthMemberAdmissionReader admissions,
+    IOrganizationEnrollmentClaimInspector claims,
     IOptions<WorkspaceStaffOnboardingOptions> options,
     WorkspaceOperationalAdmissionEvaluator operationalAdmission,
     IScopeContext scopeContext,
     ISystemClock clock,
     IIdGenerator ids)
-    : ICommandHandler<SubmitWorkspaceStaffOnboardingCommand, WorkspaceStaffOnboardingDto>
+    : ICommandHandler<
+        SubmitWorkspaceStaffOnboardingCommand,
+        WorkspaceStaffOnboardingSubmissionOutcome>
 {
     public async Task<Result<WorkspaceStaffOnboardingDto>> HandleAsync(
+        SubmitWorkspaceStaffOnboardingCommand command,
+        CancellationToken cancellationToken) =>
+        WorkspaceStaffOnboardingSubmitter.Map(
+            await this.HandleWithAuthorityOutcomeAsync(
+                command,
+                cancellationToken).ConfigureAwait(false));
+
+    Task<Result<WorkspaceStaffOnboardingSubmissionOutcome>> ICommandHandler<
+        SubmitWorkspaceStaffOnboardingCommand,
+        WorkspaceStaffOnboardingSubmissionOutcome>.HandleAsync(
+        SubmitWorkspaceStaffOnboardingCommand command,
+        CancellationToken cancellationToken) =>
+        this.HandleWithAuthorityOutcomeAsync(command, cancellationToken);
+
+    internal async Task<Result<WorkspaceStaffOnboardingSubmissionOutcome>>
+        HandleWithAuthorityOutcomeAsync(
         SubmitWorkspaceStaffOnboardingCommand command,
         CancellationToken cancellationToken)
     {
@@ -39,7 +60,7 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
             cancellationToken).ConfigureAwait(false);
         if (!authority.HasValue)
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors.JoinTokenInvalid);
         }
 
@@ -48,7 +69,7 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
             authority.Value.OrganizationId.ToString("D"),
             StringComparison.Ordinal))
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors.AccessPlanUnavailable);
         }
 
@@ -58,13 +79,13 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
                 cancellationToken).ConfigureAwait(false));
         if (admitted.IsFailure)
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(admitted.Error);
+            return Failure(admitted.Error);
         }
 
         WorkspaceStaffOnboardingSource sourceKind = command.SourceKind.ToDomain();
         if (!Guid.TryParse(command.SubjectId, out Guid memberId))
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors.VerifiedIdentityRequired);
         }
 
@@ -79,9 +100,37 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
         WorkspaceStaffOnboarding? application = lease.Application;
         if (lease.CoordinateExists && application is null)
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors
                     .ProcessingRestricted);
+        }
+
+        if (application is not null)
+        {
+            Result<WorkspaceStaffOnboardingIdentityAnchorConvergenceResult>
+                converged = await anchorConvergence.ConvergeAcquiredAsync(
+                    application,
+                    cancellationToken).ConfigureAwait(false);
+            if (converged.IsFailure)
+            {
+                return Failure(converged.Error);
+            }
+
+            if (converged.Value.Outcome !=
+                WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome.Absent)
+            {
+                return Result.Success(
+                    WorkspaceStaffOnboardingSubmissionOutcome
+                        .AuthorityMovedToStaff());
+            }
+
+            if (WorkspaceStaffOnboardingProfileMutationAuthority
+                .HasLocalIdentityAnchorCoordinates(application))
+            {
+                return Failure(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .IdentityAnchorConflict);
+            }
         }
 
         AuthMemberAdmission? admission = await admissions.FindActiveAsync(
@@ -92,7 +141,7 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
         string? verifiedEmail = admission?.PreferredVerifiedEmail;
         if (string.IsNullOrWhiteSpace(verifiedEmail))
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors.VerifiedIdentityRequired);
         }
 
@@ -100,12 +149,12 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
             (!authority.Value.AllowsSubmissionMutation ||
                 application.Status != WorkspaceStaffOnboardingState.Submitted))
         {
-            return Result.Success(application.ToDto());
+            return Applied(application);
         }
 
         if (application is null && !authority.Value.AllowsSubmissionMutation)
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors.JoinTokenInvalid);
         }
 
@@ -115,11 +164,26 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
         if (plan is null || plan.SourceKind != sourceKind ||
             plan.Status != WorkspaceStaffAccessPlanState.Active)
         {
-            return Result.Failure<WorkspaceStaffOnboardingDto>(
+            return Failure(
                 WorkspaceStaffOnboardingApplicationErrors.AccessPlanUnavailable);
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
+        if (await WorkspaceStaffOnboardingProfileMutationAuthority
+            .IsFencedAsync(
+                claims,
+                sourceKind,
+                authority.Value.OrganizationId,
+                authority.Value.SourceId,
+                memberId.ToString("D"),
+                nowUtc,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Failure(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .ProfileMutationAuthorityUnavailable);
+        }
+
         if (application is null)
         {
             Result<WorkspaceStaffOnboarding> created = WorkspaceStaffOnboarding.Create(
@@ -139,7 +203,7 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
                 nowUtc);
             if (created.IsFailure)
             {
-                return Result.Failure<WorkspaceStaffOnboardingDto>(created.Error);
+                return Failure(created.Error);
             }
 
             application = created.Value;
@@ -156,8 +220,7 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
                             nowUtc);
             if (baseline.IsFailure)
             {
-                return Result.Failure<WorkspaceStaffOnboardingDto>(
-                    baseline.Error);
+                return Failure(baseline.Error);
             }
 
             await restrictionProjections.AddAsync(
@@ -178,10 +241,20 @@ internal sealed class SubmitWorkspaceStaffOnboardingCommandHandler(
                 nowUtc);
             if (updated.IsFailure)
             {
-                return Result.Failure<WorkspaceStaffOnboardingDto>(updated.Error);
+                return Failure(updated.Error);
             }
         }
 
-        return Result.Success(application.ToDto());
+        return Applied(application);
     }
+
+    private static Result<WorkspaceStaffOnboardingSubmissionOutcome> Applied(
+        WorkspaceStaffOnboarding application) =>
+        Result.Success(
+            WorkspaceStaffOnboardingSubmissionOutcome.Applied(
+                application.ToDto()));
+
+    private static Result<WorkspaceStaffOnboardingSubmissionOutcome> Failure(
+        Error error) =>
+        Result.Failure<WorkspaceStaffOnboardingSubmissionOutcome>(error);
 }

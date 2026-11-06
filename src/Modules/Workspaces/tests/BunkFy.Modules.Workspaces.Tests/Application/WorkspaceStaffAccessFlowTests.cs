@@ -19,6 +19,10 @@ using Gma.Modules.AccessControl.Contracts;
 using Gma.Modules.Organizations.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
+using ContractRestorationDisposition =
+    BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffAccessRestorationDisposition;
+using DomainRestorationDisposition =
+    BunkFy.Modules.Workspaces.Domain.WorkspaceStaffAccessRestorationDisposition;
 
 [Trait("Category", "Unit")]
 public sealed class WorkspaceStaffAccessFlowTests
@@ -40,10 +44,12 @@ public sealed class WorkspaceStaffAccessFlowTests
         FakeProcessRepository repository = new();
         PrepareWorkspaceStaffAccessCommandHandler handler = new(
             repository,
+            new FakeRestorationSuppressionReader(),
             WorkspaceStaffAccessMutationTestSupport.Create(repository),
             new WorkspaceAccessProvisioner(roles, profiles),
             WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
-            new TestClock());
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
         StaffLifecyclePolicyContext context = CreateContext(
             StaffLifecycleTransition.Suspend,
             StaffStatus.Active,
@@ -56,8 +62,15 @@ public sealed class WorkspaceStaffAccessFlowTests
 
         Assert.True(result.IsSuccess, result.Error.Code);
         Assert.True(result.Value.RequiresAccessDenial);
+        Assert.Equal(
+            ContractRestorationDisposition.NotApplicable,
+            result.Value.RestorationDisposition);
+        Assert.NotEqual(Guid.Empty, result.Value.ProcessId);
         WorkspaceStaffAccessProcess process = Assert.Single(repository.Processes);
         Assert.Equal(WorkspaceStaffAccessProcessState.Prepared, process.State);
+        Assert.Equal(
+            DomainRestorationDisposition.NotApplicable,
+            process.RestorationDisposition);
         Assert.Equal([custom.Id], process.ProfileSnapshots.Select(snapshot => snapshot.ProfileId));
     }
 
@@ -136,7 +149,7 @@ public sealed class WorkspaceStaffAccessFlowTests
     }
 
     [Fact]
-    public async Task Resume_copies_the_latest_completed_suspension_snapshot_and_stays_denied()
+    public async Task Resume_after_completed_redacted_onboarding_copies_the_latest_completed_suspension_snapshot()
     {
         Guid first = Guid.NewGuid();
         Guid second = Guid.NewGuid();
@@ -149,10 +162,12 @@ public sealed class WorkspaceStaffAccessFlowTests
         FakeProcessRepository repository = new(suspension);
         PrepareWorkspaceStaffAccessCommandHandler handler = new(
             repository,
+            new FakeRestorationSuppressionReader(),
             WorkspaceStaffAccessMutationTestSupport.Create(repository),
             new WorkspaceAccessProvisioner(new FakeRoles([]), new FakeProfiles([])),
             WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
-            new TestClock());
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
         StaffLifecyclePolicyContext context = CreateContext(
             StaffLifecycleTransition.Resume,
             StaffStatus.Suspended,
@@ -165,11 +180,231 @@ public sealed class WorkspaceStaffAccessFlowTests
 
         Assert.True(result.IsSuccess, result.Error.Code);
         Assert.False(result.Value.RequiresAccessDenial);
+        Assert.Equal(
+            ContractRestorationDisposition.RestoreSnapshot,
+            result.Value.RestorationDisposition);
+        Assert.NotEqual(Guid.Empty, result.Value.ProcessId);
         WorkspaceStaffAccessProcess resume = repository.Processes.Single(process => process.Id != suspension.Id);
         Assert.Equal(WorkspaceStaffAccessProcessState.AwaitingStaffCommit, resume.State);
         Assert.Equal(
+            DomainRestorationDisposition.RestoreSnapshot,
+            resume.RestorationDisposition);
+        Assert.Equal(
             new[] { first, second }.Order(),
             resume.ProfileSnapshots.Select(snapshot => snapshot.ProfileId).Order());
+    }
+
+    [Fact]
+    public async Task Terminal_onboarding_resolution_persists_suppressed_resume_and_completes_without_access_work()
+    {
+        List<string> operations = [];
+        Guid profileId = Guid.NewGuid();
+        WorkspaceStaffAccessProcess suspension = CreateProcess(
+            WorkspaceStaffAccessTargetState.Suspended,
+            targetVersion: 2,
+            [profileId]);
+        Assert.True(suspension.MarkAwaitingStaffCommit(Now).IsSuccess);
+        Assert.True(suspension.ObserveStaffCommit(Now).IsSuccess);
+        FakeProcessRepository repository = new(suspension);
+        FakeRestorationSuppressionReader suppressions = new(
+            WorkspaceStaffOnboardingRestorationSuppressionState.Suppressed);
+        PrepareWorkspaceStaffAccessCommandHandler handler = new(
+            repository,
+            suppressions,
+            WorkspaceStaffAccessMutationTestSupport.Create(repository),
+            new WorkspaceAccessProvisioner(
+                new FakeRoles(operations),
+                new FakeProfiles(operations)),
+            WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
+        StaffLifecyclePolicyContext context = CreateContext(
+            StaffLifecycleTransition.Resume,
+            StaffStatus.Suspended,
+            StaffStatus.Active,
+            expectedVersion: 2);
+
+        Result<WorkspaceStaffAccessPreparation> result = await handler.HandleAsync(
+            new PrepareWorkspaceStaffAccessCommand(context),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.False(result.Value.RequiresAccessDenial);
+        Assert.Equal(
+            ContractRestorationDisposition.Suppressed,
+            result.Value.RestorationDisposition);
+        Assert.NotEqual(Guid.Empty, result.Value.ProcessId);
+        WorkspaceStaffAccessProcess resume = repository.Processes.Single(
+            process => process.Id == result.Value.ProcessId);
+        Assert.Equal(WorkspaceStaffAccessTargetState.Active, resume.TargetState);
+        Assert.Equal(
+            WorkspaceStaffAccessProcessState.AwaitingStaffCommit,
+            resume.State);
+        Assert.Equal(
+            DomainRestorationDisposition.Suppressed,
+            resume.RestorationDisposition);
+        Assert.Empty(resume.ProfileSnapshots);
+        Assert.Equal(2, repository.Processes.Count);
+        Assert.Empty(operations);
+        Assert.Equal(1, suppressions.ReadCount);
+
+        FakeMembershipLifecycle memberships = new(operations);
+        WorkspaceAccessProvisioner access = new(
+            new FakeRoles(operations),
+            new FakeProfiles(operations));
+        WorkspaceStaffAccessRestorer restorer = new(
+            memberships,
+            access,
+            WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
+            new TestClock(),
+            NullLogger<WorkspaceStaffAccessRestorer>.Instance);
+        StaffLifecycleWorkspaceAccessHandler lifecycleHandler = new(
+            WorkspaceStaffAccessMutationTestSupport.Create(repository),
+            restorer,
+            new TestClock());
+
+        await lifecycleHandler.HandleAsync(
+            new StaffMemberLifecycleChangedIntegrationEvent(
+                Guid.NewGuid(),
+                ScopeId,
+                Now,
+                StaffId,
+                StaffStatus.Active,
+                new DateOnly(2026, 7, 21),
+                3,
+                "user:owner"),
+            CancellationToken.None);
+
+        Assert.Equal(WorkspaceStaffAccessProcessState.Completed, resume.State);
+        Assert.Empty(operations);
+
+        WorkspaceStaffAccessDenier denier = new(
+            memberships,
+            access,
+            new TestClock(),
+            NullLogger<WorkspaceStaffAccessDenier>.Instance);
+        RetryWorkspaceStaffAccessProcessCommandHandler retryHandler = new(
+            WorkspaceStaffAccessMutationTestSupport.Create(repository),
+            denier,
+            restorer);
+
+        Result<WorkspaceStaffAccessProcessDto> retry = await retryHandler.HandleAsync(
+            new RetryWorkspaceStaffAccessProcessCommand(resume.Id),
+            CancellationToken.None);
+
+        Assert.True(retry.IsSuccess, retry.Error.Code);
+        Assert.Equal(WorkspaceStaffAccessProcessStatus.Completed, retry.Value.Status);
+        Assert.Equal(
+            ContractRestorationDisposition.Suppressed,
+            retry.Value.RestorationDisposition);
+        Assert.Empty(operations);
+    }
+
+    [Fact]
+    public async Task Repeated_and_future_resume_attempts_remain_suppressed()
+    {
+        List<string> operations = [];
+        FakeProcessRepository repository = new();
+        FakeRestorationSuppressionReader suppressions = new(
+            WorkspaceStaffOnboardingRestorationSuppressionState.Suppressed);
+        PrepareWorkspaceStaffAccessCommandHandler handler = new(
+            repository,
+            suppressions,
+            WorkspaceStaffAccessMutationTestSupport.Create(repository),
+            new WorkspaceAccessProvisioner(
+                new FakeRoles(operations),
+                new FakeProfiles(operations)),
+            WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
+        StaffLifecyclePolicyContext replay = CreateContext(
+            StaffLifecycleTransition.Resume,
+            StaffStatus.Suspended,
+            StaffStatus.Active,
+            expectedVersion: 2);
+        StaffLifecyclePolicyContext future = CreateContext(
+            StaffLifecycleTransition.Resume,
+            StaffStatus.Suspended,
+            StaffStatus.Active,
+            expectedVersion: 3);
+
+        Result<WorkspaceStaffAccessPreparation> replayResult = await handler.HandleAsync(
+            new PrepareWorkspaceStaffAccessCommand(replay),
+            CancellationToken.None);
+        Result<WorkspaceStaffAccessPreparation> replayResultAgain = await handler.HandleAsync(
+            new PrepareWorkspaceStaffAccessCommand(replay),
+            CancellationToken.None);
+
+        Assert.True(replayResult.IsSuccess, replayResult.Error.Code);
+        Assert.True(replayResultAgain.IsSuccess, replayResultAgain.Error.Code);
+        Assert.False(replayResult.Value.RequiresAccessDenial);
+        Assert.False(replayResultAgain.Value.RequiresAccessDenial);
+        Assert.Equal(
+            ContractRestorationDisposition.Suppressed,
+            replayResult.Value.RestorationDisposition);
+        Assert.Equal(
+            ContractRestorationDisposition.Suppressed,
+            replayResultAgain.Value.RestorationDisposition);
+        Assert.Equal(replayResult.Value.ProcessId, replayResultAgain.Value.ProcessId);
+        WorkspaceStaffAccessProcess first = Assert.Single(repository.Processes);
+        Assert.Equal(
+            DomainRestorationDisposition.Suppressed,
+            first.RestorationDisposition);
+        Assert.Equal(1, suppressions.ReadCount);
+
+        Assert.True(first.ObserveStaffCommit(Now).IsSuccess);
+        Result<WorkspaceStaffAccessPreparation> futureResult = await handler.HandleAsync(
+            new PrepareWorkspaceStaffAccessCommand(future),
+            CancellationToken.None);
+
+        Assert.True(futureResult.IsSuccess, futureResult.Error.Code);
+        Assert.False(futureResult.Value.RequiresAccessDenial);
+        Assert.Equal(
+            ContractRestorationDisposition.Suppressed,
+            futureResult.Value.RestorationDisposition);
+        Assert.NotEqual(first.Id, futureResult.Value.ProcessId);
+        WorkspaceStaffAccessProcess second = repository.Processes.Single(
+            process => process.Id == futureResult.Value.ProcessId);
+        Assert.Equal(
+            DomainRestorationDisposition.Suppressed,
+            second.RestorationDisposition);
+        Assert.Empty(second.ProfileSnapshots);
+        Assert.Equal(2, suppressions.ReadCount);
+        Assert.Empty(operations);
+    }
+
+    [Theory]
+    [InlineData(WorkspaceStaffOnboardingRestorationSuppressionState.Conflict)]
+    [InlineData((WorkspaceStaffOnboardingRestorationSuppressionState)0)]
+    public async Task Non_authoritative_onboarding_resolution_ledger_fails_resume_closed(
+        WorkspaceStaffOnboardingRestorationSuppressionState suppressionState)
+    {
+        FakeProcessRepository repository = new();
+        FakeRestorationSuppressionReader suppressions = new(
+            suppressionState);
+        PrepareWorkspaceStaffAccessCommandHandler handler = new(
+            repository,
+            suppressions,
+            WorkspaceStaffAccessMutationTestSupport.Create(repository),
+            new WorkspaceAccessProvisioner(new FakeRoles([]), new FakeProfiles([])),
+            WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
+        StaffLifecyclePolicyContext context = CreateContext(
+            StaffLifecycleTransition.Resume,
+            StaffStatus.Suspended,
+            StaffStatus.Active,
+            expectedVersion: 2);
+
+        Result<WorkspaceStaffAccessPreparation> result = await handler.HandleAsync(
+            new PrepareWorkspaceStaffAccessCommand(context),
+            CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffAccessApplicationErrors.ProcessConflict,
+            result.Error);
+        Assert.Empty(repository.Processes);
+        Assert.Equal(1, suppressions.ReadCount);
     }
 
     [Fact]
@@ -215,10 +450,12 @@ public sealed class WorkspaceStaffAccessFlowTests
         };
         PrepareWorkspaceStaffAccessCommandHandler handler = new(
             repository,
+            new FakeRestorationSuppressionReader(),
             WorkspaceStaffAccessMutationTestSupport.Create(repository),
             new WorkspaceAccessProvisioner(new FakeRoles([]), new FakeProfiles([])),
             WorkspaceOperationalAdmissionTestSupport.Allowed(ScopeId),
-            new TestClock());
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
         StaffLifecyclePolicyContext context = CreateContext(
             StaffLifecycleTransition.Resume,
             StaffStatus.Suspended,
@@ -241,10 +478,12 @@ public sealed class WorkspaceStaffAccessFlowTests
         FakeProcessRepository repository = new();
         PrepareWorkspaceStaffAccessCommandHandler handler = new(
             repository,
+            new FakeRestorationSuppressionReader(),
             WorkspaceStaffAccessMutationTestSupport.Create(repository),
             new WorkspaceAccessProvisioner(new FakeRoles([]), new FakeProfiles([])),
             WorkspaceOperationalAdmissionTestSupport.Restricted(ScopeId),
-            new TestClock());
+            new TestClock(),
+            NullLogger<PrepareWorkspaceStaffAccessCommandHandler>.Instance);
         StaffLifecyclePolicyContext context = CreateContext(
             StaffLifecycleTransition.Resume,
             StaffStatus.Suspended,
@@ -495,11 +734,6 @@ public sealed class WorkspaceStaffAccessFlowTests
         Assert.Equal(1, correlations.ScrubCount);
         Assert.NotNull(correlations.Receipt);
 
-        profiles.Assign(subject, scope, profile.Id);
-        roles.Add(
-            subject,
-            WorkspaceAccessRoles.MembershipMarker,
-            scope);
         StaffRetentionAnonymisationPrerequisiteResult replay =
             await prerequisite.PrepareAsync(
                 CreateRetentionRequest(),
@@ -508,7 +742,7 @@ public sealed class WorkspaceStaffAccessFlowTests
         Assert.Equal(
             StaffRetentionAnonymisationPrerequisiteStatus.Completed,
             replay.Status);
-        Assert.Equal(2, correlations.RequestCount);
+        Assert.Equal(1, correlations.RequestCount);
         Assert.Equal(1, correlations.ScrubCount);
         Assert.Empty(profiles.AssignedProfileIds(subject, scope));
         Assert.False(roles.Has(
@@ -516,11 +750,6 @@ public sealed class WorkspaceStaffAccessFlowTests
             WorkspaceAccessRoles.MembershipMarker,
             scope));
 
-        profiles.Assign(subject, scope, profile.Id);
-        roles.Add(
-            subject,
-            WorkspaceAccessRoles.MembershipMarker,
-            scope);
         StaffRetentionAnonymisationPrerequisiteResult verified =
             await prerequisite.VerifyAsync(
                 CreateRetentionRequest(),
@@ -529,13 +758,61 @@ public sealed class WorkspaceStaffAccessFlowTests
         Assert.Equal(
             StaffRetentionAnonymisationPrerequisiteStatus.Completed,
             verified.Status);
-        Assert.Contains(
-            profile.Id,
-            profiles.AssignedProfileIds(subject, scope));
-        Assert.True(roles.Has(
+        Assert.Empty(profiles.AssignedProfileIds(subject, scope));
+        Assert.False(roles.Has(
             subject,
             WorkspaceAccessRoles.MembershipMarker,
             scope));
+    }
+
+    [Fact]
+    public async Task Staff_retention_blocks_divergent_existing_scrub_receipt()
+    {
+        FakeCorrelationRepository correlations = new();
+        correlations.SeedReceipt(
+            WorkspaceStaffRetentionCorrelationReceipt.Create(
+                CorrelationReceiptId,
+                "different-tenant",
+                Guid.NewGuid(),
+                StaffId,
+                selectedStaffVersion: 2,
+                onboardingRecordsScrubbed: 1,
+                accessProcessRecordsScrubbed: 1,
+                accessPlanRecordsScrubbed: 1,
+                Now).Value);
+        List<string> operations = [];
+        WorkspaceStaffAnonymisationAccessPrerequisite prerequisite =
+            CreateAccessPrerequisite(
+                new FakeStaffRestoreStateReader(new(
+                    StaffId,
+                    Version: 2,
+                    StaffAnonymisationRestoreRecordState.Departed,
+                    "member-a",
+                    AnonymisedAtUtc: null)),
+                new FakeProcessRepository(),
+                new WorkspaceStaffAccessDenier(
+                    new FakeMembershipLifecycle(operations),
+                    new WorkspaceAccessProvisioner(
+                        new FakeRoles(operations),
+                        new FakeProfiles(operations)),
+                    new TestClock(),
+                    NullLogger<WorkspaceStaffAccessDenier>.Instance),
+                correlations);
+
+        StaffRetentionAnonymisationPrerequisiteResult result =
+            await prerequisite.PrepareAsync(
+                CreateRetentionRequest(),
+                CancellationToken.None);
+
+        Assert.Equal(
+            StaffRetentionAnonymisationPrerequisiteStatus.Blocked,
+            result.Status);
+        Assert.Equal(
+            "Workspaces.StaffRetentionCorrelationReceiptInvalid",
+            result.OutcomeCode);
+        Assert.Equal(0, correlations.RequestCount);
+        Assert.Equal(0, correlations.ScrubCount);
+        Assert.Empty(operations);
     }
 
     [Fact]
@@ -1188,6 +1465,27 @@ public sealed class WorkspaceStaffAccessFlowTests
         }
     }
 
+    private sealed class FakeRestorationSuppressionReader(
+        WorkspaceStaffOnboardingRestorationSuppressionState state =
+            WorkspaceStaffOnboardingRestorationSuppressionState.None)
+        : IWorkspaceStaffOnboardingRestorationSuppressionReader
+    {
+        public int ReadCount { get; private set; }
+
+        public Task<WorkspaceStaffOnboardingRestorationSuppressionState> ReadAsync(
+            string scopeId,
+            Guid staffMemberId,
+            string authSubjectId,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(ScopeId, scopeId);
+            Assert.Equal(StaffId, staffMemberId);
+            Assert.Equal("member-a", authSubjectId);
+            this.ReadCount++;
+            return Task.FromResult(state);
+        }
+    }
+
     private sealed class FakeMembershipLifecycle(
         List<string> operations,
         OrganizationMembershipLifecycleOutcome outcome = OrganizationMembershipLifecycleOutcome.Changed)
@@ -1235,6 +1533,10 @@ public sealed class WorkspaceStaffAccessFlowTests
         public int ScrubCount { get; private set; }
 
         public int RequestCount { get; private set; }
+
+        public void SeedReceipt(
+            WorkspaceStaffRetentionCorrelationReceipt receipt) =>
+            this.Receipt = receipt;
 
         public Task<WorkspaceStaffRetentionCorrelationReceipt?>
             GetAsync(

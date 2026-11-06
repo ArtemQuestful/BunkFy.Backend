@@ -1,5 +1,6 @@
 namespace BunkFy.Modules.Workspaces.Domain;
 
+using BunkFy.Modules.Workspaces.Domain.Events;
 using Gma.Framework.Domain.Models;
 using Gma.Framework.Naming;
 using Gma.Framework.Results;
@@ -27,6 +28,15 @@ public sealed partial class WorkspaceStaffOnboarding : ScopedAggregateRoot<Guid>
     public Guid? AcceptedMembershipId { get; private set; }
     public long? AcceptedMembershipVersion { get; private set; }
     public string? FailureCode { get; private set; }
+    public Guid? IdentityAnchorExpectedResolutionEventId { get; private set; }
+    public Guid? IdentityAnchorContinuationEventId { get; private set; }
+    public Guid? IdentityAnchorResolutionEventId { get; private set; }
+    public Guid? IdentityAnchorResolutionStaffMemberId { get; private set; }
+    public long? IdentityAnchorResolutionApplicationVersion { get; private set; }
+    public WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition? IdentityAnchorResolutionDisposition { get; private set; }
+    public DateTimeOffset? IdentityAnchorResolutionIntentAtUtc { get; private set; }
+    public DateTimeOffset? IdentityAnchorResolutionObservedAtUtc { get; private set; }
+    public long IdentityAnchorSweepOrdinal { get; private set; }
     public long Version { get; private set; } = 1;
     public DateTimeOffset CreatedAtUtc { get; private set; }
     public DateTimeOffset LastChangedAtUtc { get; private set; }
@@ -51,6 +61,17 @@ public sealed partial class WorkspaceStaffOnboarding : ScopedAggregateRoot<Guid>
             WorkspaceStaffOnboardingState.Failed) &&
         !string.IsNullOrWhiteSpace(this.VerifiedAccountEmail) &&
         !string.IsNullOrWhiteSpace(this.DisplayName);
+
+    public bool HasIdentityAnchorState =>
+        this.StaffMemberId.HasValue ||
+        this.IdentityAnchorExpectedResolutionEventId.HasValue ||
+        this.IdentityAnchorContinuationEventId.HasValue ||
+        this.IdentityAnchorResolutionEventId.HasValue ||
+        this.IdentityAnchorResolutionStaffMemberId.HasValue ||
+        this.IdentityAnchorResolutionApplicationVersion.HasValue ||
+        this.IdentityAnchorResolutionDisposition.HasValue ||
+        this.IdentityAnchorResolutionIntentAtUtc.HasValue ||
+        this.IdentityAnchorResolutionObservedAtUtc.HasValue;
 
     public static Result<WorkspaceStaffOnboarding> Create(
         Guid id,
@@ -210,78 +231,31 @@ public sealed partial class WorkspaceStaffOnboarding : ScopedAggregateRoot<Guid>
                 : Result.Failure(WorkspaceStaffOnboardingErrors.StateConflict);
     }
 
-    public Result MarkStaffReady(Guid staffMemberId, DateTimeOffset nowUtc)
+    public Result MarkStaffReady(
+        Guid staffMemberId,
+        Guid expectedResolutionEventId,
+        Guid continuationEventId,
+        DateTimeOffset nowUtc)
     {
-        if (staffMemberId == Guid.Empty || this.Status != WorkspaceStaffOnboardingState.Provisioning)
+        if (!AreAnchorCoordinatesValid(
+                this.Id,
+                staffMemberId,
+                expectedResolutionEventId,
+                continuationEventId) ||
+            this.Status != WorkspaceStaffOnboardingState.Provisioning)
         {
             return Result.Failure(WorkspaceStaffOnboardingErrors.StateConflict);
         }
 
         this.StaffMemberId = staffMemberId;
+        this.IdentityAnchorExpectedResolutionEventId =
+            expectedResolutionEventId;
+        this.IdentityAnchorContinuationEventId = continuationEventId;
         this.Status = WorkspaceStaffOnboardingState.StaffReady;
-        this.Advance(nowUtc);
-        return Result.Success();
-    }
-
-    public Result Complete(DateTimeOffset nowUtc)
-    {
-        if (this.Status == WorkspaceStaffOnboardingState.Completed)
-        {
-            return Result.Success();
-        }
-
-        if (this.Status != WorkspaceStaffOnboardingState.StaffReady || !this.StaffMemberId.HasValue)
-        {
-            return Result.Failure(WorkspaceStaffOnboardingErrors.StateConflict);
-        }
-
-        this.Status = WorkspaceStaffOnboardingState.Completed;
         this.FailureCode = null;
         this.RedactApplicantData();
         this.Advance(nowUtc);
-        return Result.Success();
-    }
-
-    public Result Fail(string failureCode, DateTimeOffset nowUtc)
-    {
-        if (!TryNormalizeRequired(
-                failureCode,
-                WorkspaceStaffOnboardingRules.FailureCodeMaxLength,
-                out string? normalized))
-        {
-            return Result.Failure(WorkspaceStaffOnboardingErrors.Invalid);
-        }
-
-        if (this.Status is WorkspaceStaffOnboardingState.Completed or
-            WorkspaceStaffOnboardingState.Rejected or
-            WorkspaceStaffOnboardingState.Superseded or
-            WorkspaceStaffOnboardingState.Expired or
-            WorkspaceStaffOnboardingState.Withdrawn)
-        {
-            return Result.Failure(WorkspaceStaffOnboardingErrors.StateConflict);
-        }
-
-        this.Status = WorkspaceStaffOnboardingState.Failed;
-        this.FailureCode = normalized;
-        this.Advance(nowUtc);
-        return Result.Success();
-    }
-
-    public Result Supersede(DateTimeOffset nowUtc)
-    {
-        if (this.Status is WorkspaceStaffOnboardingState.Completed or
-            WorkspaceStaffOnboardingState.Rejected or
-            WorkspaceStaffOnboardingState.Superseded or
-            WorkspaceStaffOnboardingState.Expired or
-            WorkspaceStaffOnboardingState.Withdrawn)
-        {
-            return Result.Success();
-        }
-
-        this.Status = WorkspaceStaffOnboardingState.Superseded;
-        this.FailureCode = null;
-        this.RedactApplicantData();
-        this.Advance(nowUtc);
+        this.RaiseContinuationRequested(staffMemberId, nowUtc);
         return Result.Success();
     }
 
@@ -346,11 +320,76 @@ public sealed partial class WorkspaceStaffOnboarding : ScopedAggregateRoot<Guid>
         this.Department = null;
     }
 
+    private bool IsApplicantDataRedacted() =>
+        this.VerifiedAccountEmail is null &&
+        this.DisplayName is null &&
+        this.LegalName is null &&
+        this.WorkEmail is null &&
+        this.WorkPhone is null &&
+        this.EmployeeNumber is null &&
+        this.JobTitle is null &&
+        this.Department is null;
+
+    private bool IsTerminal() => this.Status is
+        WorkspaceStaffOnboardingState.Completed or
+        WorkspaceStaffOnboardingState.Rejected or
+        WorkspaceStaffOnboardingState.Superseded or
+        WorkspaceStaffOnboardingState.Expired or
+            WorkspaceStaffOnboardingState.Withdrawn;
+
+    private static bool IsDefinedResolutionDisposition(
+        WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+            disposition) =>
+        disposition is
+            WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                .CompletedRedacted or
+            WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                .RejectedRedacted or
+            WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                .SupersededRedacted or
+            WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                .ExpiredRedacted or
+            WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                .WithdrawnRedacted;
+
     private void Advance(DateTimeOffset nowUtc)
     {
         this.Version++;
         this.LastChangedAtUtc = nowUtc;
     }
+
+    private void RaiseContinuationRequested(
+        Guid staffMemberId,
+        DateTimeOffset occurredAtUtc)
+    {
+        if (!this.IdentityAnchorContinuationEventId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "The identity-anchor continuation coordinate is unavailable.");
+        }
+
+        this.RaiseDomainEvent(
+            new
+                WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent(
+                    this.IdentityAnchorContinuationEventId.Value,
+                    occurredAtUtc,
+                    this.ScopeId,
+                    this.Id,
+                    staffMemberId));
+    }
+
+    private static bool AreAnchorCoordinatesValid(
+        Guid applicationId,
+        Guid staffMemberId,
+        Guid expectedResolutionEventId,
+        Guid continuationEventId) =>
+        applicationId != Guid.Empty &&
+        staffMemberId != Guid.Empty &&
+        expectedResolutionEventId != Guid.Empty &&
+        continuationEventId != Guid.Empty &&
+        expectedResolutionEventId != applicationId &&
+        continuationEventId != applicationId &&
+        expectedResolutionEventId != continuationEventId;
 
     private static bool TryNormalizeRequired(string? value, int maxLength, out string normalized)
     {

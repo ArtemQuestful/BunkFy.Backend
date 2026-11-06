@@ -122,6 +122,30 @@ public sealed class WorkspaceJoinBrowserHttpTests
     }
 
     [Theory]
+    [InlineData(WorkspaceStaffOnboardingSourceKind.Invitation)]
+    [InlineData(WorkspaceStaffOnboardingSourceKind.EnrollmentLink)]
+    public async Task Cookie_submission_preserves_authority_moved_conflict_without_profile_payload(
+        WorkspaceStaffOnboardingSourceKind kind)
+    {
+        await using Fixture fixture = await Fixture.StartAsync();
+        string cookie = await fixture.PrepareAsync(kind);
+        fixture.Owner.StaffOwnsIdentity = true;
+        using HttpResponseMessage response = await fixture.SendAsync(
+            HttpMethod.Post, "/applications", Profile(), cookie);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        string json = await response.Content.ReadAsStringAsync();
+        using JsonDocument body = JsonDocument.Parse(json);
+        Assert.Equal(WorkspaceStaffOnboardingApplicationErrors.ProfileMutationAuthorityUnavailable.Code,
+            body.RootElement.GetProperty("title").GetString());
+        Assert.DoesNotContain(Credential, json, StringComparison.Ordinal);
+        Assert.DoesNotContain("Proposed Name", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("subjectId", json, StringComparison.Ordinal);
+        Assert.Single(fixture.Owner.Submissions);
+        Assert.Empty(fixture.Owner.Commands);
+    }
+
+    [Theory]
     [InlineData(WorkspaceStaffOnboardingSourceKind.Invitation, HttpStatusCode.Forbidden)]
     [InlineData(WorkspaceStaffOnboardingSourceKind.EnrollmentLink, HttpStatusCode.Gone)]
     public async Task Join_forwards_the_exact_original_command_and_owner_http_contract(
@@ -299,6 +323,7 @@ public sealed class WorkspaceJoinBrowserHttpTests
         public List<object> Commands { get; } = [];
         public List<SubmitWorkspaceStaffOnboardingCommand> Submissions { get; } = [];
         public bool Expired { get; set; }
+        public bool StaffOwnsIdentity { get; set; }
         public AccessSubjectKind SubjectKind { get; set; } = AccessSubjectKind.User;
 
         public AccessSubject? ResolveSubject(HttpContext context) => context.User.Identity?.IsAuthenticated == true
@@ -327,10 +352,17 @@ public sealed class WorkspaceJoinBrowserHttpTests
                 ? OrganizationApplicationErrors.RecipientVerificationRequired : OrganizationApplicationErrors.EnrollmentLinkExpired));
         }
 
-        public Task<Result<WorkspaceStaffOnboardingDto>> SubmitAsync(SubmitWorkspaceStaffOnboardingCommand command, CancellationToken cancellationToken = default)
+        public async Task<Result<WorkspaceStaffOnboardingDto>> SubmitAsync(SubmitWorkspaceStaffOnboardingCommand command, CancellationToken cancellationToken = default) =>
+            WorkspaceStaffOnboardingSubmitter.Map(
+                await this.SubmitWithAuthorityOutcomeAsync(command, cancellationToken).ConfigureAwait(false));
+
+        public Task<Result<WorkspaceStaffOnboardingSubmissionOutcome>> SubmitWithAuthorityOutcomeAsync(
+            SubmitWorkspaceStaffOnboardingCommand command, CancellationToken cancellationToken = default)
         {
             this.Submissions.Add(command);
-            return Task.FromResult(Result.Failure<WorkspaceStaffOnboardingDto>(WorkspaceStaffOnboardingApplicationErrors.VerifiedIdentityRequired));
+            return Task.FromResult(this.StaffOwnsIdentity
+                ? Result.Success(WorkspaceStaffOnboardingSubmissionOutcome.AuthorityMovedToStaff())
+                : Result.Failure<WorkspaceStaffOnboardingSubmissionOutcome>(WorkspaceStaffOnboardingApplicationErrors.VerifiedIdentityRequired));
         }
     }
 

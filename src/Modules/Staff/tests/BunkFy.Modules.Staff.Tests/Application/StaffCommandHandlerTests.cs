@@ -770,6 +770,127 @@ public sealed class StaffCommandHandlerTests
     }
 
     [Fact]
+    public async Task Workspace_anchor_blocks_auth_subject_change_even_after_resolution()
+    {
+        StaffMember member = CreateMember("user-100");
+        Assert.True(member.Suspend(
+            member.Version,
+            "user:owner",
+            "Preparing an account transition",
+            Guid.NewGuid(),
+            TestClock.Now).IsSuccess);
+        RecordingMemberMutationOperations operations = new();
+        RecordingIdentityProvisioningAnchors anchors = new();
+        anchors.Records.Add(new(
+            "tenant-a",
+            StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+            Guid.NewGuid(),
+            member.Id,
+            TestClock.Now,
+            Guid.NewGuid()));
+        using ServiceProvider provider = CreateProvider(
+            new FakeStaffMemberRepository(member),
+            new FakePropertyProjectionRepository(),
+            memberMutationOperations: operations,
+            identityAnchors: anchors);
+        var handler = provider.GetRequiredService<
+            ICommandHandler<SetStaffAuthSubjectCommand,
+                StaffMemberMutationReceiptDto>>();
+
+        Result<StaffMemberMutationReceiptDto> result =
+            await handler.HandleAsync(
+                new SetStaffAuthSubjectCommand(
+                    Guid.NewGuid(),
+                    member.Id,
+                    null,
+                    member.Version,
+                    "user:owner"),
+                CancellationToken.None);
+
+        Assert.Equal(
+            StaffApplicationErrors.IdentityAnchorAccessClosureRequired,
+            result.Error);
+        Assert.Equal("user-100", member.AuthSubjectId);
+        Assert.Empty(operations.Records);
+    }
+
+    [Fact]
+    public async Task Workspace_anchor_allows_exact_auth_subject_noop_replay()
+    {
+        StaffMember member = CreateMember("user-100");
+        RecordingIdentityProvisioningAnchors anchors = new();
+        anchors.Records.Add(new(
+            "tenant-a",
+            StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+            Guid.NewGuid(),
+            member.Id,
+            TestClock.Now,
+            Guid.NewGuid()));
+        RecordingMemberMutationOperations operations = new();
+        using ServiceProvider provider = CreateProvider(
+            new FakeStaffMemberRepository(member),
+            new FakePropertyProjectionRepository(),
+            identityAnchors: anchors,
+            memberMutationOperations: operations);
+        var handler = provider.GetRequiredService<ICommandHandler<
+            SetStaffAuthSubjectCommand,
+            StaffMemberMutationReceiptDto>>();
+
+        Result<StaffMemberMutationReceiptDto> result =
+            await handler.HandleAsync(
+                new SetStaffAuthSubjectCommand(
+                    Guid.NewGuid(),
+                    member.Id,
+                    " user-100 ",
+                    member.Version,
+                    "user:owner"),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Equal("user-100", member.AuthSubjectId);
+        Assert.Single(operations.Records);
+    }
+
+    [Fact]
+    public async Task Organization_membership_anchor_does_not_block_auth_subject_change()
+    {
+        StaffMember member = CreateMember("user-100");
+        Assert.True(member.Suspend(
+            member.Version,
+            "user:owner",
+            "Preparing an account transition",
+            Guid.NewGuid(),
+            TestClock.Now).IsSuccess);
+        RecordingIdentityProvisioningAnchors anchors = new();
+        anchors.Records.Add(new(
+            "tenant-a",
+            StaffIdentityProvisioningSourceKind.OrganizationMembership,
+            Guid.NewGuid(),
+            member.Id,
+            TestClock.Now));
+        using ServiceProvider provider = CreateProvider(
+            new FakeStaffMemberRepository(member),
+            new FakePropertyProjectionRepository(),
+            identityAnchors: anchors);
+        var handler = provider.GetRequiredService<ICommandHandler<
+            SetStaffAuthSubjectCommand,
+            StaffMemberMutationReceiptDto>>();
+
+        Result<StaffMemberMutationReceiptDto> result =
+            await handler.HandleAsync(
+                new SetStaffAuthSubjectCommand(
+                    Guid.NewGuid(),
+                    member.Id,
+                    null,
+                    member.Version,
+                    "user:owner"),
+                CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error.Code);
+        Assert.Null(member.AuthSubjectId);
+    }
+
+    [Fact]
     public async Task Auth_subject_change_replays_normalized_input_without_a_second_event()
     {
         StaffMember member = CreateMember();
@@ -1278,8 +1399,10 @@ public sealed class StaffCommandHandlerTests
         var handler = provider.GetRequiredService<
             ICommandHandler<BootstrapStaffIdentityCommand, Unit>>();
         Guid operationId = Guid.NewGuid();
+        Guid sourceId = Guid.NewGuid();
         BootstrapStaffIdentityCommand command = new(
             operationId,
+            sourceId,
             "member-100",
             "ada@example.test",
             "ada@example.test",
@@ -1296,6 +1419,9 @@ public sealed class StaffCommandHandlerTests
         Assert.Equal(StaffMemberState.Active, members.AddedMember.Status);
         Assert.Equal(1, members.AddCount);
         Assert.Equal(2, creationLock.Acquisitions.Count);
+        Assert.All(
+            creationLock.Acquisitions,
+            acquisition => Assert.Equal(sourceId, acquisition.OperationId));
     }
 
     [Fact]
@@ -1304,6 +1430,7 @@ public sealed class StaffCommandHandlerTests
         BootstrapStaffIdentityCommandValidator validator = new();
 
         string[] errors = validator.Validate(new BootstrapStaffIdentityCommand(
+            Guid.NewGuid(),
             Guid.NewGuid(),
             " member-100 ",
             string.Empty,
@@ -1321,6 +1448,7 @@ public sealed class StaffCommandHandlerTests
         string[] emptyOperationErrors = validator.Validate(
             new BootstrapStaffIdentityCommand(
                 Guid.Empty,
+                Guid.NewGuid(),
                 "member-100",
                 "Ada Operator",
                 null,
@@ -1328,12 +1456,14 @@ public sealed class StaffCommandHandlerTests
         string[] emptySubjectErrors = validator.Validate(
             new BootstrapStaffIdentityCommand(
                 Guid.NewGuid(),
+                Guid.NewGuid(),
                 "   ",
                 "Ada Operator",
                 null,
                 "integration:organizations")).ToArray();
         string[] oversizedSubjectErrors = validator.Validate(
             new BootstrapStaffIdentityCommand(
+                Guid.NewGuid(),
                 Guid.NewGuid(),
                 new string('s', StaffContractLimits.AuthSubjectIdMaxLength + 1),
                 "Ada Operator",
@@ -1364,6 +1494,7 @@ public sealed class StaffCommandHandlerTests
         Result<Unit> result = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
                 operationId,
+                Guid.NewGuid(),
                 " member-100 ",
                 string.Empty,
                 new string('e', StaffContractLimits.EmailMaxLength + 1),
@@ -1388,6 +1519,7 @@ public sealed class StaffCommandHandlerTests
         Result<Unit> result = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
                 Guid.NewGuid(),
+                Guid.NewGuid(),
                 " member-100 ",
                 string.Empty,
                 new string('e', StaffContractLimits.EmailMaxLength + 1),
@@ -1396,6 +1528,67 @@ public sealed class StaffCommandHandlerTests
 
         Assert.True(result.IsSuccess, result.Error.Code);
         Assert.Equal(0, members.AddCount);
+    }
+
+    [Fact]
+    public async Task Identity_bootstrap_rechecks_subject_after_acquiring_the_existing_target_lock()
+    {
+        StaffMember member = CreateMember("member-100");
+        FakeStaffMemberRepository members = new(member);
+        RecordingIdentityProvisioningAnchors anchors = new();
+        RecordingOperationLock memberLock = new()
+        {
+            OnAcquireById = staffMemberId =>
+            {
+                if (staffMemberId != member.Id)
+                {
+                    return;
+                }
+
+                if (member.AuthSubjectId != "member-100")
+                {
+                    return;
+                }
+
+                Assert.True(member.Suspend(
+                    member.Version,
+                    "system:concurrent-transition",
+                    "Concurrent identity transition.",
+                    Guid.NewGuid(),
+                    TestClock.Now.AddMinutes(1)).IsSuccess);
+                Assert.True(member.SetAuthSubject(
+                    null,
+                    member.Version,
+                    "system:concurrent-transition",
+                    Guid.NewGuid(),
+                    TestClock.Now.AddMinutes(2)).IsSuccess);
+            }
+        };
+        using ServiceProvider provider = CreateProvider(
+            members,
+            new FakePropertyProjectionRepository(),
+            operationLock: memberLock,
+            identityAnchors: anchors);
+        var handler = provider.GetRequiredService<
+            ICommandHandler<BootstrapStaffIdentityCommand, Unit>>();
+
+        Result<Unit> result = await handler.HandleAsync(
+            new BootstrapStaffIdentityCommand(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "member-100",
+                "Ada Operator",
+                "ada@example.test",
+                "integration:organizations"),
+            CancellationToken.None);
+
+        Assert.Equal(
+            StaffApplicationErrors.CreationOperationConflict,
+            result.Error);
+        Assert.Empty(anchors.Records);
+        Assert.Contains(
+            memberLock.Acquisitions,
+            acquisition => acquisition.StaffMemberId == member.Id);
     }
 
     [Fact]
@@ -1413,6 +1606,7 @@ public sealed class StaffCommandHandlerTests
         Result<Unit> invalidProfile = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
                 Guid.NewGuid(),
+                Guid.NewGuid(),
                 "member-profile",
                 string.Empty,
                 null,
@@ -1420,6 +1614,7 @@ public sealed class StaffCommandHandlerTests
             CancellationToken.None);
         Result<Unit> invalidActor = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
+                Guid.NewGuid(),
                 Guid.NewGuid(),
                 "member-actor",
                 "Ada Operator",
@@ -1464,6 +1659,7 @@ public sealed class StaffCommandHandlerTests
         Result<Unit> result = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
                 Guid.NewGuid(),
+                Guid.NewGuid(),
                 "member-100",
                 "Stale Owner Name",
                 "stale@example.test",
@@ -1494,6 +1690,7 @@ public sealed class StaffCommandHandlerTests
         Result<Unit> result = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
                 Guid.NewGuid(),
+                Guid.NewGuid(),
                 "member-100",
                 "Ada Operator",
                 "ada@example.test",
@@ -1520,6 +1717,7 @@ public sealed class StaffCommandHandlerTests
         Result<Unit> result = await handler.HandleAsync(
             new BootstrapStaffIdentityCommand(
                 operationId,
+                Guid.NewGuid(),
                 "member-different",
                 "Different Owner",
                 "different@example.test",
@@ -2000,6 +2198,53 @@ public sealed class StaffCommandHandlerTests
     }
 
     [Fact]
+    public async Task Unresolved_workspace_anchor_blocks_resume_before_workspace_preparation()
+    {
+        StaffMember member = CreateMember("member-100");
+        Assert.True(member.Suspend(
+            member.Version,
+            "user:owner",
+            "Leave",
+            Guid.NewGuid(),
+            TestClock.Now).IsSuccess);
+        long suspendedVersion = member.Version;
+        int eventCount = member.DomainEvents.Count;
+        RecordingLifecyclePolicy policy = new(
+            StaffLifecyclePolicyDecision.Allowed);
+        RecordingMemberMutationOperations operations = new();
+        using ServiceProvider provider = CreateProvider(
+            new FakeStaffMemberRepository(member),
+            new FakePropertyProjectionRepository(),
+            lifecyclePolicy: policy,
+            identityAnchorResolutions:
+                new StubStaffIdentityProvisioningAnchorResolutionRepository(
+                    hasUnresolved: true),
+            memberMutationOperations: operations);
+        var handler = provider.GetRequiredService<ICommandHandler<
+            ResumeStaffMemberCommand,
+            StaffMemberMutationReceiptDto>>();
+
+        Result<StaffMemberMutationReceiptDto> result =
+            await handler.HandleAsync(
+                new ResumeStaffMemberCommand(
+                    Guid.NewGuid(),
+                    member.Id,
+                    "Returned",
+                    member.Version,
+                    "user:owner"),
+                CancellationToken.None);
+
+        Assert.Equal(
+            StaffApplicationErrors.IdentityAnchorResolutionRequired,
+            result.Error);
+        Assert.Equal(StaffMemberState.Suspended, member.Status);
+        Assert.Equal(suspendedVersion, member.Version);
+        Assert.Equal(eventCount, member.DomainEvents.Count);
+        Assert.Empty(policy.Contexts);
+        Assert.Empty(operations.Records);
+    }
+
+    [Fact]
     public async Task Resume_replays_without_repeating_workspace_preparation()
     {
         StaffMember member = CreateMember("member-100");
@@ -2197,6 +2442,9 @@ public sealed class StaffCommandHandlerTests
         IStaffLifecyclePolicy? lifecyclePolicy = null,
         IStaffOperationLock? operationLock = null,
         IStaffCreationOperationLock? creationLock = null,
+        IStaffIdentityProvisioningAnchorRepository? identityAnchors = null,
+        IStaffIdentityProvisioningAnchorResolutionRepository?
+            identityAnchorResolutions = null,
         IStaffMemberMutationOperationRepository? memberMutationOperations = null,
         IStaffOnboardingProvisioningOperationRepository?
             onboardingOperations = null)
@@ -2210,6 +2458,15 @@ public sealed class StaffCommandHandlerTests
         services.AddSingleton(operationLock ?? new NoopStaffOperationLock());
         services.AddSingleton(
             creationLock ?? new NoopStaffCreationOperationLock());
+        IStaffIdentityProvisioningAnchorRepository anchorRepository =
+            identityAnchors ?? new RecordingIdentityProvisioningAnchors();
+        services.AddSingleton(anchorRepository);
+        services.AddSingleton<IStaffIdentityProvisioningAnchorWriter>(
+            new StubStaffIdentityProvisioningAnchorWriter(anchorRepository));
+        services.AddSingleton<
+            IStaffIdentityProvisioningAnchorResolutionRepository>(
+                identityAnchorResolutions ??
+                new StubStaffIdentityProvisioningAnchorResolutionRepository());
         services.AddSingleton(
             memberMutationOperations ?? new RecordingMemberMutationOperations());
         services.AddSingleton(
@@ -2317,6 +2574,20 @@ public sealed class StaffCommandHandlerTests
             this.SafetyGetCount++;
             return Task.FromResult(this.Candidates().FirstOrDefault(
                 candidate => candidate.Id == staffMemberId));
+        }
+
+        public Task<StaffMember?> GetForSafetyTransitionByAuthSubjectAsync(
+            string authSubjectId,
+            CancellationToken cancellationToken)
+        {
+            this.Calls?.Add("safety-subject-read");
+            this.SafetyGetCount++;
+            string normalized = authSubjectId.Trim();
+            return Task.FromResult(this.Candidates().FirstOrDefault(
+                candidate => string.Equals(
+                    candidate.AuthSubjectId,
+                    normalized,
+                    StringComparison.Ordinal)));
         }
 
         public Task<StaffMember?> GetByAuthSubjectAsync(string authSubjectId,
@@ -2457,6 +2728,7 @@ public sealed class StaffCommandHandlerTests
         : IStaffOperationLock
     {
         public List<(string TenantId, Guid StaffMemberId)> Acquisitions { get; } = [];
+        public Action<Guid>? OnAcquireById { get; set; }
 
         public Task<long?> GetStaffMemberRevisionAsync(
             string tenantId,
@@ -2470,6 +2742,7 @@ public sealed class StaffCommandHandlerTests
         {
             this.Acquisitions.Add((tenantId, staffMemberId));
             onAcquire?.Invoke();
+            this.OnAcquireById?.Invoke(staffMemberId);
             return Task.FromResult(true);
         }
     }
@@ -2521,6 +2794,36 @@ public sealed class StaffCommandHandlerTests
         {
             this.Records.RemoveAll(record =>
                 record.StaffMemberId == staffMemberId);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingIdentityProvisioningAnchors
+        : IStaffIdentityProvisioningAnchorRepository
+    {
+        public List<StaffIdentityProvisioningAnchorRecord> Records { get; } = [];
+
+        public Task<StaffIdentityProvisioningAnchorRecord?> GetAsync(
+            StaffIdentityProvisioningSourceKind sourceKind,
+            Guid sourceId,
+            CancellationToken cancellationToken) => Task.FromResult(
+            this.Records.SingleOrDefault(record =>
+                record.SourceKind == sourceKind &&
+                record.SourceId == sourceId));
+
+        public Task<bool> HasWorkspaceOnboardingAsync(
+            Guid staffMemberId,
+            CancellationToken cancellationToken) => Task.FromResult(
+            this.Records.Any(record =>
+                record.SourceKind ==
+                    StaffIdentityProvisioningSourceKind.WorkspaceOnboarding &&
+                record.StaffMemberId == staffMemberId));
+
+        public Task AddAsync(
+            StaffIdentityProvisioningAnchorRecord anchor,
+            CancellationToken cancellationToken)
+        {
+            this.Records.Add(anchor);
             return Task.CompletedTask;
         }
     }

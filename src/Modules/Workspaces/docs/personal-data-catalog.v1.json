@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogId": "workspaces.personal-data",
-  "catalogVersion": 13,
+  "catalogVersion": 18,
   "module": "workspaces",
   "approvalState": "engineering-default",
   "accessPolicies": [
@@ -11,7 +11,8 @@
       "readers": [
         "permission:access-control.profiles.read",
         "permission:staff.sensitive-profile.read",
-        "system:authorized-audit-consumer"
+        "system:authorized-audit-consumer",
+        "system:workspaces-identity-anchor-cutover"
       ],
       "writers": [
         "system:workspaces-access-coordinator"
@@ -163,6 +164,32 @@
         "system:retention.scheduler",
         "system:workspaces.retention"
       ]
+    },
+    {
+      "id": "workspaces-identity-anchor-cutover",
+      "scope": "tenant-identity-anchor-cutover-evidence",
+      "readers": [
+        "permission:workspaces.identity-anchors.reconcile",
+        "system:authorized-audit-consumer",
+        "system:workspaces-identity-anchor-cutover"
+      ],
+      "writers": [
+        "permission:workspaces.identity-anchors.reconcile",
+        "system:workspaces-identity-anchor-cutover"
+      ]
+    },
+    {
+      "id": "workspaces-identity-anchor-historical-no-provision",
+      "scope": "tenant-reviewed-historical-no-provision-proof",
+      "readers": [
+        "permission:workspaces.identity-anchors.historical-no-provision.review",
+        "system:authorized-audit-consumer",
+        "system:workspaces-identity-anchor-cutover"
+      ],
+      "writers": [
+        "permission:workspaces.identity-anchors.historical-no-provision.review",
+        "system:workspaces-identity-anchor-cutover"
+      ]
     }
   ],
   "retentionPolicies": [
@@ -214,13 +241,6 @@
       "startsAt": "workspace-correlation-scrub-completed",
       "endsAt": "approved-workspace-audit-proof-retention-completed",
       "legalHoldBehavior": "pause-approved-erasure"
-    },
-    {
-      "id": "workspace-onboarding-retention-execution-evidence",
-      "approvalState": "engineering-default",
-      "startsAt": "workspace-onboarding-retention-execution-started",
-      "endsAt": "approved-operational-retention-completed-or-tenant-termination",
-      "legalHoldBehavior": "retain-minimum-approved-execution-evidence"
     },
     {
       "id": "workspace-data-rights-correction-proof",
@@ -284,6 +304,27 @@
       "startsAt": "approved-workspaces-tenant-destruction-started",
       "endsAt": "approved-minimum-termination-proof-retention-completed",
       "legalHoldBehavior": "retain-minimum-required-termination-proof"
+    },
+    {
+      "id": "workspace-onboarding-retention-execution-evidence",
+      "approvalState": "engineering-default",
+      "startsAt": "workspace-onboarding-retention-execution-started",
+      "endsAt": "approved-operational-retention-completed-or-tenant-termination",
+      "legalHoldBehavior": "retain-minimum-approved-execution-evidence"
+    },
+    {
+      "id": "workspace-deferred-claim-withdrawal",
+      "approvalState": "engineering-default",
+      "startsAt": "withdrawal-observed-before-claim-correlation",
+      "endsAt": "withdrawal-consumed-or-source-terminalized-or-tenant-termination",
+      "legalHoldBehavior": "retain-only-until-terminal-correlation"
+    },
+    {
+      "id": "workspace-historical-no-provision-proof",
+      "approvalState": "engineering-default",
+      "startsAt": "workspace-historical-no-provision-review-completed",
+      "endsAt": "approved-audit-retention-expired-or-tenant-termination",
+      "legalHoldBehavior": "pause-approved-disposal"
     }
   ],
   "rightsPolicies": [
@@ -363,6 +404,20 @@
       "correction": "append-corrective-execution-evidence",
       "restriction": "retain-minimum-current-attempt-evidence",
       "erasure": "remove-after-approved-operational-retention-or-tenant-termination"
+    },
+    {
+      "id": "identity-anchor-cutover-evidence-control",
+      "export": "include-in-authorized-tenant-cutover-evidence",
+      "correction": "regenerate-from-authoritative-source-evidence",
+      "restriction": "restrict-to-authorized-cutover-operators",
+      "erasure": "discard-on-cutover-request-completion"
+    },
+    {
+      "id": "workspace-historical-no-provision-proof-control",
+      "export": "include-in-authorized-audit-or-tenant-export",
+      "correction": "append-corrective-proof-only",
+      "restriction": "retain-minimum-owner-proof",
+      "erasure": "retain-minimum-approved-accountability-proof"
     }
   ],
   "fields": [
@@ -1411,6 +1466,26 @@
           "member": "CreatedBySubjectId",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ReviewerId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ReviewerId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ReviewerId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
         }
       ]
     },
@@ -1484,7 +1559,8 @@
         "application-query",
         "data-rights-export",
         "integration-event",
-        "persistence"
+        "persistence",
+        "projection-export"
       ],
       "allowedBoundaries": [
         "cross-module",
@@ -1574,6 +1650,20 @@
           "member": "SubjectId",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.WorkspaceStaffIdentityAnchorSourceRecord",
+          "member": "SubjectId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence",
+          "member": "CanMutateAsync.subjectId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
         }
       ]
     },
@@ -1648,6 +1738,13 @@
           "member": "FailureCode",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "FailureCode",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -1757,6 +1854,27 @@
           "member": "ClaimId",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "Id",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffDeferredClaimWithdrawalDataRightsExport",
+          "member": "ClaimId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "ClaimId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -1873,6 +1991,27 @@
           "member": "ClaimVersion",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "ClaimVersion",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffDeferredClaimWithdrawalDataRightsExport",
+          "member": "ClaimVersion",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "ClaimVersion",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -1895,10 +2034,13 @@
       "retentionPolicy": "integration-message-journal",
       "rightsPolicy": "audit-attribution",
       "allowedSurfaces": [
-        "integration-event"
+        "data-rights-export",
+        "integration-event",
+        "persistence"
       ],
       "allowedBoundaries": [
-        "cross-module"
+        "cross-module",
+        "intra-module"
       ],
       "approvalState": "engineering-default",
       "bindings": [
@@ -1964,6 +2106,20 @@
           "member": "EventId",
           "surface": "integration-event",
           "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "EventId",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffDeferredClaimWithdrawalDataRightsExport",
+          "member": "EventId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
         }
       ]
     },
@@ -1986,10 +2142,13 @@
       "retentionPolicy": "integration-message-journal",
       "rightsPolicy": "audit-attribution",
       "allowedSurfaces": [
-        "integration-event"
+        "data-rights-export",
+        "integration-event",
+        "persistence"
       ],
       "allowedBoundaries": [
-        "cross-module"
+        "cross-module",
+        "intra-module"
       ],
       "approvalState": "engineering-default",
       "bindings": [
@@ -2055,6 +2214,20 @@
           "member": "OccurredAtUtc",
           "surface": "integration-event",
           "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "OccurredAtUtc",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffDeferredClaimWithdrawalDataRightsExport",
+          "member": "OccurredAtUtc",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
         }
       ]
     },
@@ -2618,6 +2791,27 @@
           "member": "PlanId",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "EnrollmentLinkId",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffDeferredClaimWithdrawalDataRightsExport",
+          "member": "EnrollmentLinkId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "SourceId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -2729,6 +2923,13 @@
           "member": "SourceKind",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "SourceKind",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -3232,8 +3433,10 @@
       "allowedSurfaces": [
         "api-response",
         "application-command",
+        "application-query",
         "data-rights-export",
-        "persistence"
+        "persistence",
+        "projection-export"
       ],
       "allowedBoundaries": [
         "cross-module",
@@ -3275,6 +3478,34 @@
           "member": "ApplicationId",
           "surface": "application-command",
           "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.WorkspaceStaffIdentityAnchorSourceRecord",
+          "member": "ApplicationId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.WorkspaceStaffIdentityAnchorSourcePage",
+          "member": "NextApplicationId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Queries.GetWorkspaceStaffOnboardingReviewQuery",
+          "member": "ApplicationId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "ApplicationId",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -3327,6 +3558,13 @@
           "member": "CreatedAtUtc",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "CreatedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -3379,6 +3617,13 @@
           "member": "LastChangedAtUtc",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "LastChangedAtUtc",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -3403,7 +3648,8 @@
       "allowedSurfaces": [
         "api-response",
         "data-rights-export",
-        "persistence"
+        "persistence",
+        "projection-export"
       ],
       "allowedBoundaries": [
         "cross-module",
@@ -3431,6 +3677,20 @@
           "member": "Status",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.WorkspaceStaffIdentityAnchorSourceRecord",
+          "member": "Status",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "Status",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -3483,6 +3743,13 @@
           "member": "Version",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "Version",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -4357,11 +4624,13 @@
       "rightsPolicy": "transient-request-data",
       "allowedSurfaces": [
         "admin-output",
-        "api-response"
+        "api-response",
+        "projection-export"
       ],
       "allowedBoundaries": [
         "customer-api",
-        "support"
+        "support",
+        "intra-module"
       ],
       "approvalState": "engineering-default",
       "bindings": [
@@ -4384,6 +4653,20 @@
           "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffAccessProcessListResponse",
           "member": "Items",
           "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.WorkspaceStaffIdentityAnchorSourcePage",
+          "member": "Records",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingSummaryListResponse",
+          "member": "Items",
+          "surface": "api-response",
           "retentionPolicy": "transient-response"
         }
       ]
@@ -4481,7 +4764,8 @@
         "application-command",
         "data-rights-export",
         "integration-event",
-        "persistence"
+        "persistence",
+        "projection-export"
       ],
       "allowedBoundaries": [
         "cross-module",
@@ -4564,6 +4848,20 @@
           "member": "StaffMemberId",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.WorkspaceStaffIdentityAnchorSourceRecord",
+          "member": "StaffMemberId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingActionableSummaryDto",
+          "member": "HasStaffTarget",
+          "surface": "api-response",
+          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -4733,7 +5031,8 @@
         "application-command",
         "data-rights-export",
         "integration-event",
-        "persistence"
+        "persistence",
+        "application-query"
       ],
       "allowedBoundaries": [
         "cross-module",
@@ -4967,6 +5266,34 @@
           "member": "ScopeId",
           "surface": "data-rights-export",
           "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "ScopeId",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffDeferredClaimWithdrawal",
+          "member": "OrganizationId",
+          "surface": "persistence",
+          "retentionPolicy": "workspace-deferred-claim-withdrawal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffDeferredClaimWithdrawalDataRightsExport",
+          "member": "ScopeId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence",
+          "member": "CanMutateAsync.tenantId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
         }
       ]
     },
@@ -9773,6 +10100,76 @@
       ]
     },
     {
+      "id": "workspaces.tenant-termination-actor-id",
+      "dataSubject": "staff",
+      "classification": "audit-attribution",
+      "sensitivity": "elevated",
+      "purposes": [
+        "tenant-termination-accountability",
+        "authorized-change-traceability"
+      ],
+      "sources": [
+        "authorized-data-rights-executor"
+      ],
+      "authoritativeOwner": "auth",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-tenant-termination-proof",
+      "countryPolicyKey": "workspaces.tenant-termination.actor-id",
+      "retentionPolicy": "workspace-tenant-termination-proof",
+      "rightsPolicy": "audit-attribution",
+      "allowedSurfaces": [
+        "application-command",
+        "persistence",
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFence",
+          "member": "CreatedBy",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFence",
+          "member": "LastChangedBy",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFenceReceipt",
+          "member": "ActorId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ApplyWorkspaceTerminationFenceCommand",
+          "member": "ActorId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReleaseWorkspaceTerminationFenceCommand",
+          "member": "ActorId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceTerminationFenceReceiptDto",
+          "member": "ActorId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        }
+      ]
+    },
+    {
       "id": "workspaces.onboarding-retention.execution-coordinate",
       "dataSubject": "staff",
       "classification": "pseudonymous-identifier",
@@ -10120,76 +10517,6 @@
           "member": "Request",
           "surface": "application-command",
           "retentionPolicy": "transient-request"
-        }
-      ]
-    },
-    {
-      "id": "workspaces.tenant-termination-actor-id",
-      "dataSubject": "staff",
-      "classification": "audit-attribution",
-      "sensitivity": "elevated",
-      "purposes": [
-        "tenant-termination-accountability",
-        "authorized-change-traceability"
-      ],
-      "sources": [
-        "authorized-data-rights-executor"
-      ],
-      "authoritativeOwner": "auth",
-      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
-      "accessPolicy": "workspaces-tenant-termination-proof",
-      "countryPolicyKey": "workspaces.tenant-termination.actor-id",
-      "retentionPolicy": "workspace-tenant-termination-proof",
-      "rightsPolicy": "audit-attribution",
-      "allowedSurfaces": [
-        "application-command",
-        "persistence",
-        "projection-export"
-      ],
-      "allowedBoundaries": [
-        "cross-module",
-        "intra-module"
-      ],
-      "approvalState": "engineering-default",
-      "bindings": [
-        {
-          "assembly": "BunkFy.Modules.Workspaces.Domain",
-          "type": "BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFence",
-          "member": "CreatedBy",
-          "surface": "persistence"
-        },
-        {
-          "assembly": "BunkFy.Modules.Workspaces.Domain",
-          "type": "BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFence",
-          "member": "LastChangedBy",
-          "surface": "persistence"
-        },
-        {
-          "assembly": "BunkFy.Modules.Workspaces.Domain",
-          "type": "BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFenceReceipt",
-          "member": "ActorId",
-          "surface": "persistence"
-        },
-        {
-          "assembly": "BunkFy.Modules.Workspaces.Application",
-          "type": "BunkFy.Modules.Workspaces.Application.Commands.ApplyWorkspaceTerminationFenceCommand",
-          "member": "ActorId",
-          "surface": "application-command",
-          "retentionPolicy": "transient-request"
-        },
-        {
-          "assembly": "BunkFy.Modules.Workspaces.Application",
-          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReleaseWorkspaceTerminationFenceCommand",
-          "member": "ActorId",
-          "surface": "application-command",
-          "retentionPolicy": "transient-request"
-        },
-        {
-          "assembly": "BunkFy.Modules.Workspaces.Contracts",
-          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceTerminationFenceReceiptDto",
-          "member": "ActorId",
-          "surface": "projection-export",
-          "retentionPolicy": "transient-response"
         }
       ]
     },
@@ -12185,6 +12512,2797 @@
           "member": "RecordedAtUtc",
           "surface": "api-response",
           "retentionPolicy": "transient-response"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-cutover.historical-evidence-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "historical-owner-universe-review",
+        "cutover-completeness-evidence"
+      ],
+      "sources": [
+        "operator-reviewed-historical-owner-evidence"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-cutover",
+      "countryPolicyKey": "workspaces.identity-anchor-cutover-evidence",
+      "retentionPolicy": "transient-response",
+      "rightsPolicy": "identity-anchor-cutover-evidence-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "application-query"
+      ],
+      "allowedBoundaries": [
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffIdentityAnchorHistoricalEvidence",
+          "member": "EvidenceSha256",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffIdentityAnchorHistoricalEvidence",
+          "member": "EvidenceSha256",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffIdentityAnchorCutoverStatus",
+          "member": "HistoricalEvidenceSha256",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-cutover.owner-manifest-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "reviewed-owner-binding-evidence",
+        "stale-decision-prevention"
+      ],
+      "sources": [
+        "operator-reviewed-organizations-export"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-cutover",
+      "countryPolicyKey": "workspaces.identity-anchor-cutover-evidence",
+      "retentionPolicy": "transient-response",
+      "rightsPolicy": "identity-anchor-cutover-evidence-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command"
+      ],
+      "allowedBoundaries": [
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffIdentityAnchorCutoverStatus",
+          "member": "OwnerManifestSha256",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReconcileWorkspaceStaffIdentityAnchorsCommand",
+          "member": "ExpectedOwnerManifestSha256",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-cutover.source-evidence-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "authoritative-source-evidence",
+        "stale-decision-prevention"
+      ],
+      "sources": [
+        "organizations-scope-export",
+        "workspaces-onboarding"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-cutover",
+      "countryPolicyKey": "workspaces.identity-anchor-cutover-evidence",
+      "retentionPolicy": "transient-response",
+      "rightsPolicy": "identity-anchor-cutover-evidence-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command"
+      ],
+      "allowedBoundaries": [
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffIdentityAnchorCutoverStatus",
+          "member": "SourceEvidenceSha256",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReconcileWorkspaceStaffIdentityAnchorsCommand",
+          "member": "ExpectedSourceEvidenceSha256",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-cutover.state-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "anchor-state-review",
+        "cutover-conflict-evidence"
+      ],
+      "sources": [
+        "staff-identity-anchor-inspection"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-cutover",
+      "countryPolicyKey": "workspaces.identity-anchor-cutover-evidence",
+      "retentionPolicy": "transient-response",
+      "rightsPolicy": "identity-anchor-cutover-evidence-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command"
+      ],
+      "allowedBoundaries": [
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffIdentityAnchorCutoverStatus",
+          "member": "AnchorStateSha256",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReconcileWorkspaceStaffIdentityAnchorsCommand",
+          "member": "ExpectedAnchorStateSha256",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.expected-resolution-event-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-resolution",
+        "message-idempotency"
+      ],
+      "sources": [
+        "staff"
+      ],
+      "authoritativeOwner": "staff",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.expected-resolution-event-id",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorExpectedResolutionEventId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorExpectedResolutionEventId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.continuation-event-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-continuation",
+        "message-idempotency"
+      ],
+      "sources": [
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.continuation-event-id",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorContinuationEventId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorContinuationEventId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.resolution-event-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-resolution",
+        "message-idempotency"
+      ],
+      "sources": [
+        "staff"
+      ],
+      "authoritativeOwner": "staff",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.resolution-event-id",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorResolutionEventId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorResolutionEventId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.resolution-staff-member-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-resolution",
+        "staff-linkage"
+      ],
+      "sources": [
+        "staff"
+      ],
+      "authoritativeOwner": "staff",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.resolution-staff-member-id",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorResolutionStaffMemberId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorResolutionStaffMemberId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.resolution-application-version",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "standard",
+      "purposes": [
+        "identity-anchor-resolution",
+        "exact-replay"
+      ],
+      "sources": [
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.resolution-application-version",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorResolutionApplicationVersion",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorResolutionApplicationVersion",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.resolution-disposition",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-resolution",
+        "access-restoration-suppression"
+      ],
+      "sources": [
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.resolution-disposition",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorResolutionDisposition",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorResolutionDisposition",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.resolution-intent-at-utc",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "standard",
+      "purposes": [
+        "identity-anchor-resolution",
+        "audit-correlation"
+      ],
+      "sources": [
+        "system-clock"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.resolution-intent-at-utc",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorResolutionIntentAtUtc",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorResolutionIntentAtUtc",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.resolution-observed-at-utc",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "standard",
+      "purposes": [
+        "identity-anchor-resolution",
+        "reconciliation"
+      ],
+      "sources": [
+        "system-clock"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.resolution-observed-at-utc",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorResolutionObservedAtUtc",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorResolutionObservedAtUtc",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor.sweep-ordinal",
+      "dataSubject": "staff",
+      "classification": "linked-operational",
+      "sensitivity": "standard",
+      "purposes": [
+        "identity-anchor-reconciliation",
+        "bounded-keyset-paging"
+      ],
+      "sources": [
+        "database-sequence"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor.sweep-ordinal",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffOnboarding",
+          "member": "IdentityAnchorSweepOrdinal",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffOnboardingDataRightsExport",
+          "member": "IdentityAnchorSweepOrdinal",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.access-process-restoration-disposition",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "access-restoration",
+        "access-restoration-suppression"
+      ],
+      "sources": [
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-access-history",
+      "countryPolicyKey": "workspaces.access-process-restoration-disposition",
+      "retentionPolicy": "workspace-access-history",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence",
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffAccessProcess",
+          "member": "RestorationDisposition",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffAccessProcessDataRightsExport",
+          "member": "RestorationDisposition",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.WorkspaceStaffAccessPreparation",
+          "member": "RestorationDisposition",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffAccessProcessDto",
+          "member": "RestorationDisposition",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-sweep.coordinate",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-reconciliation",
+        "message-idempotency"
+      ],
+      "sources": [
+        "workspaces-domain",
+        "staff"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor-sweep.coordinate",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "domain-event",
+        "integration-event",
+        "persistence",
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "Id",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "ScopeId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedCycleId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastAdvanceId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastAdvanceSha256",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastRunId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.PrepareWorkspaceStaffIdentityAnchorSweepPageCommand",
+          "member": "CheckpointId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.PrepareWorkspaceStaffIdentityAnchorSweepPageCommand",
+          "member": "CycleId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.PrepareWorkspaceStaffIdentityAnchorSweepPageCommand",
+          "member": "EmptyAdvanceId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.PrepareWorkspaceStaffIdentityAnchorSweepPageCommand",
+          "member": "RunId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReconcileWorkspaceStaffIdentityAnchorSweepCandidateCommand",
+          "member": "ApplicationId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "CheckpointId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "ExpectedCycleId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "AdvanceId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "RunId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidate",
+          "member": "ApplicationId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidate",
+          "member": "SubjectId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "CheckpointId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "CycleId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidateResult",
+          "member": "ApplicationId",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "ScopeId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "CycleId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "LastCompletedCycleId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "LastRunId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent",
+          "member": "EventId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent",
+          "member": "ScopeId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent",
+          "member": "ApplicationId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent",
+          "member": "StaffMemberId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "EventId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "ScopeId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "ApplicationId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "StaffMemberId",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent",
+          "member": "EventId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent",
+          "member": "ScopeId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent",
+          "member": "ApplicationId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent",
+          "member": "StaffMemberId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "EventId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "ScopeId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "ApplicationId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "StaffMemberId",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-sweep.lifecycle",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-reconciliation",
+        "identity-anchor-resolution"
+      ],
+      "sources": [
+        "workspaces-domain",
+        "staff"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor-sweep.lifecycle",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "domain-event",
+        "integration-event",
+        "persistence",
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "ProtocolVersion",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleStartedAtUtc",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedAtUtc",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "UpdatedAtUtc",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidate",
+          "member": "HasLocalAnchorState",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "ReachedEnd",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "AdvanceRequired",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "ReachedEnd",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidateResult",
+          "member": "Outcome",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "HasCheckpoint",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "ProtocolVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "HasActiveCycle",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "CycleStartedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "LastCompletedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "UpdatedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "HasCompletedBoundedCycle",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "HasCompletedCycleObservation",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedDomainEvent",
+          "member": "OccurredAtUtc",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "OccurredAtUtc",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "WorkspaceApplicationVersion",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.Events.WorkspaceStaffOnboardingIdentityAnchorResolvedDomainEvent",
+          "member": "Disposition",
+          "surface": "domain-event",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorContinuationRequestedIntegrationEvent",
+          "member": "OccurredAtUtc",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "OccurredAtUtc",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "WorkspaceApplicationVersion",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent",
+          "member": "Disposition",
+          "surface": "integration-event",
+          "retentionPolicy": "integration-message-journal"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-sweep.operational-control",
+      "dataSubject": "staff",
+      "classification": "linked-operational",
+      "sensitivity": "standard",
+      "purposes": [
+        "identity-anchor-reconciliation",
+        "bounded-backlog-observation"
+      ],
+      "sources": [
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor-sweep.operational-control",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "persistence",
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "Version",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleUpperOrdinal",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "AfterOrdinal",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleScannedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleNoAnchorCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleRemovedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleObservedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleAlreadyObservedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleDeferredCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleConflictCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CyclePassOneCommittedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "CycleResolutionRecordConfirmedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedUpperOrdinal",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedScannedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedNoAnchorCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedRemovedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedObservedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedAlreadyObservedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedDeferredCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedConflictCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedPassOneCommittedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepCheckpoint",
+          "member": "LastCompletedResolutionRecordConfirmedCount",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.PrepareWorkspaceStaffIdentityAnchorSweepPageCommand",
+          "member": "BatchSize",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.ReconcileWorkspaceStaffIdentityAnchorsPayload",
+          "member": "BatchSize",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Contracts",
+          "type": "BunkFy.Modules.Workspaces.Contracts.ReconcileWorkspaceStaffIdentityAnchorsPayload",
+          "member": "MaxBatches",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidate",
+          "member": "IdentityAnchorSweepOrdinal",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "CheckpointVersion",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "UpperOrdinal",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "ExpectedAfterOrdinal",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "NextAfterOrdinal",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "ExpectedCheckpointVersion",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "ExpectedAfterOrdinal",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "NextAfterOrdinal",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "CheckpointVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "CycleUpperOrdinal",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "AfterOrdinal",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "LastCompletedUpperOrdinal",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "LastCompletedObservedBacklogCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ScannedCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "NoAnchorCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "RemovedCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ObservedCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "AlreadyObservedCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "DeferredCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ConflictCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "PassOneCommittedCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ResolutionRecordConfirmedCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "SettledCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "BacklogCount",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ScannedCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "NoAnchorCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "RemovedCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ObservedCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "AlreadyObservedCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "DeferredCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ConflictCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "PassOneCommittedCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "ResolutionRecordConfirmedCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "SettledCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffIdentityAnchorSweepPageCounts",
+          "member": "BacklogCount",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-sweep.structured-control",
+      "dataSubject": "staff",
+      "classification": "structured-payload",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-reconciliation"
+      ],
+      "sources": [
+        "workspaces-domain",
+        "staff"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-onboarding",
+      "countryPolicyKey": "workspaces.identity-anchor-sweep.structured-control",
+      "retentionPolicy": "workspace-onboarding-lifecycle",
+      "rightsPolicy": "staff-employment-history",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "data-rights-export",
+        "projection-export"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.AdvanceWorkspaceStaffIdentityAnchorSweepCommand",
+          "member": "Advance",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepPage",
+          "member": "Candidates",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepAdvance",
+          "member": "Counts",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepCandidateResult",
+          "member": "ResolutionRequest",
+          "surface": "projection-export",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "CurrentCycle",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Models.WorkspaceStaffIdentityAnchorSweepStatus",
+          "member": "LastCompletedCycle",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffIdentityAnchorSweepCheckpointDataRightsExport",
+          "member": "Checkpoint",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.receipt-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.receipt-id",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "Id",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "ReceiptId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ReceiptId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.operation-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.operation-id",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "application-query",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "OperationId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "OperationId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "OperationId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.IWorkspaceStaffHistoricalNoProvisionReceiptRepository",
+          "member": "FindByOperationIdAsync.operationId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "OperationId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.application-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.application-id",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "application-command",
+        "application-query",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ApplicationId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ApplicationId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "ApplicationId",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.IWorkspaceStaffHistoricalNoProvisionReceiptRepository",
+          "member": "FindByApplicationIdAsync.applicationId",
+          "surface": "application-query",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ApplicationId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.scope-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.scope-id",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ScopeId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ScopeId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.source-kind",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.source-kind",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "SourceKind",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "SourceKind",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.source-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.source-id",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "SourceId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "SourceId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.expected-application-version",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.expected-application-version",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ExpectedApplicationVersion",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExpectedApplicationVersion",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ExpectedApplicationVersion",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.expected-application-status",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.expected-application-status",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ExpectedApplicationStatus",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExpectedApplicationStatus",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ExpectedApplicationStatus",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.result-application-version",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.result-application-version",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ResultApplicationVersion",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "ResultApplicationVersion",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ResultApplicationVersion",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.result-application-status",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.result-application-status",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ResultApplicationStatus",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "ResultApplicationStatus",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ResultApplicationStatus",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.organizations-scope-revision",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.organizations-scope-revision",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "OrganizationsScopeRevision",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExpectedOrganizationsScopeRevision",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "OrganizationsScopeRevision",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.organizations-source-version",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.organizations-source-version",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "OrganizationsSourceVersion",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExpectedOrganizationsSourceVersion",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "OrganizationsSourceVersion",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.organizations-source-status",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.organizations-source-status",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "OrganizationsSourceStatus",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExpectedOrganizationsSourceStatus",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "OrganizationsSourceStatus",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.staff-evidence-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.staff-evidence-digest",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "StaffEvidenceSha256",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "StaffEvidenceSha256",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "StaffEvidenceSha256",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.external-evidence-manifest-id",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.external-evidence-manifest-id",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ExternalEvidenceManifestId",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExternalEvidenceManifestId",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ExternalEvidenceManifestId",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.external-evidence-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.external-evidence-digest",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ExternalEvidenceSha256",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Commands.ReviewWorkspaceStaffHistoricalNoProvisionCommand",
+          "member": "ExternalEvidenceSha256",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ExternalEvidenceSha256",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.reviewed-at",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.reviewed-at",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ReviewedAtUtc",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "ReviewedAtUtc",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ReviewedAtUtc",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.canonical-digest",
+      "dataSubject": "staff",
+      "classification": "pseudonymous-identifier",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.canonical-digest",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output",
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "CanonicalSha256",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "CanonicalSha256",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "CanonicalSha256",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.contract-version",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.contract-version",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "data-rights-export",
+        "persistence"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Domain",
+          "type": "BunkFy.Modules.Workspaces.Domain.WorkspaceStaffHistoricalNoProvisionReceipt",
+          "member": "ContractVersion",
+          "surface": "persistence"
+        },
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Persistence",
+          "type": "BunkFy.Modules.Workspaces.Persistence.Repositories.WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport",
+          "member": "ContractVersion",
+          "surface": "data-rights-export",
+          "retentionPolicy": "workspaces-data-rights-export-fragment"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.replay-disposition",
+      "dataSubject": "staff",
+      "classification": "lifecycle",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.replay-disposition",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "admin-output"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.WorkspaceStaffHistoricalNoProvisionDispositionResult",
+          "member": "AlreadyReviewed",
+          "surface": "admin-output",
+          "retentionPolicy": "transient-response"
+        }
+      ]
+    },
+    {
+      "id": "workspaces.identity-anchor-historical-no-provision.structured-control",
+      "dataSubject": "staff",
+      "classification": "structured-payload",
+      "sensitivity": "elevated",
+      "purposes": [
+        "identity-anchor-historical-no-provision-review",
+        "identity-anchor-reconciliation",
+        "tenant-termination-audit"
+      ],
+      "sources": [
+        "organizations",
+        "staff",
+        "workspaces-domain"
+      ],
+      "authoritativeOwner": "workspaces",
+      "controllerProcessorContext": "customer-controller-bunk-fy-processor",
+      "accessPolicy": "workspaces-identity-anchor-historical-no-provision",
+      "countryPolicyKey": "workspaces.identity-anchor-historical-no-provision.structured-control",
+      "retentionPolicy": "workspace-historical-no-provision-proof",
+      "rightsPolicy": "workspace-historical-no-provision-proof-control",
+      "allowedSurfaces": [
+        "application-command"
+      ],
+      "allowedBoundaries": [
+        "cross-module",
+        "intra-module",
+        "support"
+      ],
+      "approvalState": "engineering-default",
+      "bindings": [
+        {
+          "assembly": "BunkFy.Modules.Workspaces.Application",
+          "type": "BunkFy.Modules.Workspaces.Application.Ports.IWorkspaceStaffHistoricalNoProvisionReceiptRepository",
+          "member": "AddAsync.receipt",
+          "surface": "application-command",
+          "retentionPolicy": "transient-request"
         }
       ]
     }

@@ -17,6 +17,7 @@ internal sealed class StaffIdentityBootstrapper(IRequestDispatcher dispatcher)
         Result<Unit> result = await dispatcher.SendAsync(
             new BootstrapStaffIdentityCommand(
                 request.OperationId,
+                request.SourceId,
                 request.AuthSubjectId,
                 request.DisplayName,
                 request.WorkEmail,

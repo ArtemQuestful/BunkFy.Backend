@@ -252,6 +252,7 @@ public sealed class WorkspaceStaffOnboardingRetentionExecutionTests
                 null!,
                 null!,
                 null!,
+                null!,
                 Options.Create(
                     new WorkspaceStaffOnboardingRetentionOptions()),
                 new TestClock());

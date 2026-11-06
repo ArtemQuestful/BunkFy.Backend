@@ -39,12 +39,18 @@ public sealed class StaffContractTests
             permission.Code ==
                 StaffAdminPermissionCodes.DataHoldsManage);
         Assert.Equal(3, StaffModuleMetadata.Descriptor.GetSubscriptions().Count);
-        Assert.Equal(8, StaffModuleMetadata.Descriptor.GetPublishedEvents().Count);
+        Assert.Equal(9, StaffModuleMetadata.Descriptor.GetPublishedEvents().Count);
         Assert.Contains(
             StaffModuleMetadata.Descriptor.GetPublishedEvents(),
             published =>
                 published.EventType ==
                     DataRightsTenantCorrectionAppliedIntegrationEvent.EventType);
+        Assert.Contains(
+            StaffModuleMetadata.Descriptor.GetPublishedEvents(),
+            published =>
+                published.EventType ==
+                    StaffIdentityProvisioningAnchorCreatedIntegrationEvent
+                        .EventType);
         Assert.Single(StaffModuleMetadata.Descriptor.GetTasks());
         Assert.Single(StaffModuleMetadata.Descriptor.GetCompositionProfiles());
         Assert.Equal(
@@ -63,6 +69,7 @@ public sealed class StaffContractTests
             typeof(StaffAuthSubjectChangedIntegrationEvent),
             typeof(StaffPropertyAssignmentChangedIntegrationEvent),
             typeof(StaffProcessingRestrictionChangedIntegrationEvent),
+            typeof(StaffIdentityProvisioningAnchorCreatedIntegrationEvent),
             typeof(DataRightsTenantCorrectionAppliedIntegrationEvent)];
         Assert.All(eventTypes, eventType => Assert.DoesNotContain(eventType.GetProperties(),
             property => forbidden.Contains(property.Name, StringComparer.Ordinal)));
@@ -72,5 +79,32 @@ public sealed class StaffContractTests
             StaffIntegrationSubjects.CreateMemberAnonymised(), StringComparison.Ordinal);
         Assert.EndsWith(".staff.property-assignment-changed.v1",
             StaffIntegrationSubjects.CreatePropertyAssignmentChanged(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Identity_anchor_created_event_is_bound_to_its_application_coordinate()
+    {
+        Guid applicationId = Guid.NewGuid();
+        Guid resolutionEventId = Guid.NewGuid();
+
+        StaffIdentityProvisioningAnchorCreatedIntegrationEvent integrationEvent =
+            new(
+                applicationId,
+                Guid.NewGuid().ToString("D"),
+                DateTimeOffset.UtcNow,
+                applicationId,
+                Guid.NewGuid(),
+                resolutionEventId);
+
+        Assert.Equal(applicationId, integrationEvent.EventId);
+        Assert.Equal(resolutionEventId, integrationEvent.ResolutionEventId);
+        Assert.Throws<ArgumentException>(() =>
+            new StaffIdentityProvisioningAnchorCreatedIntegrationEvent(
+                Guid.NewGuid(),
+                integrationEvent.ScopeId,
+                integrationEvent.OccurredAtUtc,
+                applicationId,
+                integrationEvent.StaffMemberId,
+                resolutionEventId));
     }
 }

@@ -2,18 +2,24 @@ namespace BunkFy.Modules.Workspaces.Application.Handlers;
 
 using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Application.Commands;
+using BunkFy.Modules.Workspaces.Application.Mapping;
 using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Time;
+using Microsoft.Extensions.Logging;
+using DomainRestorationDisposition =
+    BunkFy.Modules.Workspaces.Domain.WorkspaceStaffAccessRestorationDisposition;
 
 internal sealed class PrepareWorkspaceStaffAccessCommandHandler(
     IWorkspaceStaffAccessProcessRepository processes,
+    IWorkspaceStaffOnboardingRestorationSuppressionReader suppressions,
     WorkspaceStaffAccessMutationCoordinator mutations,
     WorkspaceAccessProvisioner access,
     WorkspaceOperationalAdmissionEvaluator operationalAdmission,
-    ISystemClock clock)
+    ISystemClock clock,
+    ILogger<PrepareWorkspaceStaffAccessCommandHandler> logger)
     : ICommandHandler<PrepareWorkspaceStaffAccessCommand, WorkspaceStaffAccessPreparation>
 {
     public async Task<Result<WorkspaceStaffAccessPreparation>> HandleAsync(
@@ -82,28 +88,65 @@ internal sealed class PrepareWorkspaceStaffAccessCommandHandler(
         }
 
         IReadOnlyCollection<WorkspaceStaffAccessProfileTarget> profileTargets;
+        DomainRestorationDisposition restorationDisposition;
         if (targetState == WorkspaceStaffAccessTargetState.Active)
         {
-            WorkspaceStaffAccessProcess? suspension = observedPriorCommit ??
-                await processes.GetLatestCompletedSuspensionAsync(
-                        context.StaffMemberId,
-                        context.AuthSubjectId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            if (suspension is null)
+            WorkspaceStaffOnboardingRestorationSuppressionState suppression =
+                await suppressions.ReadAsync(
+                    context.ScopeId,
+                    context.StaffMemberId,
+                    context.AuthSubjectId,
+                    cancellationToken).ConfigureAwait(false);
+            if (suppression ==
+                WorkspaceStaffOnboardingRestorationSuppressionState.Conflict)
             {
                 return Result.Failure<WorkspaceStaffAccessPreparation>(
-                    WorkspaceStaffAccessApplicationErrors.ResumeSnapshotUnavailable);
+                    WorkspaceStaffAccessApplicationErrors.ProcessConflict);
             }
 
-            profileTargets = suspension.ProfileSnapshots
-                .Select(snapshot => new WorkspaceStaffAccessProfileTarget(
-                    snapshot.ProfileId,
-                    snapshot.AssignmentScope))
-                .ToArray();
+            if (suppression ==
+                WorkspaceStaffOnboardingRestorationSuppressionState.Suppressed)
+            {
+                restorationDisposition =
+                    DomainRestorationDisposition.Suppressed;
+                profileTargets = [];
+                logger.LogInformation(
+                    "Automatic workspace access restoration was suppressed by a terminal Staff onboarding resolution.");
+            }
+            else if (suppression ==
+                WorkspaceStaffOnboardingRestorationSuppressionState.None)
+            {
+                WorkspaceStaffAccessProcess? suspension = observedPriorCommit ??
+                    await processes.GetLatestCompletedSuspensionAsync(
+                            context.StaffMemberId,
+                            context.AuthSubjectId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                if (suspension is null)
+                {
+                    return Result.Failure<WorkspaceStaffAccessPreparation>(
+                        WorkspaceStaffAccessApplicationErrors
+                            .ResumeSnapshotUnavailable);
+                }
+
+                restorationDisposition =
+                    DomainRestorationDisposition.RestoreSnapshot;
+                profileTargets = suspension.ProfileSnapshots
+                    .Select(snapshot => new WorkspaceStaffAccessProfileTarget(
+                        snapshot.ProfileId,
+                        snapshot.AssignmentScope))
+                    .ToArray();
+            }
+            else
+            {
+                return Result.Failure<WorkspaceStaffAccessPreparation>(
+                    WorkspaceStaffAccessApplicationErrors.ProcessConflict);
+            }
         }
         else
         {
+            restorationDisposition =
+                DomainRestorationDisposition.NotApplicable;
             profileTargets = await access.CaptureRestorableProfilesAsync(
                 context.ScopeId,
                 context.AuthSubjectId,
@@ -116,6 +159,7 @@ internal sealed class PrepareWorkspaceStaffAccessCommandHandler(
             context.StaffMemberId,
             context.AuthSubjectId,
             targetState,
+            restorationDisposition,
             context.TargetVersion,
             context.EffectiveOn,
             context.ActorId,
@@ -140,7 +184,11 @@ internal sealed class PrepareWorkspaceStaffAccessCommandHandler(
     }
 
     private static WorkspaceStaffAccessPreparation ToPreparation(WorkspaceStaffAccessProcess process) =>
-        new(process.Id, process.State == WorkspaceStaffAccessProcessState.Prepared);
+        new(
+            process.Id,
+            process.State == WorkspaceStaffAccessProcessState.Prepared,
+            WorkspaceStaffAccessMappings.MapRestorationDisposition(
+                process.RestorationDisposition));
 
     private static WorkspaceStaffAccessTargetState ToTargetState(StaffStatus status) => status switch
     {

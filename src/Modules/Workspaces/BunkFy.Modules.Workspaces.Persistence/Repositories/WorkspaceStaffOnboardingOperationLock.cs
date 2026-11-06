@@ -88,6 +88,23 @@ internal sealed class WorkspaceStaffOnboardingOperationLock(
 
         await dbContext.AcquireOperationalMutationAdmissionAsync(
             cancellationToken).ConfigureAwait(false);
+        if (dbContext.Database.IsNpgsql())
+        {
+            // A no-op UPDATE creates a new PostgreSQL tuple and changes xmin.
+            // Preserve the committed resolution tuple while acquiring the same
+            // physical row lock, so acknowledgement can prove a prior commit.
+            Guid lockedId = await dbContext.Database.SqlQuery<Guid>($"""
+                    SELECT "Id" AS "Value"
+                    FROM "workspaces"."staff_onboarding_applications"
+                    WHERE "Id" = {applicationId}
+                      AND "ScopeId" = {dbContext.CurrentScopeId}
+                    FOR UPDATE
+                    """)
+                .SingleOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return lockedId != Guid.Empty;
+        }
+
         int affected = await dbContext.StaffOnboardingApplications
             .Where(application => application.Id == applicationId)
             .ExecuteUpdateAsync(

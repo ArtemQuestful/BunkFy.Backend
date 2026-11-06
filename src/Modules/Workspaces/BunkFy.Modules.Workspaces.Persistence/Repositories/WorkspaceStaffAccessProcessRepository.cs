@@ -81,6 +81,7 @@ internal sealed class WorkspaceStaffAccessProcessRepository(WorkspacesDbContext 
                 process.ScopeId,
                 process.StaffMemberId,
                 process.TargetState,
+                process.RestorationDisposition,
                 process.TargetStaffVersion,
                 process.EffectiveOn,
                 process.State,
@@ -99,6 +100,8 @@ internal sealed class WorkspaceStaffAccessProcessRepository(WorkspacesDbContext 
                 Guid.Parse(process.ScopeId),
                 process.StaffMemberId,
                 WorkspaceStaffAccessMappings.MapTargetStatus(process.TargetState),
+                WorkspaceStaffAccessMappings.MapRestorationDisposition(
+                    process.RestorationDisposition),
                 process.TargetStaffVersion,
                 process.EffectiveOn,
                 WorkspaceStaffAccessMappings.MapStatus(process.State),

@@ -5,6 +5,7 @@ public sealed record WorkspaceStaffAccessProcessDto(
     Guid OrganizationId,
     Guid StaffMemberId,
     WorkspaceStaffAccessTargetStatus TargetStatus,
+    WorkspaceStaffAccessRestorationDisposition RestorationDisposition,
     long TargetStaffVersion,
     DateOnly EffectiveOn,
     WorkspaceStaffAccessProcessStatus Status,
@@ -36,4 +37,12 @@ public enum WorkspaceStaffAccessProcessStatus
     AwaitingStaffCommit = 2,
     RestorationPending = 3,
     Completed = 4
+}
+
+public enum WorkspaceStaffAccessRestorationDisposition
+{
+    Unknown = 0,
+    NotApplicable = 1,
+    RestoreSnapshot = 2,
+    Suppressed = 3
 }

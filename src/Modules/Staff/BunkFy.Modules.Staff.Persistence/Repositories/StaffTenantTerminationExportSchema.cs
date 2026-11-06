@@ -20,6 +20,8 @@ internal static class StaffTenantTerminationExportSchema
     [
         typeof(StaffMemberTenantExport),
         typeof(StaffMemberMutationOperationTenantExport),
+        typeof(StaffIdentityProvisioningAnchorTenantExport),
+        typeof(StaffIdentityProvisioningAnchorResolutionTenantExport),
         typeof(StaffPropertyAssignmentTenantExport),
         typeof(StaffDataRightsCorrectionReceiptTenantExport),
         typeof(StaffProcessingRestrictionTenantExport),
@@ -46,6 +48,16 @@ internal static class StaffTenantTerminationExportSchema
             nameof(StaffMemberMutationOperationTenantExport
                 .MemberMutationOperation),
             "staff.member-mutation-operation",
+            "include-in-authorized-staff-or-tenant-export"),
+        Binding<StaffIdentityProvisioningAnchorTenantExport>(
+            nameof(StaffIdentityProvisioningAnchorTenantExport
+                .IdentityProvisioningAnchor),
+            "staff.identity-provisioning-anchor",
+            "include-in-authorized-staff-or-tenant-export"),
+        Binding<StaffIdentityProvisioningAnchorResolutionTenantExport>(
+            nameof(StaffIdentityProvisioningAnchorResolutionTenantExport
+                .IdentityProvisioningAnchorResolution),
+            "staff.identity-provisioning-anchor-resolution",
             "include-in-authorized-staff-or-tenant-export"),
         Binding<StaffPropertyAssignmentTenantExport>(
             nameof(StaffPropertyAssignmentTenantExport.AssignmentState),

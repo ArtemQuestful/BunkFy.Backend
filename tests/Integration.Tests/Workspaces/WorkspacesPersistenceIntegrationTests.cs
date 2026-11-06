@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using BunkFy.Host.Migrations;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Contracts;
@@ -11,21 +12,478 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
 
 public sealed class WorkspacesPersistenceIntegrationTests
 {
+    // Published dev f1f08694: later canonical migrations must stay applied.
+    private static readonly string[] PublishedWorkspacesMigrationIds =
+    [
+        "20260721053834_InitialWorkspaceStaffOnboarding",
+        "20260721174651_AddWorkspaceStaffAccessLifecycle",
+        "20260721203218_ScopeWorkspaceStaffAccessSnapshots",
+        "20260721213248_AddWorkspaceStaffAccessPlansAndPropertyProjection",
+        "20260728203233_AddWorkspaceStaffExpiryStates",
+        "20260728215109_ObserveWorkspaceStaffAccessPlanSourceExpiry",
+        "20260729001033_AddWorkspaceStaffOnboardingRetentionIndex",
+        "20260730070545_AddWorkspaceStaffRetentionCorrelationScrub",
+        "20260730093337_AddWorkspaceDataRightsOwnerDiscovery",
+        "20260730104955_AddWorkspaceStaffOnboardingDataRightsCorrections",
+        "20260730133835_AddWorkspaceStaffOnboardingProcessingRestrictions",
+        "20260730165414_AddWorkspaceStaffCorrelationAnonymisationProof",
+        "20260731063610_AddWorkspaceTerminationFence",
+        "20260804130902_AddWorkspaceTenantDestructionLifecycle",
+        "20260809155756_AddWorkspaceStaffOnboardingWithdrawal",
+        "20260821184307_AddWorkspacePropertyAuthorityTenantIntegrity",
+        "20260822023503_AddWorkspaceStaffOnboardingRetentionExecution",
+        "20260825181559_AddWorkspaceStaffOnboardingRecoveryAudit"
+    ];
+
     private const string StaffAccessLifecycleMigration =
         "20260721174651_AddWorkspaceStaffAccessLifecycle";
     private const string ScopedStaffAccessSnapshotsMigration =
         "20260721203218_ScopeWorkspaceStaffAccessSnapshots";
     private const string StaffOnboardingCorrectionsMigration =
         "20260730104955_AddWorkspaceStaffOnboardingDataRightsCorrections";
+    private const string WorkspaceStaffWithdrawalMigration =
+        "20260809155756_AddWorkspaceStaffOnboardingWithdrawal";
+    private const string WorkspaceStaffDeferredWithdrawalMigration =
+        "20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals";
+    private const string WorkspaceStaffIdentityAnchorMigration =
+        "20261102220200_AddWorkspaceStaffIdentityProvisioningAnchors";
     private const string TenantA = "tenant-a";
     private const string TenantB = "tenant-b";
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Current_migrations_preserve_nonempty_published_history_and_destruction_stages()
+    {
+        await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder(
+            "postgres:16-alpine")
+            .WithDatabase("bunkfy_workspaces_current_history_tests")
+            .Build();
+        await postgreSql.StartAsync();
+        string tenantA = Guid.NewGuid().ToString("D");
+        string tenantB = Guid.NewGuid().ToString("D");
+        await using WorkspacesDbContext context = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA);
+        IMigrator migrator = context.Database.GetService<IMigrator>();
+        string[] allMigrations = context.Database.GetMigrations().ToArray();
+        string[] expectedPending =
+        [
+            WorkspaceStaffDeferredWithdrawalMigration,
+            WorkspaceStaffIdentityAnchorMigration
+        ];
+
+        // Establish the actual published prefix using EF's real migrator.
+        // No history entry is manufactured, removed or reordered.
+        Assert.Equal(PublishedWorkspacesMigrationIds,
+            allMigrations[..PublishedWorkspacesMigrationIds.Length]);
+        Assert.Equal(PublishedWorkspacesMigrationIds.Concat(expectedPending),
+            allMigrations);
+        await migrator.MigrateAsync(PublishedWorkspacesMigrationIds[^1]);
+
+        string[] previousHistory = (await context.Database
+            .GetAppliedMigrationsAsync()).ToArray();
+        Assert.Equal(PublishedWorkspacesMigrationIds, previousHistory);
+        Assert.Equal(expectedPending,
+            await context.Database.GetPendingMigrationsAsync());
+        await SeedLegacyApplicationAsync(
+            context, CreateApplication(tenantA, Guid.NewGuid(), "current-subject-a"));
+        await SeedLegacyApplicationAsync(
+            context, CreateApplication(tenantB, Guid.NewGuid(), "current-subject-b"));
+        (string TenantId, int Stage, int FenceState, int FenceVersion)[] destructionFixtures =
+        [
+            (tenantA, 20, 2, 2),
+            (tenantB, 21, 4, 4)
+        ];
+        foreach (var fixture in destructionFixtures)
+        {
+            Guid fenceId = Guid.NewGuid();
+            await context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO workspaces.workspace_termination_fences (
+                    "Id", "ProcessId", "CaseId", "ApprovalRevision",
+                    "TerminationEpoch", "PolicyEvidenceSha256", "State",
+                    "CreatedBy", "CreatedAtUtc", "LastChangedBy",
+                    "LastChangedAtUtc", "Version", "ScopeId")
+                VALUES ({fenceId}, {Guid.NewGuid()}, {Guid.NewGuid()}, 1,
+                    {Guid.NewGuid()}, repeat('c', 64), {fixture.FenceState},
+                    'migration-test', '2026-11-02T21:00:00Z', 'migration-test',
+                    '2026-11-02T21:01:00Z', {fixture.FenceVersion}, {fixture.TenantId});
+                INSERT INTO workspaces.tenant_destroy_operations (
+                    "OperationId", "ScopeId", "RequestSha256", "FenceId",
+                    "SelectedFenceVersion", "ResultingFenceVersion", "BatchSize",
+                    "Stage", "RemovedRecordCount", "CompletedBatchCount",
+                    "ProofVersion", "RemovalProofSha256", "StartedAtUtc",
+                    "UpdatedAtUtc", "ConcurrencyVersion")
+                VALUES ({Guid.NewGuid()}, {fixture.TenantId}, repeat('d', 64),
+                    {fenceId}, 2, 4, 500, {fixture.Stage}, 0, 0, 1, repeat('e', 64),
+                    '2026-11-02T21:02:00Z', '2026-11-02T21:02:00Z', 1)
+                """);
+        }
+
+        const string columnsSql = """
+            SELECT column_name AS "Value"
+            FROM information_schema.columns
+            WHERE table_schema = 'workspaces'
+              AND table_name = 'staff_onboarding_applications'
+            ORDER BY column_name
+            """;
+        string[] previousColumns = await context.Database
+            .SqlQueryRaw<string>(columnsSql).ToArrayAsync();
+        string[] newColumns =
+        [
+            "IdentityAnchorContinuationEventId",
+            "IdentityAnchorExpectedResolutionEventId",
+            "IdentityAnchorResolutionApplicationVersion",
+            "IdentityAnchorResolutionDisposition",
+            "IdentityAnchorResolutionEventId",
+            "IdentityAnchorResolutionIntentAtUtc",
+            "IdentityAnchorResolutionObservedAtUtc",
+            "IdentityAnchorResolutionStaffMemberId",
+            "IdentityAnchorSweepOrdinal"
+        ];
+        Assert.Empty(previousColumns.Intersect(newColumns));
+        const string applicationRowsSql = """
+            SELECT (to_jsonb(application) - ARRAY[
+                'IdentityAnchorContinuationEventId',
+                'IdentityAnchorExpectedResolutionEventId',
+                'IdentityAnchorResolutionApplicationVersion',
+                'IdentityAnchorResolutionDisposition',
+                'IdentityAnchorResolutionEventId',
+                'IdentityAnchorResolutionIntentAtUtc',
+                'IdentityAnchorResolutionObservedAtUtc',
+                'IdentityAnchorResolutionStaffMemberId',
+                'IdentityAnchorSweepOrdinal'])::text AS "Value"
+            FROM workspaces.staff_onboarding_applications application
+            ORDER BY "Id"
+            """;
+        const string operationRowsSql = """
+            SELECT to_jsonb(operation)::text AS "Value"
+            FROM workspaces.tenant_destroy_operations operation
+            ORDER BY "OperationId"
+            """;
+        const string fenceRowsSql = """
+            SELECT to_jsonb(fence)::text AS "Value"
+            FROM workspaces.workspace_termination_fences fence
+            ORDER BY "Id"
+            """;
+        string[] before = await context.Database
+            .SqlQueryRaw<string>(applicationRowsSql).ToArrayAsync();
+        string[] operationsBefore = await context.Database
+            .SqlQueryRaw<string>(operationRowsSql).ToArrayAsync();
+        string[] fencesBefore = await context.Database
+            .SqlQueryRaw<string>(fenceRowsSql).ToArrayAsync();
+        Assert.Equal(2, before.Length);
+        Assert.Equal(2, operationsBefore.Length);
+        Assert.Equal(2, fencesBefore.Length);
+
+        IConfiguration configuration = new ConfigurationBuilder().Build();
+        MigrationsHostOptions runtime =
+            MigrationsHostOptions.FromConfiguration(configuration);
+        MigrationsProductionAdmissionOptions admission =
+            MigrationsProductionAdmissionOptions.FromConfiguration(configuration);
+        BunkFyMigrationModule[] modules = [new("Workspaces", context)];
+        BunkFyMigrationCoordinator Coordinator(MigrationExecutionMode mode) => new(
+            NullLogger.Instance,
+            runtime with { Mode = mode },
+            admission,
+            isProduction: false);
+        BunkFyMigrationPlan pending = await Coordinator(MigrationExecutionMode.Plan)
+            .RunAsync(modules, CancellationToken.None);
+        Assert.Equal(expectedPending.Length, pending.PendingMigrationCount);
+        BunkFyMigrationPlan applied = await Coordinator(MigrationExecutionMode.Apply)
+            .RunAsync(modules, CancellationToken.None);
+        const string completeRowsSql = """
+            SELECT to_jsonb(application)::text AS "Value"
+            FROM workspaces.staff_onboarding_applications application
+            ORDER BY "Id"
+            """;
+        string[] firstAppliedRows = await context.Database
+            .SqlQueryRaw<string>(completeRowsSql).ToArrayAsync();
+        BunkFyMigrationPlan replayed = await Coordinator(MigrationExecutionMode.Apply)
+            .RunAsync(modules, CancellationToken.None);
+        Assert.Equal(0, applied.PendingMigrationCount);
+        Assert.Equal(applied.CurrentStateSha256, replayed.CurrentStateSha256);
+
+        Assert.Equal(
+            before,
+            await context.Database.SqlQueryRaw<string>(applicationRowsSql)
+                .ToArrayAsync());
+        Assert.Equal(firstAppliedRows, await context.Database
+            .SqlQueryRaw<string>(completeRowsSql).ToArrayAsync());
+        Assert.Equal(operationsBefore, await context.Database
+            .SqlQueryRaw<string>(operationRowsSql).ToArrayAsync());
+        Assert.Equal(fencesBefore, await context.Database
+            .SqlQueryRaw<string>(fenceRowsSql).ToArrayAsync());
+        Assert.Equal(previousColumns.Concat(newColumns).Order(StringComparer.Ordinal),
+            await context.Database.SqlQueryRaw<string>(columnsSql).ToArrayAsync());
+        Assert.True(await context.Database.SqlQueryRaw<bool>("""
+            SELECT count(*) = 2
+               AND count(DISTINCT "IdentityAnchorSweepOrdinal") = 2
+               AND min("IdentityAnchorSweepOrdinal") > 0
+               AND bool_and("IdentityAnchorExpectedResolutionEventId" IS NULL)
+               AND bool_and("IdentityAnchorContinuationEventId" IS NULL)
+               AND bool_and("IdentityAnchorResolutionEventId" IS NULL)
+               AND bool_and("IdentityAnchorResolutionStaffMemberId" IS NULL)
+               AND bool_and("IdentityAnchorResolutionApplicationVersion" IS NULL)
+               AND bool_and("IdentityAnchorResolutionDisposition" IS NULL)
+               AND bool_and("IdentityAnchorResolutionIntentAtUtc" IS NULL)
+               AND bool_and("IdentityAnchorResolutionObservedAtUtc" IS NULL)
+                AS "Value"
+            FROM workspaces.staff_onboarding_applications
+            """).SingleAsync());
+        string[] history = (await context.Database.GetAppliedMigrationsAsync())
+            .ToArray();
+        Assert.Equal(allMigrations, history);
+        Assert.Equal(previousHistory, history[..previousHistory.Length]);
+        Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+        Assert.Empty(await context.StaffDeferredClaimWithdrawals.ToArrayAsync());
+    }
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Deferred_withdrawal_migration_upgrades_roundtrips_and_refuses_lossy_down()
+    {
+        await using PostgreSqlContainer postgreSql = new PostgreSqlBuilder(
+            "postgres:16-alpine")
+            .WithDatabase("bunkfy_workspaces_deferred_migration_tests")
+            .Build();
+        await postgreSql.StartAsync();
+        string tenantA = Guid.NewGuid().ToString("D");
+        string tenantB = Guid.NewGuid().ToString("D");
+        Guid organizationId = Guid.Parse(tenantA);
+        Guid linkId = Guid.NewGuid();
+        Guid claimId = Guid.NewGuid();
+        Guid eventId = Guid.NewGuid();
+        DateTimeOffset occurredAtUtc = new DateTimeOffset(
+            2026,
+            8,
+            11,
+            10,
+            0,
+            0,
+            TimeSpan.Zero).AddTicks(1);
+
+        await using (WorkspacesDbContext previous = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            await previous.Database.GetService<IMigrator>().MigrateAsync(
+                WorkspaceStaffWithdrawalMigration);
+        }
+
+        await using (WorkspacesDbContext upgraded = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            await upgraded.Database.MigrateAsync();
+            await upgraded.Database.MigrateAsync();
+            string downScript = upgraded.Database.GetService<IMigrator>()
+                .GenerateScript(
+                    WorkspaceStaffDeferredWithdrawalMigration,
+                    PublishedWorkspacesMigrationIds[^1]);
+            int lockOrdinal = downScript.IndexOf(
+                "LOCK TABLE workspaces.staff_deferred_claim_withdrawals",
+                StringComparison.Ordinal);
+            int dropOrdinal = downScript.IndexOf(
+                "DROP TABLE workspaces.staff_deferred_claim_withdrawals",
+                StringComparison.Ordinal);
+            Assert.True(lockOrdinal >= 0);
+            Assert.True(dropOrdinal > lockOrdinal);
+            string[] indexes = await upgraded.Database.SqlQueryRaw<string>(
+                    """
+                    SELECT indexname AS "Value"
+                    FROM pg_indexes
+                    WHERE schemaname = 'workspaces'
+                      AND tablename = 'staff_deferred_claim_withdrawals'
+                    ORDER BY indexname
+                    """)
+                .ToArrayAsync();
+            Assert.Contains(
+                "IX_staff_deferred_claim_withdrawals_ScopeId_ClaimId",
+                indexes);
+            Assert.Contains(
+                "IX_staff_deferred_claim_withdrawals_ScopeId_EnrollmentLinkId_C~",
+                indexes);
+
+            PostgresException mismatchedScope =
+                await Assert.ThrowsAsync<PostgresException>(() =>
+                    upgraded.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO workspaces.staff_deferred_claim_withdrawals (
+                            "ClaimId", "OrganizationId", "EnrollmentLinkId",
+                            "ClaimVersion", "EventId", "OccurredAtUtc", "ScopeId")
+                        VALUES ({Guid.NewGuid()}, {organizationId}, {linkId},
+                            {2L}, {Guid.NewGuid()}, {occurredAtUtc}, {tenantB})
+                        """));
+            Assert.Equal("23514", mismatchedScope.SqlState);
+            PostgresException emptyCoordinate =
+                await Assert.ThrowsAsync<PostgresException>(() =>
+                    upgraded.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO workspaces.staff_deferred_claim_withdrawals (
+                            "ClaimId", "OrganizationId", "EnrollmentLinkId",
+                            "ClaimVersion", "EventId", "OccurredAtUtc", "ScopeId")
+                        VALUES ({Guid.NewGuid()}, {organizationId}, {linkId},
+                            {2L}, {Guid.Empty}, {occurredAtUtc}, {tenantA})
+                        """));
+            Assert.Equal("23514", emptyCoordinate.SqlState);
+
+            upgraded.StaffDeferredClaimWithdrawals.Add(
+                WorkspaceStaffDeferredClaimWithdrawal.Create(
+                    organizationId.ToString("N").ToUpperInvariant(),
+                    organizationId,
+                    linkId,
+                    claimId,
+                    2,
+                    eventId,
+                    occurredAtUtc).Value);
+            await upgraded.SaveChangesAsync();
+        }
+
+        await using (WorkspacesDbContext tenantAContext = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            WorkspaceStaffDeferredClaimWithdrawal roundTripped =
+                await tenantAContext.StaffDeferredClaimWithdrawals.SingleAsync();
+            Assert.Equal(tenantA, roundTripped.ScopeId);
+            Assert.Equal(occurredAtUtc.AddTicks(-1), roundTripped.OccurredAtUtc);
+            Assert.True(roundTripped.Matches(
+                organizationId.ToString("N").ToUpperInvariant(),
+                organizationId,
+                linkId,
+                claimId,
+                2,
+                eventId,
+                occurredAtUtc));
+        }
+
+        await using (WorkspacesDbContext tenantBContext = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantB))
+        {
+            Assert.Empty(await tenantBContext.StaffDeferredClaimWithdrawals
+                .ToArrayAsync());
+            Assert.Single(await tenantBContext.StaffDeferredClaimWithdrawals
+                .IgnoreQueryFilters()
+                .ToArrayAsync());
+        }
+
+        await using (WorkspacesDbContext refusedDown = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            PostgresException refusal = await Assert.ThrowsAsync<PostgresException>(
+                () => refusedDown.Database.GetService<IMigrator>().MigrateAsync(
+                    PublishedWorkspacesMigrationIds[^1]));
+            Assert.Equal("P0001", refusal.SqlState);
+            Assert.Contains(
+                "Cannot remove durable Staff claim withdrawals",
+                refusal.MessageText,
+                StringComparison.Ordinal);
+        }
+
+        await using (WorkspacesDbContext afterRefusal = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            Assert.Equal(
+                claimId,
+                (await afterRefusal.StaffDeferredClaimWithdrawals.SingleAsync()).Id);
+            Assert.Equal(
+                1,
+                await afterRefusal.Database.SqlQueryRaw<int>(
+                        """
+                        SELECT COUNT(*)::int AS "Value"
+                        FROM workspaces.__ef_migrations_history
+                        WHERE "MigrationId" =
+                            '20261102220000_AddWorkspaceStaffDeferredClaimWithdrawals'
+                        """)
+                    .SingleAsync());
+        }
+
+        await using (WorkspacesDbContext retained = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA))
+        {
+            retained.StaffDeferredClaimWithdrawals.Remove(
+                await retained.StaffDeferredClaimWithdrawals.SingleAsync());
+            await retained.SaveChangesAsync();
+            await retained.Database.GetService<IMigrator>().MigrateAsync(
+                PublishedWorkspacesMigrationIds[^1]);
+            await retained.Database.MigrateAsync();
+        }
+
+        await using WorkspacesDbContext lockContext = CreateDbContext(
+            postgreSql.GetConnectionString(), tenantA);
+        await using var lockTransaction = await lockContext.Database
+            .BeginTransactionAsync();
+        await lockContext.Database.ExecuteSqlRawAsync(
+            "LOCK TABLE workspaces.staff_deferred_claim_withdrawals " +
+            "IN ACCESS EXCLUSIVE MODE");
+        TaskCompletionSource<int> insertBackend = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int> concurrentInsert = Task.Run(async () =>
+        {
+            await using NpgsqlConnection connection = new(
+                postgreSql.GetConnectionString());
+            await connection.OpenAsync();
+            await using (NpgsqlCommand backend = new(
+                "SELECT pg_backend_pid()",
+                connection))
+            {
+                insertBackend.SetResult((int)(await backend.ExecuteScalarAsync())!);
+            }
+
+            await using NpgsqlCommand insert = new(
+                """
+                INSERT INTO workspaces.staff_deferred_claim_withdrawals (
+                    "ClaimId", "OrganizationId", "EnrollmentLinkId",
+                    "ClaimVersion", "EventId", "OccurredAtUtc", "ScopeId")
+                VALUES (@claimId, @organizationId, @linkId, 2, @eventId,
+                    @occurredAtUtc, @scopeId)
+                """,
+                connection);
+            insert.Parameters.AddWithValue("claimId", Guid.NewGuid());
+            insert.Parameters.AddWithValue("organizationId", organizationId);
+            insert.Parameters.AddWithValue("linkId", linkId);
+            insert.Parameters.AddWithValue("eventId", Guid.NewGuid());
+            insert.Parameters.AddWithValue("occurredAtUtc", occurredAtUtc);
+            insert.Parameters.AddWithValue("scopeId", tenantA);
+            return await insert.ExecuteNonQueryAsync();
+        });
+        int backendPid = await insertBackend.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        bool insertIsWaiting = false;
+        for (int attempt = 0; attempt < 100 && !insertIsWaiting; attempt++)
+        {
+            insertIsWaiting = await lockContext.Database.SqlQueryRaw<bool>(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity " +
+                    "WHERE pid = {0} AND wait_event_type = 'Lock') AS \"Value\"",
+                    backendPid)
+                .SingleAsync();
+            if (!insertIsWaiting)
+            {
+                await Task.Delay(25);
+            }
+        }
+
+        if (!insertIsWaiting)
+        {
+            await lockTransaction.RollbackAsync();
+            await concurrentInsert.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Fail(
+                "The concurrent deferred insert never reached the migration table lock.");
+        }
+
+        await lockContext.Database.ExecuteSqlRawAsync(
+            "DROP TABLE workspaces.staff_deferred_claim_withdrawals");
+        await lockTransaction.CommitAsync();
+        PostgresException insertFailure = await Assert.ThrowsAsync<PostgresException>(
+            async () => { await concurrentInsert; });
+        Assert.True(
+            insertFailure.SqlState is "42P01" or "XX000",
+            $"Unexpected concurrent-insert SQLSTATE: {insertFailure.SqlState}");
+    }
 
     [DockerFact]
     [Trait("Category", "Docker")]

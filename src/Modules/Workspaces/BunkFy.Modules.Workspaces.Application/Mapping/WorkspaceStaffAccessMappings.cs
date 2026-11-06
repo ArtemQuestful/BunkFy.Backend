@@ -2,6 +2,10 @@ namespace BunkFy.Modules.Workspaces.Application.Mapping;
 
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
+using ContractRestorationDisposition =
+    BunkFy.Modules.Workspaces.Contracts.WorkspaceStaffAccessRestorationDisposition;
+using DomainRestorationDisposition =
+    BunkFy.Modules.Workspaces.Domain.WorkspaceStaffAccessRestorationDisposition;
 
 public static class WorkspaceStaffAccessMappings
 {
@@ -10,6 +14,7 @@ public static class WorkspaceStaffAccessMappings
         Guid.Parse(process.ScopeId),
         process.StaffMemberId,
         MapTargetStatus(process.TargetState),
+        MapRestorationDisposition(process.RestorationDisposition),
         process.TargetStaffVersion,
         process.EffectiveOn,
         MapStatus(process.State),
@@ -27,6 +32,20 @@ public static class WorkspaceStaffAccessMappings
             WorkspaceStaffAccessTargetState.Suspended => WorkspaceStaffAccessTargetStatus.Suspended,
             WorkspaceStaffAccessTargetState.Departed => WorkspaceStaffAccessTargetStatus.Departed,
             _ => WorkspaceStaffAccessTargetStatus.Unknown
+        };
+
+    public static ContractRestorationDisposition
+        MapRestorationDisposition(
+            DomainRestorationDisposition disposition) =>
+        disposition switch
+        {
+            DomainRestorationDisposition.NotApplicable =>
+                ContractRestorationDisposition.NotApplicable,
+            DomainRestorationDisposition.RestoreSnapshot =>
+                ContractRestorationDisposition.RestoreSnapshot,
+            DomainRestorationDisposition.Suppressed =>
+                ContractRestorationDisposition.Suppressed,
+            _ => ContractRestorationDisposition.Unknown
         };
 
     public static WorkspaceStaffAccessProcessStatus MapStatus(

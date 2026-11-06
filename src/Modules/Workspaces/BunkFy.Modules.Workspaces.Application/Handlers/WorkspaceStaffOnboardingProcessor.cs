@@ -6,6 +6,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using BunkFy.Modules.Workspaces.Domain.DataRights;
 using Gma.Framework.Results;
+using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Microsoft.Extensions.Logging;
 
@@ -15,12 +16,14 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
     IWorkspaceStaffOnboardingProcessingRestrictionProjectionRepository
         restrictionProjections,
     WorkspaceStaffOnboardingMutationCoordinator mutations,
+    WorkspaceStaffOnboardingIdentityAnchorConvergence anchorConvergence,
     IWorkspaceStaffAccessPlanRepository plans,
     WorkspaceStaffAccessPlanPolicy planPolicy,
     WorkspaceAccessProvisioner access,
     WorkspaceOperationalAdmissionEvaluator operationalAdmission,
     WorkspaceOrganizationMembershipObserver membershipObserver,
     ISystemClock clock,
+    IIdGenerator ids,
     ILogger<WorkspaceStaffOnboardingProcessor> logger)
 {
     private const string AccessProvisioningFailureCode =
@@ -28,29 +31,47 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
     private const string MembershipStateConflictCode =
         "Workspaces.StaffOnboardingMembershipStateConflict";
 
+    // A captured partial-provisioning failure belongs to receipted owner
+    // recovery. Admission/lifecycle preconditions and infrastructure faults
+    // remain retryable without acknowledging an unsuccessful continuation.
+    internal static bool RequiresOwnerRecovery(
+        WorkspaceStaffOnboarding application,
+        Result processed) =>
+        processed.IsFailure &&
+        application.Status == WorkspaceStaffOnboardingState.Failed &&
+        application.StaffMemberId.HasValue &&
+        (processed.Error.Code == WorkspaceStaffOnboardingApplicationErrors
+            .ProvisioningFailed.Code ||
+         processed.Error.Code == WorkspaceStaffOnboardingApplicationErrors
+            .RecoveryAttemptRequired.Code);
+
     internal WorkspaceStaffOnboardingProcessor(
         IStaffOnboardingProvisioner staff,
         IStaffPropertyAssignmentProvisioner staffProperties,
         IWorkspaceStaffOnboardingProcessingRestrictionProjectionRepository
             restrictionProjections,
         WorkspaceStaffOnboardingMutationCoordinator mutations,
+        WorkspaceStaffOnboardingIdentityAnchorConvergence anchorConvergence,
         IWorkspaceStaffAccessPlanRepository plans,
         WorkspaceStaffAccessPlanPolicy planPolicy,
         WorkspaceAccessProvisioner access,
         WorkspaceOperationalAdmissionEvaluator operationalAdmission,
         ISystemClock clock,
+        IIdGenerator ids,
         ILogger<WorkspaceStaffOnboardingProcessor> logger)
         : this(
             staff,
             staffProperties,
             restrictionProjections,
             mutations,
+            anchorConvergence,
             plans,
             planPolicy,
             access,
             operationalAdmission,
             new WorkspaceOrganizationMembershipObserver([], [], clock),
             clock,
+            ids,
             logger)
     {
     }
@@ -72,6 +93,30 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
             prepare: null,
             WorkspaceStaffOnboardingSourceLockMode.Write,
             cancellationToken);
+
+    public Task<Result> ProcessIdentityAnchorContinuationAsync(
+        WorkspaceStaffOnboarding application,
+        Guid expectedStaffMemberId,
+        CancellationToken cancellationToken) =>
+        this.ProcessAsync(
+            application,
+            prepare: null,
+            WorkspaceStaffOnboardingSourceLockMode.Write,
+            cancellationToken,
+            expectedStaffMemberId);
+
+    public Task<Result> ProcessAnchorCreatedAsync(
+        WorkspaceStaffOnboarding application,
+        Guid expectedStaffMemberId,
+        Guid expectedResolutionEventId,
+        CancellationToken cancellationToken) =>
+        this.ProcessAsync(
+            application,
+            prepare: null,
+            WorkspaceStaffOnboardingSourceLockMode.Read,
+            cancellationToken,
+            expectedStaffMemberId,
+            expectedResolutionEventId);
 
     public Task<Result> ProcessInvitationAcceptanceAsync(
         WorkspaceStaffOnboarding application,
@@ -126,7 +171,9 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
         WorkspaceStaffOnboarding application,
         Func<WorkspaceStaffOnboarding, Result>? prepare,
         WorkspaceStaffOnboardingSourceLockMode sourceLockMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? expectedStaffMemberId = null,
+        Guid? expectedResolutionEventId = null)
     {
         ArgumentNullException.ThrowIfNull(application);
         if (!await mutations.AcquireTrackedAsync(
@@ -142,13 +189,17 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
         return await this.ProcessAcquiredAsync(
                 application,
                 prepare,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                expectedStaffMemberId,
+                expectedResolutionEventId).ConfigureAwait(false);
     }
 
     private async Task<Result> ProcessAcquiredAsync(
         WorkspaceStaffOnboarding application,
         Func<WorkspaceStaffOnboarding, Result>? prepare,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? expectedStaffMemberId = null,
+        Guid? expectedResolutionEventId = null)
     {
         ArgumentNullException.ThrowIfNull(application);
         if (prepare is not null)
@@ -158,6 +209,28 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
             {
                 return prepared;
             }
+        }
+
+        Result<WorkspaceStaffOnboardingIdentityAnchorConvergenceResult>
+            anchor = await anchorConvergence.ConvergeAcquiredAsync(
+                application,
+                cancellationToken,
+                expectedStaffMemberId,
+                expectedResolutionEventId).ConfigureAwait(false);
+        if (anchor.IsFailure)
+        {
+            return Result.Failure(anchor.Error);
+        }
+
+        if (anchor.Value.Outcome is
+            WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome
+                .ConvergedNow or
+            WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome
+                .ResolutionPending or
+            WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome
+                .ResolutionObserved)
+        {
+            return Result.Success();
         }
 
         if (application.Status == WorkspaceStaffOnboardingState.Completed)
@@ -294,15 +367,52 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
                 return Result.Failure(WorkspaceStaffOnboardingApplicationErrors.ProvisioningFailed);
             }
 
-            Result ready = application.MarkStaffReady(provisioned.StaffMemberId.Value, clock.UtcNow);
+            if (!provisioned.ResolutionEventId.HasValue ||
+                provisioned.ResolutionEventId.Value == Guid.Empty ||
+                provisioned.ResolutionEventId.Value == application.Id)
+            {
+                return Result.Failure(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .IdentityAnchorConflict);
+            }
+
+            Guid continuationEventId = this.CreateContinuationEventId(
+                application.Id,
+                provisioned.ResolutionEventId.Value);
+            if (continuationEventId == Guid.Empty)
+            {
+                return Result.Failure(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .IdentityAnchorConflict);
+            }
+
+            Result ready = application.MarkStaffReady(
+                provisioned.StaffMemberId.Value,
+                provisioned.ResolutionEventId.Value,
+                continuationEventId,
+                clock.UtcNow);
             if (ready.IsFailure)
             {
                 return ready;
             }
+
+            return Result.Success();
         }
         else if (application.Status == WorkspaceStaffOnboardingState.Provisioning)
         {
-            Result ready = application.MarkStaffReady(application.StaffMemberId.Value, clock.UtcNow);
+            if (!application.IdentityAnchorExpectedResolutionEventId.HasValue ||
+                !application.IdentityAnchorContinuationEventId.HasValue)
+            {
+                return Result.Failure(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .IdentityAnchorConflict);
+            }
+
+            Result ready = application.MarkStaffReady(
+                application.StaffMemberId.Value,
+                application.IdentityAnchorExpectedResolutionEventId.Value,
+                application.IdentityAnchorContinuationEventId.Value,
+                clock.UtcNow);
             if (ready.IsFailure)
             {
                 return ready;
@@ -320,13 +430,30 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
         StaffPropertyAssignmentProvisioningResult assignments =
             await staffProperties.ReconcileAsync(
                 new StaffPropertyAssignmentProvisioningRequest(
-                    application.StaffMemberId!.Value,
+                    application.StaffMemberId.Value,
                     propertyIds,
                     "integration:workspaces",
                     "Workspace Staff access plan applied."),
                 cancellationToken).ConfigureAwait(false);
         if (!assignments.IsSuccess)
         {
+            Result<WorkspaceStaffOnboardingIdentityAnchorConvergenceResult>
+                assignmentFailureFence =
+                    await anchorConvergence.FenceActiveGrantAcquiredAsync(
+                        application,
+                        application.StaffMemberId.Value,
+                        cancellationToken).ConfigureAwait(false);
+            if (assignmentFailureFence.IsFailure)
+            {
+                return Result.Failure(assignmentFailureFence.Error);
+            }
+
+            if (assignmentFailureFence.Value.Outcome !=
+                WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome.Active)
+            {
+                return Result.Success();
+            }
+
             string failureCode = assignments.ErrorCode ??
                 WorkspaceStaffOnboardingApplicationErrors.ProvisioningFailed.Code;
             application.Fail(failureCode, clock.UtcNow);
@@ -334,6 +461,22 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
                 "Staff onboarding could not reconcile properties: {ErrorCode}.",
                 failureCode);
             return Result.Failure(WorkspaceStaffOnboardingApplicationErrors.ProvisioningFailed);
+        }
+
+        Result<WorkspaceStaffOnboardingIdentityAnchorConvergenceResult>
+            grantFence = await anchorConvergence.FenceActiveGrantAcquiredAsync(
+                application,
+                application.StaffMemberId.Value,
+                cancellationToken).ConfigureAwait(false);
+        if (grantFence.IsFailure)
+        {
+            return Result.Failure(grantFence.Error);
+        }
+
+        if (grantFence.Value.Outcome !=
+            WorkspaceStaffOnboardingIdentityAnchorConvergenceOutcome.Active)
+        {
+            return Result.Success();
         }
 
         try
@@ -454,4 +597,22 @@ internal sealed class WorkspaceStaffOnboardingProcessor(
             await operationalAdmission.EvaluateAsync(
                 tenantId,
                 cancellationToken).ConfigureAwait(false));
+
+    private Guid CreateContinuationEventId(
+        Guid applicationId,
+        Guid resolutionEventId)
+    {
+        for (int attempt = 0; attempt < 8; attempt++)
+        {
+            Guid candidate = ids.NewId();
+            if (candidate != Guid.Empty &&
+                candidate != applicationId &&
+                candidate != resolutionEventId)
+            {
+                return candidate;
+            }
+        }
+
+        return Guid.Empty;
+    }
 }

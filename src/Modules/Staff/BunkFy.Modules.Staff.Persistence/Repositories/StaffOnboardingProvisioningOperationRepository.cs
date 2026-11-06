@@ -8,6 +8,23 @@ internal sealed class StaffOnboardingProvisioningOperationRepository(
     StaffDbContext dbContext)
     : IStaffOnboardingProvisioningOperationRepository
 {
+    public async Task<IReadOnlyList<StaffMemberMutationOperationRecord>>
+        ListAsync(
+            IReadOnlyList<Guid> operationIds,
+            CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operationIds);
+        StaffMemberMutationOperation[] loaded = await dbContext
+            .MemberMutationOperations
+            .AsNoTracking()
+            .Where(operation => operationIds.Contains(operation.Id) &&
+                operation.Kind ==
+                    StaffMemberMutationKind.OnboardingProvision)
+            .OrderBy(operation => operation.Id)
+            .ToArrayAsync(cancellationToken).ConfigureAwait(false);
+        return loaded.Select(operation => operation.ToRecord()).ToArray();
+    }
+
     public async Task<StaffMemberMutationOperationRecord?> GetAsync(
         Guid operationId,
         CancellationToken cancellationToken)

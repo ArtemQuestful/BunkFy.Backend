@@ -2,6 +2,7 @@ namespace BunkFy.Modules.Workspaces.Persistence.Repositories;
 
 using System.Data;
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using BunkFy.Modules.Workspaces.Domain.DataRights;
@@ -11,14 +12,26 @@ using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using DomainFenceState =
-    BunkFy.Modules.Workspaces.Domain.Termination.WorkspaceTerminationFenceState;
+    Domain.Termination.WorkspaceTerminationFenceState;
 
 internal sealed class WorkspacesTenantTerminationExportContributor(
     WorkspacesDbContext dbContext,
     IScopeContext scopeContext,
-    ISystemClock clock) : ITenantTerminationExportContributor
+    ISystemClock clock,
+    IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader outcomes,
+    ILogger<WorkspacesTenantTerminationExportContributor> logger)
+    : ITenantTerminationExportContributor
 {
+    internal const string StaffIdentityAnchorSweepCheckpointRecordType =
+        "staff-identity-anchor-sweep-checkpoint";
+    internal const string StaffHistoricalNoProvisionReceiptRecordType =
+        "staff-historical-no-provision-receipt";
+
+    private const int IdentityAnchorPreflightPageSize =
+        StaffWorkspaceOnboardingIdentityAnchorLifecycleLimits.MaximumBatchSize;
+
     public DataRightsExportDescriptor ExportDescriptor =>
         WorkspacesDataRightsExportSchema.TenantTerminationDescriptor;
 
@@ -79,6 +92,15 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                     clock.UtcNow);
             }
 
+            if (!await this.PreflightIdentityAnchorsAsync(
+                    tenantId!,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return RetryRequired(
+                    "workspace.termination.export-identity-anchor-unavailable",
+                    clock.UtcNow);
+            }
+
             long recordCount = await this.ExportRecordsAsync(
                 tenantId!,
                 sink,
@@ -135,6 +157,109 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
         }
     }
 
+    private async Task<bool> PreflightIdentityAnchorsAsync(
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        Guid? afterApplicationId = null;
+        while (true)
+        {
+            IQueryable<WorkspaceStaffOnboarding> query =
+                dbContext.StaffOnboardingApplications
+                    .AsNoTracking()
+                    .Where(application => application.ScopeId == tenantId);
+            if (afterApplicationId.HasValue)
+            {
+                Guid cursor = afterApplicationId.Value;
+                query = query.Where(application =>
+                    application.Id.CompareTo(cursor) > 0);
+            }
+
+            WorkspaceStaffOnboarding[] loaded = await query
+                .OrderBy(application => application.Id)
+                .Take(IdentityAnchorPreflightPageSize + 1)
+                .ToArrayAsync(cancellationToken).ConfigureAwait(false);
+            bool hasMore = loaded.Length > IdentityAnchorPreflightPageSize;
+            WorkspaceStaffOnboarding[] page = loaded
+                .Take(IdentityAnchorPreflightPageSize)
+                .ToArray();
+            if (page.Length == 0)
+            {
+                return !hasMore;
+            }
+
+            if (afterApplicationId.HasValue &&
+                page[0].Id.CompareTo(afterApplicationId.Value) <= 0)
+            {
+                return false;
+            }
+
+            IReadOnlyList<
+                StaffWorkspaceOnboardingIdentityAnchorOutcome> read;
+            try
+            {
+                read = await outcomes.ReadAsync(
+                    page.Select(application =>
+                        new StaffWorkspaceOnboardingIdentityAnchorOutcomeRequest(
+                            application.Id,
+                            application.SubjectId))
+                    .ToArray(),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+                when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning(
+                    "Staff identity-anchor preflight was cancelled outside the Workspaces tenant export request.");
+                return false;
+            }
+            catch (Exception exception) when (exception is not
+                OperationCanceledException)
+            {
+                logger.LogWarning(
+                    "Staff identity-anchor preflight is unavailable for Workspaces tenant export.");
+                return false;
+            }
+
+            if (read is null ||
+                read.Count != page.Length ||
+                read.Select(outcome => outcome.ApplicationId)
+                    .Distinct().Count() != read.Count)
+            {
+                return false;
+            }
+
+            Dictionary<Guid, StaffWorkspaceOnboardingIdentityAnchorOutcome>
+                byApplication = read.ToDictionary(
+                    outcome => outcome.ApplicationId);
+            if (page.Any(application =>
+                !byApplication.TryGetValue(
+                    application.Id,
+                    out StaffWorkspaceOnboardingIdentityAnchorOutcome?
+                        outcome) ||
+                !WorkspaceStaffOnboardingExportAuthority.IsAuthorized(
+                    application,
+                    outcome)))
+            {
+                return false;
+            }
+
+            Guid next = page[^1].Id;
+            if (afterApplicationId.HasValue &&
+                next.CompareTo(afterApplicationId.Value) <= 0)
+            {
+                return false;
+            }
+
+            if (!hasMore)
+            {
+                return true;
+            }
+
+            afterApplicationId = next;
+        }
+    }
+
     private async Task<long> ExportRecordsAsync(
         string tenantId,
         IDataRightsExportSink sink,
@@ -166,6 +291,15 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                                    item.Department,
                                    item.Status,
                                    item.StaffMemberId,
+                                   item.IdentityAnchorExpectedResolutionEventId,
+                                   item.IdentityAnchorContinuationEventId,
+                                   item.IdentityAnchorResolutionEventId,
+                                   item.IdentityAnchorResolutionStaffMemberId,
+                                   item.IdentityAnchorResolutionApplicationVersion,
+                                   item.IdentityAnchorResolutionDisposition,
+                                   item.IdentityAnchorResolutionIntentAtUtc,
+                                   item.IdentityAnchorResolutionObservedAtUtc,
+                                   item.IdentityAnchorSweepOrdinal,
                                    item.FailureCode,
                                    item.Version,
                                    item.CreatedAtUtc,
@@ -183,6 +317,7 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                 cancellationToken).ConfigureAwait(false);
             count = checked(count + 1);
         }
+
 
         await foreach (
             WorkspaceStaffOnboardingRecoveryReceiptDataRightsExport receipt in
@@ -202,6 +337,116 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                 receipt.ReceiptId,
                 receipt.ContractVersion,
                 receipt,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        await foreach (
+            WorkspaceStaffIdentityAnchorSweepCheckpoint checkpoint in
+            dbContext.StaffIdentityAnchorSweepCheckpoints
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.Id)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            WorkspaceStaffIdentityAnchorSweepPageCounts current =
+                checkpoint.CurrentCounts();
+            WorkspaceStaffIdentityAnchorSweepPageCounts lastCompleted =
+                checkpoint.LastCompletedCounts();
+            WorkspaceStaffIdentityAnchorSweepCheckpointDataRightsExport
+                record = new(
+                    new WorkspaceStaffIdentityAnchorSweepCheckpointExportState(
+                        checkpoint.ProtocolVersion,
+                        checkpoint.HasActiveCycle,
+                        checkpoint.CycleUpperOrdinal,
+                        checkpoint.AfterOrdinal,
+                        checkpoint.CycleStartedAtUtc,
+                        current.ScannedCount,
+                        current.BacklogCount,
+                        checkpoint.LastCompletedUpperOrdinal,
+                        checkpoint.LastCompletedAtUtc,
+                        lastCompleted.ScannedCount,
+                        lastCompleted.BacklogCount,
+                        checkpoint.UpdatedAtUtc));
+            await WriteAsync(
+                StaffIdentityAnchorSweepCheckpointRecordType,
+                checkpoint.Id,
+                checkpoint.Version,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        await foreach (
+            WorkspaceStaffHistoricalNoProvisionReceipt receipt in
+            dbContext.StaffHistoricalNoProvisionReceipts
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.Id)
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            WorkspaceStaffHistoricalNoProvisionReceiptDataRightsExport
+                record = new(
+                    receipt.ContractVersion,
+                    receipt.Id,
+                    receipt.ScopeId,
+                    receipt.OperationId,
+                    receipt.ApplicationId,
+                    receipt.SourceKind,
+                    receipt.SourceId,
+                    receipt.ExpectedApplicationVersion,
+                    receipt.ExpectedApplicationStatus,
+                    receipt.ResultApplicationVersion,
+                    receipt.ResultApplicationStatus,
+                    receipt.OrganizationsScopeRevision,
+                    receipt.OrganizationsSourceVersion,
+                    receipt.OrganizationsSourceStatus,
+                    receipt.StaffEvidenceSha256,
+                    receipt.ExternalEvidenceManifestId,
+                    receipt.ExternalEvidenceSha256,
+                    receipt.ReviewerId,
+                    receipt.ReviewedAtUtc,
+                    receipt.CanonicalSha256);
+            await WriteAsync(
+                StaffHistoricalNoProvisionReceiptRecordType,
+                receipt.Id,
+                receipt.ContractVersion,
+                record,
+                sink,
+                cancellationToken).ConfigureAwait(false);
+            count = checked(count + 1);
+        }
+
+        await foreach (
+            WorkspaceStaffDeferredClaimWithdrawalDataRightsExport record in
+            dbContext.StaffDeferredClaimWithdrawals
+                .AsNoTracking()
+                .Where(item => item.ScopeId == tenantId)
+                .OrderBy(item => item.Id)
+                .Select(item =>
+                    new WorkspaceStaffDeferredClaimWithdrawalDataRightsExport(
+                        item.Id,
+                        item.ScopeId,
+                        item.EnrollmentLinkId,
+                        item.ClaimVersion,
+                        item.EventId,
+                        item.OccurredAtUtc))
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+                .ConfigureAwait(false))
+        {
+            await WriteAsync(
+                WorkspacesDataRightsExportContributor
+                    .StaffDeferredClaimWithdrawalRecordType,
+                record.ClaimId,
+                record.ClaimVersion,
+                record,
                 sink,
                 cancellationToken).ConfigureAwait(false);
             count = checked(count + 1);
@@ -327,6 +572,7 @@ internal sealed class WorkspacesTenantTerminationExportContributor(
                                    item.EffectiveOn,
                                    item.RequestedBy,
                                    item.State,
+                                   item.RestorationDisposition,
                                    item.FailureCode,
                                    item.Version,
                                    item.CreatedAtUtc,

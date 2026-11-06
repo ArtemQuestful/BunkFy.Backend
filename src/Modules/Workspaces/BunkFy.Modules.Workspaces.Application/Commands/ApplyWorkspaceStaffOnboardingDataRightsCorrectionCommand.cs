@@ -18,4 +18,29 @@ public sealed record ApplyWorkspaceStaffOnboardingDataRightsCorrectionCommand(
     string? Department,
     string ActorId)
     : ITransactionalCommand<
-        WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto>;
+        WorkspaceStaffOnboardingDataRightsCorrectionOutcome>;
+
+public sealed record WorkspaceStaffOnboardingDataRightsCorrectionOutcome(
+    WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind Kind,
+    WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto? Receipt)
+{
+    public static WorkspaceStaffOnboardingDataRightsCorrectionOutcome Applied(
+        WorkspaceStaffOnboardingDataRightsCorrectionReceiptDto receipt) =>
+        new(
+            WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind.Applied,
+            receipt ?? throw new ArgumentNullException(nameof(receipt)));
+
+    public static WorkspaceStaffOnboardingDataRightsCorrectionOutcome
+        AuthorityMovedToStaff() =>
+        new(
+            WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind
+                .AuthorityMovedToStaff,
+            Receipt: null);
+}
+
+public enum WorkspaceStaffOnboardingDataRightsCorrectionOutcomeKind
+{
+    Unknown = 0,
+    Applied = 1,
+    AuthorityMovedToStaff = 2
+}

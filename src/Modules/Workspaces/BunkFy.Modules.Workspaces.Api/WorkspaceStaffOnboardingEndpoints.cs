@@ -12,8 +12,8 @@ using Gma.Framework.Api.Results;
 using Gma.Framework.Api.Tenancy;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Pagination;
-using Gma.Framework.Scoping;
 using Gma.Framework.Results;
+using Gma.Framework.Scoping;
 using Gma.Framework.Security;
 using Gma.Framework.Security.AspNetCore;
 using Gma.Framework.Tenancy.AccessControl.AspNetCore;
@@ -48,7 +48,8 @@ internal static class WorkspaceStaffOnboardingEndpoints
                 return Results.Unauthorized();
             }
 
-            return (await submitter.SubmitAsync(
+            Result<WorkspaceStaffOnboardingSubmissionOutcome> outcome =
+                await submitter.SubmitWithAuthorityOutcomeAsync(
                 new SubmitWorkspaceStaffOnboardingCommand(
                     request.SourceKind,
                     request.Token,
@@ -60,8 +61,9 @@ internal static class WorkspaceStaffOnboardingEndpoints
                     request.EmployeeNumber,
                     request.JobTitle,
                     request.Department),
-                token).ConfigureAwait(false)).ToHttpResult(
-                    WorkspacesApiEndpointSupport.ErrorStatusCodes);
+                token).ConfigureAwait(false);
+            return MapSubmissionOutcome(outcome).ToHttpResult(
+                WorkspacesApiEndpointSupport.ErrorStatusCodes);
         }).Produces<WorkspaceStaffOnboardingDto>(StatusCodes.Status200OK);
 
         group.MapPost("/sources/invitations", async (
@@ -330,6 +332,45 @@ internal static class WorkspaceStaffOnboardingEndpoints
             .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
             .Produces<WorkspaceStaffOnboardingListResponse>(StatusCodes.Status200OK);
 
+        group.MapGet("/applications/summary", async (
+            int? page,
+            int? pageSize,
+            HttpContext context,
+            IRequestDispatcher dispatcher,
+            CancellationToken token) =>
+        {
+            WorkspacesApiEndpointSupport.SetNoStore(context);
+            return (await dispatcher.QueryAsync(
+                new ListActionableWorkspaceStaffOnboardingSummariesQuery(
+                    page ?? PageRequest.DefaultPage,
+                    pageSize ?? PageRequest.DefaultPageSize),
+                token).ConfigureAwait(false)).ToHttpResult(
+                    WorkspacesApiEndpointSupport.ErrorStatusCodes);
+        })
+            .RequireTenant()
+            .RequireTenantPermission(
+                WorkspacesPermissionCodes.StaffOnboardingManage)
+            .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
+            .Produces<WorkspaceStaffOnboardingSummaryListResponse>(StatusCodes.Status200OK);
+
+        group.MapGet("/applications/{applicationId:guid}/review", async (
+            Guid applicationId,
+            HttpContext context,
+            IRequestDispatcher dispatcher,
+            CancellationToken token) =>
+        {
+            WorkspacesApiEndpointSupport.SetNoStore(context);
+            return (await dispatcher.QueryAsync(
+                new GetWorkspaceStaffOnboardingReviewQuery(applicationId),
+                token).ConfigureAwait(false)).ToHttpResult(
+                    WorkspacesApiEndpointSupport.ErrorStatusCodes);
+        })
+            .RequireTenant()
+            .RequireTenantPermission(
+                WorkspacesPermissionCodes.StaffOnboardingManage)
+            .RequireTenantPermission(AccessControlProfilePermissionCodes.Read)
+            .Produces<WorkspaceStaffOnboardingDto>(StatusCodes.Status200OK);
+
         group.MapPost("/applications/{applicationId:guid}/retry", async (
             Guid applicationId,
             HttpContext context,
@@ -458,6 +499,31 @@ internal static class WorkspaceStaffOnboardingEndpoints
         return Results.Json(
             attempt,
             statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    internal static Result<WorkspaceStaffOnboardingDto> MapSubmissionOutcome(
+        Result<WorkspaceStaffOnboardingSubmissionOutcome> outcome)
+    {
+        if (outcome.IsFailure)
+        {
+            return Result.Failure<WorkspaceStaffOnboardingDto>(outcome.Error);
+        }
+
+        return outcome.Value.Kind switch
+        {
+            WorkspaceStaffOnboardingSubmissionOutcomeKind.Applied
+                when outcome.Value.Application is not null =>
+                Result.Success(outcome.Value.Application),
+            WorkspaceStaffOnboardingSubmissionOutcomeKind
+                .AuthorityMovedToStaff
+                when outcome.Value.Application is null =>
+                Result.Failure<WorkspaceStaffOnboardingDto>(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .ProfileMutationAuthorityUnavailable),
+            _ => Result.Failure<WorkspaceStaffOnboardingDto>(
+                WorkspaceStaffOnboardingApplicationErrors
+                    .IdentityAnchorConflict)
+        };
     }
 
     private static RouteHandlerBuilder RequireAssuranceWhenConfigured(

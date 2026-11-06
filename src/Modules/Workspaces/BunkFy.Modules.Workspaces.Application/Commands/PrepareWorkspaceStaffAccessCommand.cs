@@ -1,6 +1,7 @@
 namespace BunkFy.Modules.Workspaces.Application.Commands;
 
 using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Workspaces.Contracts;
 using Gma.Framework.Cqrs;
 
 public sealed record PrepareWorkspaceStaffAccessCommand(
@@ -9,4 +10,5 @@ public sealed record PrepareWorkspaceStaffAccessCommand(
 
 public sealed record WorkspaceStaffAccessPreparation(
     Guid ProcessId,
-    bool RequiresAccessDenial);
+    bool RequiresAccessDenial,
+    WorkspaceStaffAccessRestorationDisposition RestorationDisposition);

@@ -82,6 +82,24 @@ coordinate before source locks are taken. Higher retries preserve cumulative
 scanned and affected counts; stale attempts fail before discovery, and exact
 terminal replay returns the stored result. The evidence is classified,
 tenant-exported, and removed by the bounded termination lifecycle.
+Withdrawal observations that arrive before the corresponding claim-request
+event are retained in a bounded Workspaces-owned correlation table. Claim
+request binding and withdrawal consumption share one exclusive source
+coordinate, so neither subscription can miss the other's commit. Exact
+duplicates replay, divergent coordinates fail closed, and the observation is
+removed only after authoritative terminalization, source terminal cleanup, or
+tenant destruction. This composed v14 persistence/export shape advances both the
+personal-data catalogue and tenant-termination manifest; rollout evidence and
+frozen owner approvals must use the new catalog version and digest.
+Organizations admission permits a claim on a BunkFy-owned link only while a
+matching admissible Workspaces application exists. The table is lifecycle-
+bounded by link terminalization and tenant destruction, but it is not count-
+bounded by `MaximumClaims`: withdrawal releases that concurrent reservation.
+Operational capacity is therefore the link lifetime multiplied by admitted
+claim rate and worst-case claim-request consumer lag. Source cleanup uses one
+set-based delete inside the serialized transaction; rollout must load-test that
+duration/rate envelope within the 30-second consumer timeout and alert on
+deferred-row age and count while a source remains active.
 
 Automatic Staff retention also asks Workspaces to close access and remove the
 departed person's Auth subject from terminal onboarding and access history.
@@ -126,6 +144,21 @@ and source facts, and fail closed after authority moves into claim approval or
 provisioning. Workspaces records an append-only replay receipt, exports its
 bounded accountability proof without the request fingerprint, and completes
 the central case through its own durable outbox.
+
+Enrollment-link resubmission and correction POST recheck the authoritative
+Organizations claim while holding the existing source/application lease.
+Only no retained claim or one exact-coordinate `Pending` claim with a strictly
+future decision deadline remains editable. A retained `Pending` claim with a
+missing or elapsed deadline, or unknown, terminal, or coordinate-mismatched
+authority, returns conflict without changing staged profile data. Ordinary
+invitation resubmission still relies on the local
+invitation-token lifecycle, but an approved invitation Data Rights
+correction has only the local `Submitted`/version fence because the current
+Organizations contracts do not publish an invitation-status inspector. The
+correction-target GET also remains an optimistic local preview; the
+enrollment-link correction POST is the authoritative external fence. A future
+invitation inspector must use the same lease ordering before closing that
+residual; it must not introduce a Staff-to-Workspaces reverse lock edge.
 
 An approved Staff Rights restriction may independently suspend ordinary
 processing of one exact `staff-onboarding` record while Workspaces still owns

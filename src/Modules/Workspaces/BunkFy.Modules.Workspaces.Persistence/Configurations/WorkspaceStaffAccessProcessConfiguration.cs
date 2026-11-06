@@ -13,6 +13,10 @@ internal sealed class WorkspaceStaffAccessProcessConfiguration
         {
             table.HasCheckConstraint("CK_staff_access_process_version", "\"Version\" >= 1");
             table.HasCheckConstraint("CK_staff_access_process_target", "\"TargetState\" BETWEEN 1 AND 3");
+            table.HasCheckConstraint(
+                "CK_staff_access_process_restoration_disposition",
+                "(\"TargetState\" = 1 AND \"RestorationDisposition\" IN (2, 3)) OR " +
+                "(\"TargetState\" IN (2, 3) AND \"RestorationDisposition\" = 1)");
             table.HasCheckConstraint("CK_staff_access_process_state", "\"State\" BETWEEN 1 AND 4");
             table.HasCheckConstraint("CK_staff_access_process_staff_version", "\"TargetStaffVersion\" >= 2");
         });
@@ -22,6 +26,9 @@ internal sealed class WorkspaceStaffAccessProcessConfiguration
         builder.Property(process => process.SubjectId)
             .HasMaxLength(WorkspaceStaffAccessProcess.SubjectIdMaxLength).IsRequired();
         builder.Property(process => process.TargetState).HasConversion<int>().IsRequired();
+        builder.Property(process => process.RestorationDisposition)
+            .HasConversion<int>()
+            .IsRequired();
         builder.Property(process => process.RequestedBy)
             .HasMaxLength(WorkspaceStaffAccessProcess.ActorIdMaxLength).IsRequired();
         builder.Property(process => process.State).HasConversion<int>().IsRequired();

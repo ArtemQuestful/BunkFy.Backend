@@ -172,6 +172,30 @@ public sealed class ApplyStaffAnonymisationCommandHandlerTests
         Assert.Equal(1, scenario.ApprovalGate.CallCount);
     }
 
+    [Fact]
+    public async Task Unresolved_workspace_anchor_blocks_anonymisation()
+    {
+        Scenario scenario = CreateScenario();
+        ApplyStaffAnonymisationCommandHandler handler =
+            scenario.CreateHandler(
+                new QueueIdGenerator(),
+                new StubStaffIdentityProvisioningAnchorResolutionRepository(
+                    hasUnresolved: true));
+
+        Result<StaffAnonymisationReceiptDto> result =
+            await handler.HandleAsync(
+                scenario.Command,
+                CancellationToken.None);
+
+        Assert.Equal(
+            StaffApplicationErrors.IdentityAnchorResolutionRequired,
+            result.Error);
+        Assert.Equal(StaffMemberState.Departed, scenario.Member.Status);
+        Assert.Null(scenario.Anonymisation.Receipt);
+        Assert.Equal(0, scenario.MemberMutationOperations.DeleteCount);
+        Assert.Equal(1, scenario.OperationLock.AcquireCount);
+    }
+
     private static Scenario CreateScenario(
         long evidenceLockRevision = SelectedLockRevision)
     {
@@ -328,7 +352,9 @@ public sealed class ApplyStaffAnonymisationCommandHandlerTests
         RecordingApprovalGate ApprovalGate)
     {
         public ApplyStaffAnonymisationCommandHandler CreateHandler(
-            IIdGenerator ids) =>
+            IIdGenerator ids,
+            IStaffIdentityProvisioningAnchorResolutionRepository?
+                resolutions = null) =>
             new(
                 new StubStaffMemberRepository(this.Member),
                 new StubGovernanceRepository(this.Governance),
@@ -337,6 +363,8 @@ public sealed class ApplyStaffAnonymisationCommandHandlerTests
                 this.OperationLock,
                 this.Anonymisation,
                 this.MemberMutationOperations,
+                resolutions ??
+                new StubStaffIdentityProvisioningAnchorResolutionRepository(),
                 this.ApprovalGate,
                 new TestScopeContext(),
                 new TestClock(),

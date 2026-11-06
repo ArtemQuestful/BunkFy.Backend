@@ -8,6 +8,9 @@ using Gma.Framework.Pagination;
 
 internal static class WorkspaceStaffAccessMutationTestSupport
 {
+    public static IWorkspaceStaffAccessProcessRepository NoOpenProcesses { get; } =
+        new NoOpenProcessRepository();
+
     public static WorkspaceStaffAccessMutationCoordinator Create(
         IWorkspaceStaffAccessProcessRepository? processes = null,
         bool processExists = true,
@@ -89,6 +92,49 @@ internal static class WorkspaceStaffAccessMutationTestSupport
             Guid staffMemberId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<WorkspaceStaffAccessProcess?>
+            GetLatestCompletedSuspensionAsync(
+                Guid staffMemberId,
+                string subjectId,
+                CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceStaffAccessProcess?> GetCompletedDepartureAsync(
+            Guid staffMemberId,
+            long targetStaffVersion,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceStaffAccessProcessListResponse> ListOpenAsync(
+            PageRequest page,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task AddAsync(
+            WorkspaceStaffAccessProcess process,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class NoOpenProcessRepository
+        : IWorkspaceStaffAccessProcessRepository
+    {
+        public Task<WorkspaceStaffAccessProcess?> GetAsync(
+            Guid processId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceStaffAccessProcess?> GetByStaffVersionAsync(
+            Guid staffMemberId,
+            long targetStaffVersion,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceStaffAccessProcess?> GetOpenByStaffAsync(
+            Guid staffMemberId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<WorkspaceStaffAccessProcess?>(null);
 
         public Task<WorkspaceStaffAccessProcess?>
             GetLatestCompletedSuspensionAsync(

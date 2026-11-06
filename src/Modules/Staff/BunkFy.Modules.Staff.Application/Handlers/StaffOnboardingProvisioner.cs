@@ -1,11 +1,14 @@
 namespace BunkFy.Modules.Staff.Application.Handlers;
 
 using BunkFy.Modules.Staff.Application.Commands;
+using BunkFy.Modules.Staff.Application.Ports;
 using BunkFy.Modules.Staff.Contracts;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Results;
 
-internal sealed class StaffOnboardingProvisioner(IRequestDispatcher dispatcher)
+internal sealed class StaffOnboardingProvisioner(
+    IRequestDispatcher dispatcher,
+    IStaffIdentityProvisioningAnchorRepository anchors)
     : IStaffOnboardingProvisioner
 {
     public async Task<StaffOnboardingProvisioningResult> ProvisionAsync(
@@ -27,8 +30,32 @@ internal sealed class StaffOnboardingProvisioner(IRequestDispatcher dispatcher)
                 request.ActorId),
             cancellationToken).ConfigureAwait(false);
 
-        return result.IsSuccess
-            ? new StaffOnboardingProvisioningResult(true, result.Value.StaffMemberId, null)
-            : new StaffOnboardingProvisioningResult(false, null, result.Error.Code);
+        if (result.IsFailure)
+        {
+            return new StaffOnboardingProvisioningResult(
+                false,
+                null,
+                result.Error.Code);
+        }
+
+        StaffIdentityProvisioningAnchorRecord? anchor = await anchors.GetAsync(
+            StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+            request.OperationId,
+            cancellationToken).ConfigureAwait(false);
+        if (anchor is null ||
+            anchor.StaffMemberId != result.Value.StaffMemberId ||
+            !anchor.ResolutionEventId.HasValue)
+        {
+            return new StaffOnboardingProvisioningResult(
+                false,
+                null,
+                StaffApplicationErrors.OnboardingReplayUnavailable.Code);
+        }
+
+        return new StaffOnboardingProvisioningResult(
+            true,
+            result.Value.StaffMemberId,
+            null,
+            anchor.ResolutionEventId.Value);
     }
 }

@@ -1,11 +1,13 @@
 namespace BunkFy.Modules.Staff.Tests;
 
 using System.Reflection;
+using System.Security.Cryptography;
 using BunkFy.DataGovernance;
 using BunkFy.Modules.Staff.AdminApi;
 using BunkFy.Modules.Staff.Api;
 using BunkFy.Modules.Staff.Api.Requests;
 using BunkFy.Modules.Staff.Application.Commands;
+using BunkFy.Modules.Staff.Application.Ports;
 using BunkFy.Modules.Staff.Application.Queries;
 using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Staff.Domain.Aggregates;
@@ -82,7 +84,35 @@ public sealed class StaffPersonalDataCatalogTests
             StringComparer.Ordinal),
         [typeof(ReleaseStaffDataHoldRequest)] = new(
             [nameof(ReleaseStaffDataHoldRequest.Confirmed)],
-            StringComparer.Ordinal)
+            StringComparer.Ordinal),
+        [typeof(StaffIdentityProvisioningAnchorApplySummary)] = new(
+            [
+                nameof(StaffIdentityProvisioningAnchorApplySummary
+                    .AppliedCount),
+                nameof(StaffIdentityProvisioningAnchorApplySummary
+                    .AlreadyAnchoredCount)
+            ],
+            StringComparer.Ordinal),
+        [typeof(StaffIdentityProvisioningAnchorInspection)] = new(
+            [
+                nameof(StaffIdentityProvisioningAnchorInspection.IsSuccess),
+                nameof(StaffIdentityProvisioningAnchorInspection.ErrorCode)
+            ],
+            StringComparer.Ordinal),
+        [typeof(StaffIdentityProvisioningAnchorApplyResult)] = new(
+            [
+                nameof(StaffIdentityProvisioningAnchorApplyResult.IsSuccess),
+                nameof(StaffIdentityProvisioningAnchorApplyResult.AppliedCount),
+                nameof(StaffIdentityProvisioningAnchorApplyResult
+                    .AlreadyAnchoredCount),
+                nameof(StaffIdentityProvisioningAnchorApplyResult.ErrorCode)
+            ],
+            StringComparer.Ordinal),
+        [typeof(StaffWorkspaceOnboardingIdentityAnchorResolutionResult)] =
+            new(
+                [nameof(StaffWorkspaceOnboardingIdentityAnchorResolutionResult
+                    .Status)],
+                StringComparer.Ordinal)
     };
 
     [Fact]
@@ -106,6 +136,32 @@ public sealed class StaffPersonalDataCatalogTests
             Assert.Contains(field.Bindings, b => b.Type == typeof(StaffStationLabel).FullName &&
                 b.Surface == PersonalDataSurface.ProjectionExport && b.RetentionPolicy == "transient-response");
         }
+    }
+
+    [Fact]
+    public void V21_catalogue_and_owner_manifest_have_immutable_digests()
+    {
+        string dataGovernanceDirectory = Path.Combine(
+            AppContext.BaseDirectory,
+            "DataGovernance");
+
+        Assert.Equal(6, StaffTenantTerminationMetadata.CatalogVersion);
+        Assert.Equal(21, StaffTenantTerminationMetadata.PersonalDataCatalogVersion);
+        Assert.Equal(6, StaffTenantTerminationMetadata.ExportSchemaVersion);
+        Assert.Equal(21, Catalogue.CatalogVersion);
+        Assert.Equal(
+            "430dded912a8c284bd401333e18ed3b24b3d6dea0064f2638cced5b8ab8af39b",
+            ComputeSha256(Path.Combine(
+                dataGovernanceDirectory,
+                "personal-data-catalog.v1.json")));
+        Assert.Equal(
+            "85e1cd9f343f57af1f6331a8a0699ffafae72e8b12e0c8645604ab7a175ef789",
+            StaffTenantTerminationMetadata.CatalogSha256);
+        Assert.Equal(
+            "1d9abc1d668a374a9d4df141826a1787a260819ed8eb72ec9178ada5b2caaccd",
+            ComputeSha256(Path.Combine(
+                dataGovernanceDirectory,
+                "personal-data-inventory.v1.md")));
     }
 
     [Fact]
@@ -146,7 +202,9 @@ public sealed class StaffPersonalDataCatalogTests
                      typeof(StaffRetentionSweepCheckpoint),
                      typeof(StaffRetentionAnonymisationReceipt),
                      typeof(StaffOperationLock),
-                     typeof(StaffMemberMutationOperation)
+                     typeof(StaffMemberMutationOperation),
+                     typeof(StaffIdentityProvisioningAnchor),
+                     typeof(StaffIdentityProvisioningAnchorResolution)
                  })
         {
             IEntityType model = dbContext.Model.FindEntityType(entityType)!;
@@ -205,6 +263,68 @@ public sealed class StaffPersonalDataCatalogTests
         AssertType(
             typeof(StaffMemberMutationOperationDataRightsExport),
             PersonalDataSurface.DataRightsExport);
+        AssertType(
+            typeof(StaffIdentityProvisioningAnchorDataRightsExport),
+            PersonalDataSurface.DataRightsExport);
+        AssertType(
+            typeof(StaffIdentityProvisioningAnchorResolutionDataRightsExport),
+            PersonalDataSurface.DataRightsExport);
+
+        AssertType(
+            typeof(StaffIdentityProvisioningAnchorRecord),
+            PersonalDataSurface.ApplicationCommand);
+        AssertType(
+            typeof(StaffIdentityProvisioningSourceKey),
+            PersonalDataSurface.ApplicationQuery);
+        AssertType(
+            typeof(StaffIdentityProvisioningAnchorResolutionRecord),
+            PersonalDataSurface.ApplicationCommand);
+        AssertType(
+            typeof(StaffMemberSafetyEvidence),
+            PersonalDataSurface.ApplicationQuery,
+            nameof(StaffMemberSafetyEvidence.Status));
+
+        foreach (Type type in new[]
+                 {
+                     typeof(StaffIdentityProvisioningAnchorCandidate),
+                     typeof(StaffWorkspaceOnboardingIdentityAnchorOutcomeRequest),
+                     typeof(StaffWorkspaceOnboardingIdentityAnchorResolutionRequest)
+                 })
+        {
+            AssertType(type, PersonalDataSurface.IntegrationCommand);
+        }
+
+        foreach (Type type in new[]
+                 {
+                     typeof(StaffIdentityProvisioningAnchorInspection),
+                     typeof(StaffIdentityProvisioningAnchorCandidateInspection),
+                     typeof(StaffIdentityProvisioningAnchorApplyResult),
+                     typeof(StaffWorkspaceOnboardingIdentityAnchorOutcome),
+                     typeof(StaffWorkspaceOnboardingIdentityAnchorResolutionResult)
+                 })
+        {
+            AssertType(type, PersonalDataSurface.ProjectionExport);
+        }
+    }
+
+    [Fact]
+    public void Identity_provisioning_anchors_are_retained_until_tenant_termination()
+    {
+        PersonalDataRetentionPolicy retention =
+            Assert.Single(
+                Catalogue.RetentionPolicies,
+                policy => policy.Id ==
+                    "staff-identity-provisioning-anchor");
+        PersonalDataRightsPolicy rights =
+            Assert.Single(
+                Catalogue.RightsPolicies,
+                policy => policy.Id ==
+                    "staff-identity-provisioning-anchor-control");
+
+        Assert.Equal("tenant-termination", retention.EndsAt);
+        Assert.Equal(
+            "retain-pseudonymous-linkage-until-tenant-termination",
+            rights.Erasure);
     }
 
     [Fact]
@@ -443,6 +563,9 @@ public sealed class StaffPersonalDataCatalogTests
             AppContext.BaseDirectory,
             "DataGovernance",
             "personal-data-catalog.v1.json")));
+
+    private static string ComputeSha256(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 
     private static StaffDbContext CreateDbContext()
     {

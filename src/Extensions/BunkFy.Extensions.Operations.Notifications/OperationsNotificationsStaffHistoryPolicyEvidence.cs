@@ -68,7 +68,7 @@ internal static class
             "bunkfy-operations-notifications-staff-history-snapshot/v1",
             reference.Namespace,
             reference.Digest,
-            ((int)snapshot.Status).ToString(
+            V1StatusCode(snapshot.Status).ToString(
                 CultureInfo.InvariantCulture),
             snapshot.Version.ToString(CultureInfo.InvariantCulture),
             snapshot.RecordCount.ToString(CultureInfo.InvariantCulture),
@@ -77,4 +77,14 @@ internal static class
         return Convert.ToHexStringLower(
             SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
+
+    private static int V1StatusCode(NotificationHistoryReferenceStatus status) =>
+        status switch
+        {
+            NotificationHistoryReferenceStatus.Missing => 0,
+            NotificationHistoryReferenceStatus.Open => 1,
+            NotificationHistoryReferenceStatus.Closed => 2,
+            _ => throw new InvalidOperationException(
+                "The notification history status has no v1 evidence code.")
+        };
 }

@@ -24,6 +24,12 @@ public sealed class StaffDbContext(
     private readonly IScopeContext scopeContext = scopeContext;
 
     public DbSet<StaffMember> StaffMembers => this.Set<StaffMember>();
+    internal DbSet<StaffIdentityProvisioningAnchor>
+        IdentityProvisioningAnchors =>
+        this.Set<StaffIdentityProvisioningAnchor>();
+    internal DbSet<StaffIdentityProvisioningAnchorResolution>
+        IdentityProvisioningAnchorResolutions =>
+        this.Set<StaffIdentityProvisioningAnchorResolution>();
     internal DbSet<StaffMemberMutationOperation> MemberMutationOperations =>
         this.Set<StaffMemberMutationOperation>();
     public DbSet<StaffDataRightsCorrectionReceipt> DataRightsCorrectionReceipts =>
@@ -146,6 +152,16 @@ public sealed class StaffDbContext(
         bool memberMutationOperationMutationRequested = this.ChangeTracker
             .Entries<StaffMemberMutationOperation>()
             .Any(entry => entry.State == EntityState.Modified);
+        bool identityProvisioningAnchorMutationRequested = this.ChangeTracker
+            .Entries<StaffIdentityProvisioningAnchor>()
+            .Any(entry =>
+                entry.State is EntityState.Modified or EntityState.Deleted);
+        bool identityProvisioningAnchorResolutionMutationRequested =
+            this.ChangeTracker
+                .Entries<StaffIdentityProvisioningAnchorResolution>()
+                .Any(entry =>
+                    entry.State is
+                        EntityState.Modified or EntityState.Deleted);
         if (correctionMutationRequested ||
             restrictionMutationRequested ||
             governanceMutationRequested ||
@@ -155,7 +171,9 @@ public sealed class StaffDbContext(
             retentionReceiptMutationRequested ||
             tombstoneDeletionRequested ||
             tenantDestroyReceiptMutationRequested ||
-            memberMutationOperationMutationRequested)
+            memberMutationOperationMutationRequested ||
+            identityProvisioningAnchorMutationRequested ||
+            identityProvisioningAnchorResolutionMutationRequested)
         {
             throw new InvalidOperationException(
                 "Staff immutable receipts are append-only.");
@@ -420,7 +438,8 @@ public sealed class StaffDbContext(
     internal async Task<int> SaveTenantDestructionChangesAsync(
         string tenantId,
         Guid operationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        StaffTenantDestroyStage? attemptedStage = null)
     {
         if (!TenantIds.TryNormalize(tenantId, out string? canonicalTenantId) ||
             operationId == Guid.Empty ||
@@ -450,10 +469,47 @@ public sealed class StaffDbContext(
                 "Staff tenant destruction state is invalid.");
         }
 
+        StaffTenantDestroyOperation? operation =
+            this.TenantDestroyOperations.Local.SingleOrDefault(item =>
+                item.OperationId == operationId) ??
+            await this.TenantDestroyOperations.SingleOrDefaultAsync(
+                item => item.OperationId == operationId,
+                cancellationToken).ConfigureAwait(false);
+        if (operation is null)
+        {
+            throw new InvalidOperationException(
+                "Staff tenant destruction operation is invalid.");
+        }
+
+        StaffTenantDestroyStage authorizedStage =
+            attemptedStage ?? operation.Stage;
+        bool anchorDeletionRequested = this.ChangeTracker
+            .Entries<StaffIdentityProvisioningAnchor>()
+            .Any(entry => entry.State == EntityState.Deleted);
+        bool resolutionDeletionRequested = this.ChangeTracker
+            .Entries<StaffIdentityProvisioningAnchorResolution>()
+            .Any(entry => entry.State == EntityState.Deleted);
+        if (anchorDeletionRequested || resolutionDeletionRequested)
+        {
+            if ((anchorDeletionRequested && authorizedStage !=
+                    StaffTenantDestroyStage.IdentityProvisioningAnchors) ||
+                (resolutionDeletionRequested && authorizedStage !=
+                    StaffTenantDestroyStage
+                        .IdentityProvisioningAnchorResolutions))
+            {
+                throw new InvalidOperationException(
+                    "Staff identity-anchor destruction stage is invalid.");
+            }
+        }
+
         if (this.Database.IsNpgsql())
         {
             await this.Database.ExecuteSqlInterpolatedAsync(
                     $"SELECT set_config('bunkfy.staff_tenant_destroy_operation_id', {operationId.ToString("D")}, true)",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            await this.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT set_config('bunkfy.staff_tenant_destroy_stage', {((int)authorizedStage).ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)",
                     cancellationToken)
                 .ConfigureAwait(false);
         }

@@ -29,6 +29,12 @@ public static class DependencyInjection
         builder.Services.TryAddScoped<IStaffStationEligibilitySource, StaffStationEligibilitySource>();
         builder.Services.TryAddScoped<IStaffStationLabelReader, StaffStationLabelReader>();
         builder.Services.TryAddScoped<
+            IStaffIdentityProvisioningAnchorRepository,
+            StaffIdentityProvisioningAnchorRepository>();
+        builder.Services.TryAddScoped<
+            IStaffIdentityProvisioningAnchorResolutionRepository,
+            StaffIdentityProvisioningAnchorResolutionRepository>();
+        builder.Services.TryAddScoped<
             IStaffMemberMutationOperationRepository,
             StaffMemberMutationOperationRepository>();
         builder.Services.TryAddScoped<

@@ -19,6 +19,8 @@ internal sealed class
     ApplyWorkspaceStaffCorrelationAnonymisationCommandHandler(
         IWorkspaceStaffCorrelationAnonymisationRepository
             correlations,
+        IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence
+            identityAnchors,
         IWorkspaceCrossGraphMutationLock crossGraphLock,
         WorkspaceStaffAccessMutationCoordinator mutations,
         IWorkspaceStaffCorrelationOperationLock operationLock,
@@ -151,6 +153,16 @@ internal sealed class
             return Failure(
                 WorkspaceStaffCorrelationAnonymisationApplicationErrors
                     .StateChanged);
+        }
+
+        if (!await identityAnchors.CanMutateAsync(
+                tenantId,
+                snapshot.SubjectId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Failure(
+                WorkspaceStaffCorrelationAnonymisationApplicationErrors
+                    .IdentityAnchorUnavailable);
         }
 
         string? stateBindingSha256 =

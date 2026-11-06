@@ -2,15 +2,25 @@ namespace BunkFy.Modules.Workspaces.Persistence.Repositories;
 
 using System.Linq.Expressions;
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Staff.Contracts;
+using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using BunkFy.Modules.Workspaces.Domain.DataRights;
 using Gma.Framework.Scoping;
+using Gma.Framework.Results;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 internal sealed class WorkspacesDataRightsExportContributor(
     WorkspacesDbContext dbContext,
-    IScopeContext scopeContext) : IDataRightsSubjectExportContributor
+    IScopeContext scopeContext,
+    IWorkspaceStaffOnboardingSerializedReadBoundary serializedReads,
+    IWorkspaceStaffOnboardingOperationLock operationLock,
+    IWorkspaceStaffOnboardingRepository applications,
+    IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader outcomes,
+    ILogger<WorkspacesDataRightsExportContributor> logger)
+    : IDataRightsSubjectExportContributor
 {
     public const int MaximumChildRecords = 1_000;
     public const string StaffAccessProfileSnapshotRecordType =
@@ -22,6 +32,8 @@ internal sealed class WorkspacesDataRightsExportContributor(
     public const string StaffOnboardingRecoveryReceiptRecordType =
         WorkspacesDataRightsCoordinates
             .StaffOnboardingRecoveryReceiptRecordType;
+    public const string StaffDeferredClaimWithdrawalRecordType =
+        "staff-deferred-claim-withdrawal";
     public const string StaffOnboardingProcessingRestrictionRecordType =
         "staff-onboarding-processing-restriction";
     public const string
@@ -112,46 +124,91 @@ internal sealed class WorkspacesDataRightsExportContributor(
         IDataRightsExportSink sink,
         CancellationToken cancellationToken)
     {
-        WorkspaceStaffOnboardingDataRightsExport? record =
-            await dbContext.StaffOnboardingApplications
-                .AsNoTracking()
-                .Where(application =>
-                    application.ScopeId == tenantId &&
-                    application.Id == coordinate.RecordId)
-                .Select(application =>
-                    new WorkspaceStaffOnboardingDataRightsExport(
-                        application.Id,
-                        application.ScopeId,
-                        application.SourceKind,
-                        application.SourceId,
-                        application.ClaimId,
-                        application.ClaimVersion,
-                        application.SubjectId,
-                        application.VerifiedAccountEmail,
-                        application.DisplayName,
-                        application.LegalName,
-                        application.WorkEmail,
-                        application.WorkPhone,
-                        application.EmployeeNumber,
-                        application.JobTitle,
-                        application.Department,
-                        application.Status,
-                        application.StaffMemberId,
-                        application.FailureCode,
-                        application.Version,
-                        application.CreatedAtUtc,
-                        application.LastChangedAtUtc))
-                .SingleOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (record is null)
+        Result<DataRightsSubjectExportResult> result =
+            await serializedReads.RunAsync(
+                readToken => this.ExportOnboardingSerializedAsync(
+                    tenantId,
+                    coordinate,
+                    sink,
+                    readToken),
+                cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess
+            ? result.Value
+            : DataRightsSubjectExportResult.ScopeUnavailable();
+    }
+
+    private async Task<Result<DataRightsSubjectExportResult>>
+        ExportOnboardingSerializedAsync(
+            string tenantId,
+            DataRightsSubjectCoordinate coordinate,
+            IDataRightsExportSink sink,
+            CancellationToken cancellationToken)
+    {
+        WorkspaceStaffOnboardingCoordinate? selected =
+            await applications.FindCoordinateAsync(
+                coordinate.RecordId,
+                cancellationToken).ConfigureAwait(false);
+        if (selected is null)
         {
-            return DataRightsSubjectExportResult.NotFound();
+            return Result.Success(
+                DataRightsSubjectExportResult.NotFound());
         }
 
-        if (record.Version != coordinate.RecordVersion)
+        await operationLock.AcquireSourceReadAsync(
+                selected.SourceId,
+                cancellationToken).ConfigureAwait(false);
+        if (!await operationLock.TryAcquireAsync(
+                coordinate.RecordId,
+                cancellationToken).ConfigureAwait(false))
         {
-            return DataRightsSubjectExportResult.Stale();
+            return Result.Success(
+                DataRightsSubjectExportResult.NotFound());
         }
+
+        WorkspaceStaffOnboarding? application =
+            await applications.GetAsync(
+                coordinate.RecordId,
+                cancellationToken).ConfigureAwait(false);
+        if (application is null)
+        {
+            return Result.Success(
+                DataRightsSubjectExportResult.NotFound());
+        }
+
+        await applications.ReloadAsync(application, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.Equals(
+                application.ScopeId,
+                tenantId,
+                StringComparison.Ordinal) ||
+            application.Id != selected.ApplicationId ||
+            application.SourceKind != selected.SourceKind ||
+            application.SourceId != selected.SourceId)
+        {
+            return Result.Success(
+                DataRightsSubjectExportResult.ScopeUnavailable());
+        }
+
+        if (application.Version != coordinate.RecordVersion)
+        {
+            return Result.Success(
+                DataRightsSubjectExportResult.Stale());
+        }
+
+        StaffWorkspaceOnboardingIdentityAnchorOutcome? outcome =
+            await this.ReadOutcomeAsync(application, cancellationToken)
+                .ConfigureAwait(false);
+        if (outcome is null ||
+            !WorkspaceStaffOnboardingExportAuthority.IsAuthorized(
+                application,
+                outcome))
+        {
+            return Result.Success(
+                DataRightsSubjectExportResult.ScopeUnavailable());
+        }
+
+        WorkspaceStaffOnboardingDataRightsExport record =
+            ToDataRightsExport(application);
 
         WorkspaceStaffOnboardingCorrectionReceipt[] receipts =
             await dbContext.StaffOnboardingCorrectionReceipts
@@ -206,7 +263,8 @@ internal sealed class WorkspacesDataRightsExportContributor(
                 restrictionReceipts.Length >
             MaximumChildRecords)
         {
-            return DataRightsSubjectExportResult.ScopeUnavailable();
+            return Result.Success(
+                DataRightsSubjectExportResult.ScopeUnavailable());
         }
 
         await sink.WriteAsync(
@@ -313,7 +371,8 @@ internal sealed class WorkspacesDataRightsExportContributor(
             recordCount = checked(recordCount + 1);
         }
 
-        return DataRightsSubjectExportResult.Success(recordCount);
+        return Result.Success(
+            DataRightsSubjectExportResult.Success(recordCount));
     }
 
     private async Task<DataRightsSubjectExportResult>
@@ -352,6 +411,68 @@ internal sealed class WorkspacesDataRightsExportContributor(
         return DataRightsSubjectExportResult.Success(1);
     }
 
+    private async Task<
+        StaffWorkspaceOnboardingIdentityAnchorOutcome?> ReadOutcomeAsync(
+            WorkspaceStaffOnboarding application,
+            CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await outcomes.ReadAsync(
+                new StaffWorkspaceOnboardingIdentityAnchorOutcomeRequest(
+                    application.Id,
+                    application.SubjectId),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                "Staff identity-anchor outcome read was cancelled outside the Workspaces export request.");
+            return null;
+        }
+        catch (Exception exception) when (exception is not
+            OperationCanceledException)
+        {
+            logger.LogWarning(
+                "Staff identity-anchor outcome is unavailable for Workspaces onboarding.");
+            return null;
+        }
+    }
+
+    private static WorkspaceStaffOnboardingDataRightsExport
+        ToDataRightsExport(WorkspaceStaffOnboarding application) => new(
+            application.Id,
+            application.ScopeId,
+            application.SourceKind,
+            application.SourceId,
+            application.ClaimId,
+            application.ClaimVersion,
+            application.SubjectId,
+            application.VerifiedAccountEmail,
+            application.DisplayName,
+            application.LegalName,
+            application.WorkEmail,
+            application.WorkPhone,
+            application.EmployeeNumber,
+            application.JobTitle,
+            application.Department,
+            application.Status,
+            application.StaffMemberId,
+            application.IdentityAnchorExpectedResolutionEventId,
+            application.IdentityAnchorContinuationEventId,
+            application.IdentityAnchorResolutionEventId,
+            application.IdentityAnchorResolutionStaffMemberId,
+            application.IdentityAnchorResolutionApplicationVersion,
+            application.IdentityAnchorResolutionDisposition,
+            application.IdentityAnchorResolutionIntentAtUtc,
+            application.IdentityAnchorResolutionObservedAtUtc,
+            application.IdentityAnchorSweepOrdinal,
+            application.FailureCode,
+            application.Version,
+            application.CreatedAtUtc,
+            application.LastChangedAtUtc);
+
     private async Task<DataRightsSubjectExportResult> ExportAccessProcessAsync(
         string tenantId,
         DataRightsSubjectCoordinate coordinate,
@@ -375,6 +496,7 @@ internal sealed class WorkspacesDataRightsExportContributor(
                         process.EffectiveOn,
                         process.RequestedBy,
                         process.State,
+                        process.RestorationDisposition,
                         process.FailureCode,
                         process.Version,
                         process.CreatedAtUtc,

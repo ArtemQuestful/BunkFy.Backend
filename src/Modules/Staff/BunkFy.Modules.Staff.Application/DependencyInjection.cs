@@ -15,6 +15,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using BunkFy.Modules.Properties.Contracts;
 using BunkFy.Modules.Staff.Application.Handlers;
+using BunkFy.Modules.Staff.Application.Ports;
 using BunkFy.Modules.Staff.Application.Tasks;
 using BunkFy.Modules.Staff.Contracts;
 
@@ -36,12 +37,28 @@ public static class DependencyInjection
                 StaffRetentionOptionsValidator>());
         services.AddApplicationServicesFromAssembly(typeof(DependencyInjection).Assembly);
         services.TryAddScoped<IStaffIdentityBootstrapper, StaffIdentityBootstrapper>();
+        services.TryAddScoped<
+            IStaffIdentityProvisioningAnchorCutover,
+            StaffIdentityProvisioningAnchorCutover>();
+        services.TryAddScoped<
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            StaffWorkspaceOnboardingIdentityAnchorLifecycle>();
+        services.TryAddScoped<
+            IStaffWorkspaceOnboardingIdentityAnchorResolutionRecorder,
+            StaffWorkspaceOnboardingIdentityAnchorLifecycle>();
         services.TryAddScoped<IStaffOnboardingProvisioner, StaffOnboardingProvisioner>();
         services.TryAddScoped<
             IStaffPropertyAssignmentProvisioner,
             StaffPropertyAssignmentProvisioner>();
         services.TryAddScoped<StaffMemberMutationCoordinator>();
         services.TryAddScoped<StaffOnboardingProvisioningCoordinator>();
+        services.TryAddScoped<
+            IStaffIdentityProvisioningAnchorWriter,
+            StaffIdentityProvisioningAnchorWriter>();
+        services.TryAddScoped<
+            StaffWorkspaceOnboardingAnchorCutoverCoordinator>();
+        services.TryAddScoped<
+            StaffWorkspaceOnboardingIdentityAnchorLifecycleCoordinator>();
         services.TryAddScoped<StaffProfileUpdateCoordinator>();
         services.TryAddScoped<StaffAuthSubjectChangeCoordinator>();
         services.TryAddScoped<StaffLifecycleChangeCoordinator>();

@@ -44,6 +44,13 @@ public static class WorkspaceStaffOnboardingApplicationErrors
     public static readonly Error AccessPlanUnavailable = new(
         "Workspaces.StaffAccessPlanUnavailable",
         "The workspace Staff access plan is unavailable.");
+    public static readonly Error ProfileMutationAuthorityUnavailable = new(
+        "Workspaces.StaffOnboardingProfileMutationAuthorityUnavailable",
+        "The Staff onboarding profile is no longer editable under the authoritative join state.");
+    public static readonly Error ProfileReviewUnavailable = new(
+        "Workspaces.StaffOnboardingProfileReviewUnavailable",
+        "Applicant details are unavailable for review. Refresh the request status before continuing.");
+
     public static readonly Error RetentionCoordinateInvalid = new(
         "Workspaces.StaffOnboardingRetentionCoordinateInvalid",
         "The Staff onboarding retention coordinate is invalid.");
@@ -101,4 +108,13 @@ public static class WorkspaceStaffOnboardingApplicationErrors
     public static readonly Error ProcessingRestricted = new(
         "Workspaces.StaffOnboardingProcessingRestricted",
         "The selected Staff onboarding record is restricted from ordinary processing.");
+    public static readonly Error IdentityAnchorConflict = new(
+        "Workspaces.StaffOnboardingIdentityAnchorConflict",
+        "The Staff identity-anchor outcome conflicts with the onboarding record.");
+    public static readonly Error IdentityAnchorSuspended = new(
+        "Workspaces.StaffOnboardingIdentityAnchorSuspended",
+        "The anchored Staff member is suspended and cannot receive workspace access.");
+    public static readonly Error IdentityAnchorLifecycleTransitionPending = new(
+        "Workspaces.StaffOnboardingIdentityAnchorLifecycleTransitionPending",
+        "The anchored Staff member has an unfinished workspace access lifecycle transition.");
 }

@@ -8,6 +8,35 @@ using Xunit;
 public sealed class WorkspaceStaffOnboardingTests
 {
     [Fact]
+    public void Deferred_withdrawal_canonicalizes_equivalent_organization_scope_text()
+    {
+        Guid claimId = Guid.NewGuid();
+        Guid enrollmentLinkId = Guid.NewGuid();
+        Guid eventId = Guid.NewGuid();
+        string equivalentScope = OrganizationId.ToString("N").ToUpperInvariant();
+
+        WorkspaceStaffDeferredClaimWithdrawal withdrawal =
+            WorkspaceStaffDeferredClaimWithdrawal.Create(
+                equivalentScope,
+                OrganizationId,
+                enrollmentLinkId,
+                claimId,
+                2,
+                eventId,
+                Now).Value;
+
+        Assert.Equal(OrganizationId.ToString("D"), withdrawal.ScopeId);
+        Assert.True(withdrawal.Matches(
+            equivalentScope,
+            OrganizationId,
+            enrollmentLinkId,
+            claimId,
+            2,
+            eventId,
+            Now));
+    }
+
+    [Fact]
     public void Completion_requires_staff_and_redacts_applicant_data()
     {
         WorkspaceStaffOnboarding application = CreateApplication();
@@ -15,7 +44,11 @@ public sealed class WorkspaceStaffOnboardingTests
         Guid staffMemberId = Guid.NewGuid();
 
         Assert.True(application.ObserveClaimAccepted(claimId, 1, Now.AddMinutes(1)).IsSuccess);
-        Assert.True(application.MarkStaffReady(staffMemberId, Now.AddMinutes(2)).IsSuccess);
+        Assert.True(application.MarkStaffReady(
+            staffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Now.AddMinutes(2)).IsSuccess);
         Assert.True(application.Complete(Now.AddMinutes(3)).IsSuccess);
 
         Assert.Equal(WorkspaceStaffOnboardingState.Completed, application.Status);
@@ -70,7 +103,11 @@ public sealed class WorkspaceStaffOnboardingTests
         Guid claimId = Guid.NewGuid();
         Guid staffMemberId = Guid.NewGuid();
         Assert.True(application.ObserveClaimAccepted(claimId, 1, Now.AddMinutes(1)).IsSuccess);
-        Assert.True(application.MarkStaffReady(staffMemberId, Now.AddMinutes(2)).IsSuccess);
+        Assert.True(application.MarkStaffReady(
+            staffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Now.AddMinutes(2)).IsSuccess);
         Assert.True(application.Fail("Workspaces.AccessProvisioningFailed", Now.AddMinutes(3)).IsSuccess);
 
         Assert.True(application.BeginProvisioning(Now.AddMinutes(4)).IsSuccess);

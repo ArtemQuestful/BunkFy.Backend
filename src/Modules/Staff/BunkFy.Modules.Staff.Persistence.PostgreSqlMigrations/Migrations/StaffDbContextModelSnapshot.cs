@@ -1257,6 +1257,99 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
                         });
                 });
 
+            modelBuilder.Entity("BunkFy.Modules.Staff.Persistence.StaffIdentityProvisioningAnchor", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("SourceKind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AnchoredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolutionEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("StaffMemberId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("ScopeId", "SourceKind", "SourceId");
+
+                    b.HasAlternateKey("ScopeId", "SourceKind", "SourceId", "StaffMemberId");
+
+                    b.HasIndex("ResolutionEventId")
+                        .IsUnique()
+                        .HasFilter("\"ResolutionEventId\" IS NOT NULL");
+
+                    b.HasIndex("ScopeId", "StaffMemberId", "SourceKind", "SourceId");
+
+                    b.HasIndex("ScopeId", "SourceKind", "SourceId", "StaffMemberId", "ResolutionEventId")
+                        .IsUnique()
+                        .HasFilter("\"ResolutionEventId\" IS NOT NULL");
+
+                    b.ToTable("identity_provisioning_anchors", "staff", t =>
+                        {
+                            t.HasCheckConstraint("CK_staff_identity_provisioning_anchors_ids", "\"SourceId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"StaffMemberId\" <> '00000000-0000-0000-0000-000000000000'::uuid");
+
+                            t.HasCheckConstraint("CK_staff_identity_provisioning_anchors_resolution_event", "(\"SourceKind\" = 1 AND \"ResolutionEventId\" IS NOT NULL AND \"ResolutionEventId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ResolutionEventId\" <> \"SourceId\") OR (\"SourceKind\" = 2 AND \"ResolutionEventId\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_staff_identity_provisioning_anchors_source_kind", "\"SourceKind\" IN (1, 2)");
+                        });
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Staff.Persistence.StaffIdentityProvisioningAnchorResolution", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("SourceKind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Disposition")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ResolutionEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ResolvedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("StaffMemberId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("WorkspaceApplicationVersion")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ScopeId", "SourceKind", "SourceId");
+
+                    b.HasIndex("ResolutionEventId")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "StaffMemberId", "SourceId");
+
+                    b.HasIndex("ScopeId", "SourceKind", "SourceId", "StaffMemberId");
+
+                    b.ToTable("identity_provisioning_anchor_resolutions", "staff", t =>
+                        {
+                            t.HasTrigger("TR_staff_identity_provisioning_anchor_resolution_integrity");
+
+                            t.HasCheckConstraint("CK_staff_identity_provisioning_anchor_resolutions_evidence", "\"WorkspaceApplicationVersion\" >= 1 AND \"Disposition\" BETWEEN 1 AND 5");
+
+                            t.HasCheckConstraint("CK_staff_identity_provisioning_anchor_resolutions_ids", "\"SourceId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"StaffMemberId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ResolutionEventId\" <> '00000000-0000-0000-0000-000000000000'::uuid AND \"ResolutionEventId\" <> \"SourceId\"");
+
+                            t.HasCheckConstraint("CK_staff_identity_provisioning_anchor_resolutions_source", "\"SourceKind\" = 1");
+                        });
+                });
+
             modelBuilder.Entity("BunkFy.Modules.Staff.Persistence.StaffMemberMutationOperation", b =>
                 {
                     b.Property<string>("ScopeId")
@@ -1490,7 +1583,7 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
                         {
                             t.HasCheckConstraint("CK_staff_tenant_destroy_operation_batch", "\"BatchSize\" BETWEEN 1 AND 500");
 
-                            t.HasCheckConstraint("CK_staff_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 23 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
+                            t.HasCheckConstraint("CK_staff_tenant_destroy_operation_progress", "\"Stage\" BETWEEN 1 AND 25 AND \"RemovedRecordCount\" >= 0 AND \"CompletedBatchCount\" >= 0 AND \"ProofVersion\" = 1 AND \"ConcurrencyVersion\" >= 1");
 
                             t.HasCheckConstraint("CK_staff_tenant_destroy_operation_revisions", "\"SelectedRevision\" >= 0 AND \"ResultingRevision\" = \"SelectedRevision\" + 1");
 
@@ -1881,6 +1974,26 @@ namespace BunkFy.Modules.Staff.Persistence.PostgreSqlMigrations.Migrations
                         .HasForeignKey("BunkFy.Modules.Staff.Persistence.Models.StaffOperationLock", "ScopeId", "StaffMemberId")
                         .HasPrincipalKey("BunkFy.Modules.Staff.Domain.Aggregates.StaffMember", "ScopeId", "Id")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Staff.Persistence.StaffIdentityProvisioningAnchor", b =>
+                {
+                    b.HasOne("BunkFy.Modules.Staff.Domain.Aggregates.StaffMember", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "StaffMemberId")
+                        .HasPrincipalKey("ScopeId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BunkFy.Modules.Staff.Persistence.StaffIdentityProvisioningAnchorResolution", b =>
+                {
+                    b.HasOne("BunkFy.Modules.Staff.Persistence.StaffIdentityProvisioningAnchor", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "SourceKind", "SourceId", "StaffMemberId")
+                        .HasPrincipalKey("ScopeId", "SourceKind", "SourceId", "StaffMemberId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

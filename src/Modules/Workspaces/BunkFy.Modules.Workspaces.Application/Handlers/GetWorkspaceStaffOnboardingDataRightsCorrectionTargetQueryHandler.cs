@@ -1,7 +1,7 @@
 namespace BunkFy.Modules.Workspaces.Application.Handlers;
 
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Application.Authorization;
-using BunkFy.Modules.Workspaces.Application.Models;
 using BunkFy.Modules.Workspaces.Application.Ports;
 using BunkFy.Modules.Workspaces.Application.Queries;
 using BunkFy.Modules.Workspaces.Contracts;
@@ -11,7 +11,9 @@ using Gma.Framework.Results;
 
 internal sealed class
     GetWorkspaceStaffOnboardingDataRightsCorrectionTargetQueryHandler(
-        IWorkspaceStaffOnboardingDataRightsCorrectionTargetReader targets,
+        WorkspaceStaffOnboardingMutationCoordinator mutations,
+        IWorkspaceStaffOnboardingSerializedReadBoundary readBoundary,
+        IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader anchorOutcomes,
         WorkspaceStaffOnboardingDataRightsCorrectionAuthorizer authorizer)
     : IQueryHandler<
         GetWorkspaceStaffOnboardingDataRightsCorrectionTargetQuery,
@@ -38,38 +40,53 @@ internal sealed class
                 authorized.Error);
         }
 
-        WorkspaceStaffOnboardingDataRightsCorrectionTarget? target =
-            await targets.GetAsync(
-                query.ApplicationId,
-                cancellationToken).ConfigureAwait(false);
-        if (target is null)
+        return await readBoundary.RunAsync(
+            async readToken =>
         {
-            return Result.Failure<
-                WorkspaceStaffOnboardingDataRightsCorrectionTargetDto>(
-                WorkspaceStaffOnboardingApplicationErrors
-                    .ApplicationNotFound);
-        }
+            WorkspaceStaffOnboardingMutationLease lease =
+                await mutations.AcquireExistingAsync(
+                    query.ApplicationId,
+                    WorkspaceStaffOnboardingSourceLockMode.Read,
+                    requireOperational: false,
+                    readToken).ConfigureAwait(false);
+            WorkspaceStaffOnboarding? application = lease.Application;
+            if (application is null)
+            {
+                return Result.Failure<
+                    WorkspaceStaffOnboardingDataRightsCorrectionTargetDto>(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .ApplicationNotFound);
+            }
 
-        if (target.Status != WorkspaceStaffOnboardingState.Submitted ||
-            target.Version != query.ExpectedVersion ||
-            string.IsNullOrWhiteSpace(target.DisplayName))
-        {
-            return Result.Failure<
-                WorkspaceStaffOnboardingDataRightsCorrectionTargetDto>(
-                WorkspaceStaffOnboardingApplicationErrors
-                    .CorrectionTargetUnavailable);
-        }
+            StaffWorkspaceOnboardingIdentityAnchorOutcome outcome =
+                await anchorOutcomes.ReadAsync(
+                    new StaffWorkspaceOnboardingIdentityAnchorOutcomeRequest(
+                        application.Id,
+                        application.SubjectId),
+                    readToken).ConfigureAwait(false);
+            if (!WorkspaceStaffOnboardingProfileMutationAuthority
+                .IsExactAbsent(application, outcome) ||
+                application.Status != WorkspaceStaffOnboardingState.Submitted ||
+                application.Version != query.ExpectedVersion ||
+                string.IsNullOrWhiteSpace(application.DisplayName))
+            {
+                return Result.Failure<
+                    WorkspaceStaffOnboardingDataRightsCorrectionTargetDto>(
+                    WorkspaceStaffOnboardingApplicationErrors
+                        .CorrectionTargetUnavailable);
+            }
 
-        return Result.Success(
-            new WorkspaceStaffOnboardingDataRightsCorrectionTargetDto(
-                target.ApplicationId,
-                target.Version,
-                target.DisplayName,
-                target.LegalName,
-                target.WorkEmail,
-                target.WorkPhone,
-                target.EmployeeNumber,
-                target.JobTitle,
-                target.Department));
+            return Result.Success(
+                new WorkspaceStaffOnboardingDataRightsCorrectionTargetDto(
+                    application.Id,
+                    application.Version,
+                    application.DisplayName,
+                    application.LegalName,
+                    application.WorkEmail,
+                    application.WorkPhone,
+                    application.EmployeeNumber,
+                    application.JobTitle,
+                    application.Department));
+        }, cancellationToken).ConfigureAwait(false);
     }
 }

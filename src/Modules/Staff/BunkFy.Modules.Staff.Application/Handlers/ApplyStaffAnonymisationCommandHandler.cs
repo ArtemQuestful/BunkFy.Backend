@@ -25,6 +25,7 @@ internal sealed class ApplyStaffAnonymisationCommandHandler(
     IStaffOperationLock operationLock,
     IStaffAnonymisationRepository anonymisation,
     IStaffMemberMutationOperationRepository memberMutationOperations,
+    IStaffIdentityProvisioningAnchorResolutionRepository resolutions,
     IDataRightsOperationApprovalGate approvalGate,
     IScopeContext scopeContext,
     ISystemClock clock,
@@ -119,6 +120,14 @@ internal sealed class ApplyStaffAnonymisationCommandHandler(
             return Result.Failure<StaffAnonymisationReceiptDto>(
                 StaffApplicationErrors
                     .AnonymisationOperationLockUnavailable);
+        }
+
+        if (await resolutions.HasUnresolvedWorkspaceOnboardingAsync(
+                command.StaffMemberId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<StaffAnonymisationReceiptDto>(
+                StaffApplicationErrors.IdentityAnchorResolutionRequired);
         }
 
         StaffMember? member = await members.GetForDataRightsAsync(

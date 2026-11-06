@@ -229,6 +229,7 @@ internal sealed partial class StaffTenantTerminationContributor
 
             while (!operation.IsComplete)
             {
+                StaffTenantDestroyStage attemptedStage = operation.Stage;
                 bool removed = await this.RemoveCurrentStageAsync(
                         operation,
                         tenantId,
@@ -236,13 +237,24 @@ internal sealed partial class StaffTenantTerminationContributor
                     .ConfigureAwait(false);
                 if (!removed)
                 {
+                    // Persist every empty-stage transition before the next
+                    // stage can delete immutable identity evidence. The
+                    // PostgreSQL trigger validates the durable destroy stage,
+                    // so it must not depend on EF command ordering between an
+                    // unrelated operation update and a sensitive delete.
+                    await dbContext.SaveTenantDestructionChangesAsync(
+                            tenantId,
+                            request.IdempotencyKey,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                     continue;
                 }
 
                 await dbContext.SaveTenantDestructionChangesAsync(
                         tenantId,
                         request.IdempotencyKey,
-                        cancellationToken)
+                        cancellationToken,
+                        attemptedStage)
                     .ConfigureAwait(false);
                 return await FinishAsync(
                     transaction,

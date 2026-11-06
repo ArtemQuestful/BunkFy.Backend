@@ -24,6 +24,52 @@ public sealed class OperationsNotificationsStaffDataRightsTests
     private static readonly Guid PropertyId =
         Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
 
+    [Theory]
+    [InlineData(
+        NotificationHistoryReferenceStatus.Missing,
+        "59d846f9695b706747d28866592a8a51bac74751cdf3105e00cb4d762c94ae34")]
+    [InlineData(
+        NotificationHistoryReferenceStatus.Open,
+        "bb172b8a7e3021604ebb79558dfc962c2d8858e58f6a69a213677ddfd3498320")]
+    [InlineData(
+        NotificationHistoryReferenceStatus.Closed,
+        "93cc5fc92a0a7235aaf8b8f13cf7fdb29ef94acf69de1bb05f5d70a66eea9beb")]
+    public void Snapshot_hash_preserves_all_v1_status_codes(
+        NotificationHistoryReferenceStatus status,
+        string expectedSha256)
+    {
+        NotificationHistoryReference reference = new(
+            "staff",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        NotificationHistoryReferenceSnapshot snapshot = new(
+            status,
+            3,
+            2,
+            9);
+
+        Assert.Equal(
+            expectedSha256,
+            OperationsNotificationsStaffHistoryPolicyEvidence
+                .ComputeSnapshotSha256(reference, snapshot));
+    }
+
+    [Fact]
+    public void Snapshot_hash_rejects_statuses_without_a_v1_evidence_code()
+    {
+        NotificationHistoryReference reference = new(
+            "staff",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        NotificationHistoryReferenceSnapshot snapshot = new(
+            NotificationHistoryReferenceStatus.Unknown,
+            3,
+            2,
+            9);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            OperationsNotificationsStaffHistoryPolicyEvidence
+                .ComputeSnapshotSha256(reference, snapshot));
+    }
+
     [Fact]
     public async Task Policy_binds_open_history_to_exact_departed_staff_authority()
     {

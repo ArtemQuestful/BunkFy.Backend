@@ -6,12 +6,30 @@ using BunkFy.Modules.Staff.Application.Ports;
 using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Staff.Domain.Aggregates;
 using BunkFy.Modules.Staff.Domain.DataRights;
+using BunkFy.Modules.Staff.Domain.Entities;
 using BunkFy.Modules.Staff.Persistence.Models;
 using Gma.Framework.Results;
 
 internal sealed class StaffMemberRepository(StaffDbContext dbContext)
     : IStaffMemberRepository
 {
+    public async Task<IReadOnlyList<StaffMemberSafetyEvidence>>
+        ListSafetyEvidenceAsync(
+            IReadOnlyList<Guid> staffMemberIds,
+            CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(staffMemberIds);
+        return await dbContext.StaffMembers
+            .AsNoTracking()
+            .Where(member => staffMemberIds.Contains(member.Id))
+            .OrderBy(member => member.Id)
+            .Select(member => new StaffMemberSafetyEvidence(
+                member.Id,
+                member.AuthSubjectId,
+                member.Status))
+            .ToArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public Task AddAsync(
         StaffMember member,
         CancellationToken cancellationToken)
@@ -44,6 +62,14 @@ internal sealed class StaffMemberRepository(StaffDbContext dbContext)
             .Include(member => member.Assignments)
             .FirstOrDefaultAsync(member => member.Id == staffMemberId, cancellationToken);
 
+    public Task<StaffMember?> ReloadOperationalAsync(
+        Guid staffMemberId,
+        CancellationToken cancellationToken) =>
+        this.ReloadAfterOperationLockAsync(
+            staffMemberId,
+            operational: true,
+            cancellationToken);
+
     public Task<StaffMember?> GetForDataRightsAsync(
         Guid staffMemberId,
         CancellationToken cancellationToken) =>
@@ -61,6 +87,71 @@ internal sealed class StaffMemberRepository(StaffDbContext dbContext)
             .FirstOrDefaultAsync(
                 member => member.Id == staffMemberId,
                 cancellationToken);
+
+    public async Task<StaffMember?> ReloadForSafetyTransitionAsync(
+        Guid staffMemberId,
+        CancellationToken cancellationToken) =>
+        await this.ReloadAfterOperationLockAsync(
+            staffMemberId,
+            operational: false,
+            cancellationToken).ConfigureAwait(false);
+
+    private async Task<StaffMember?> ReloadAfterOperationLockAsync(
+        Guid staffMemberId,
+        bool operational,
+        CancellationToken cancellationToken)
+    {
+        StaffMember? tracked = dbContext.StaffMembers.Local
+            .SingleOrDefault(member => member.Id == staffMemberId);
+        if (tracked is not null)
+        {
+            Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<
+                StaffMember> memberEntry = dbContext.Entry(tracked);
+            if (memberEntry.State != EntityState.Unchanged)
+            {
+                throw new InvalidOperationException(
+                    "A changed Staff member cannot be reloaded after its operation lock.");
+            }
+
+            foreach (StaffPropertyAssignment assignment in
+                tracked.Assignments.ToArray())
+            {
+                Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<
+                    StaffPropertyAssignment> assignmentEntry =
+                    dbContext.Entry(assignment);
+                if (assignmentEntry.State != EntityState.Unchanged)
+                {
+                    throw new InvalidOperationException(
+                        "Changed Staff assignments cannot be reloaded after the member operation lock.");
+                }
+
+                assignmentEntry.State = EntityState.Detached;
+            }
+
+            memberEntry.State = EntityState.Detached;
+        }
+
+        IQueryable<StaffMember> source = operational
+            ? this.OperationalMembers()
+            : dbContext.StaffMembers;
+        return await source
+            .Include(member => member.Assignments)
+            .SingleOrDefaultAsync(
+                member => member.Id == staffMemberId,
+                cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<StaffMember?> GetForSafetyTransitionByAuthSubjectAsync(
+        string authSubjectId,
+        CancellationToken cancellationToken)
+    {
+        string normalized = authSubjectId.Trim();
+        return dbContext.StaffMembers
+            .Include(member => member.Assignments)
+            .FirstOrDefaultAsync(
+                member => member.AuthSubjectId == normalized,
+                cancellationToken);
+    }
 
     public Task<StaffMember?> GetByAuthSubjectAsync(string authSubjectId, CancellationToken cancellationToken)
     {

@@ -166,18 +166,11 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
                 new WorkspaceStaffOnboardingCandidate(
                     application.Id,
                     application.Version,
-                    application.DisplayName,
-                    application.Status,
-                    application.WorkEmail,
-                    application.VerifiedAccountEmail,
-                    application.WorkPhone))
+                    application.Status))
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
         foreach (WorkspaceStaffOnboardingCandidate record in records)
         {
-            string displayName = string.IsNullOrWhiteSpace(record.DisplayName)
-                ? $"Workspace onboarding: {record.Status}"
-                : $"{record.DisplayName}: {record.Status}";
             candidates.Add(new DataRightsSubjectCandidate(
                 new DataRightsSubjectCoordinate(
                     WorkspacesDataRightsCoordinates.Owner,
@@ -185,9 +178,9 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
                         .StaffOnboardingRecordType,
                     record.Id,
                     record.Version),
-                displayName,
-                MaskEmail(record.WorkEmail ?? record.VerifiedAccountEmail),
-                MaskPhone(record.WorkPhone)));
+                $"Workspace onboarding: {record.Status}",
+                EmailHint: null,
+                PhoneHint: null));
         }
     }
 
@@ -473,38 +466,10 @@ internal sealed class WorkspacesDataRightsDiscoveryContributor(
                 DataRightsSubjectDiscoveryLimits.AccountSubjectIdMaxLength;
     }
 
-    private static string? MaskEmail(string? email)
-    {
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            return null;
-        }
-
-        int separator = email.IndexOf('@');
-        return separator <= 0
-            ? "***"
-            : $"{email[0]}***{email[separator..]}";
-    }
-
-    private static string? MaskPhone(string? phone)
-    {
-        if (string.IsNullOrWhiteSpace(phone))
-        {
-            return null;
-        }
-
-        string digits = new(phone.Where(char.IsDigit).ToArray());
-        return digits.Length >= 4 ? $"***{digits[^4..]}" : "***";
-    }
-
     private sealed record WorkspaceStaffOnboardingCandidate(
         Guid Id,
         long Version,
-        string? DisplayName,
-        WorkspaceStaffOnboardingState Status,
-        string? WorkEmail,
-        string? VerifiedAccountEmail,
-        string? WorkPhone);
+        WorkspaceStaffOnboardingState Status);
 
     private sealed record WorkspaceStaffOnboardingRecoveryCandidate(
         Guid Id,

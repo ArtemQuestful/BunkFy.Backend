@@ -1,9 +1,13 @@
 namespace BunkFy.Modules.Workspaces.Tests;
 
 using BunkFy.Modules.DataRights.Contracts;
+using BunkFy.Modules.Workspaces.Domain;
 using BunkFy.Modules.Workspaces.Persistence;
 using BunkFy.Modules.Workspaces.Persistence.TenantTermination;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 public sealed partial class WorkspacesTenantTerminationExportContributorTests
@@ -31,7 +35,7 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
             TenantTerminationContributionStatus.Completed,
             result.Status);
         Assert.Equal("workspace.termination.destroyed", result.ResultCode);
-        Assert.Equal(12, result.AffectedCount);
+        Assert.Equal(13, result.AffectedCount);
         Assert.Equal(1, result.SelectedProofRevision);
         Assert.Equal(3, result.ResultingProofRevision);
         Assert.Empty(await context.TenantDestroyOperations.ToListAsync());
@@ -100,6 +104,207 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         Assert.Equal(1, operation.CompletedBatchCount);
     }
 
+    [Fact]
+    public void Destroy_stage_ordinals_preserve_the_existing_protocol_and_append_receipts_after_checkpoints()
+    {
+        Assert.Equal(
+            Enumerable.Range(1, 20),
+            Enum.GetValues<WorkspaceTenantDestroyStage>()
+                .Where(stage => stage is >=
+                    WorkspaceTenantDestroyStage.OutboxMessages and <=
+                    WorkspaceTenantDestroyStage.StaffOnboardingRetentionExecutions)
+                .Select(stage => (int)stage));
+        Assert.Equal(
+            22,
+            (int)WorkspaceTenantDestroyStage.SweepCheckpoints);
+        Assert.Equal(
+            23,
+            (int)WorkspaceTenantDestroyStage
+                .HistoricalNoProvisionReceipts);
+        Assert.Equal(20, (int)WorkspaceTenantDestroyStage.StaffOnboardingRetentionExecutions);
+        Assert.Equal(21, (int)WorkspaceTenantDestroyStage.Completed);
+
+        WorkspaceTenantDestroyOperation operation = Assert.IsType<
+            WorkspaceTenantDestroyOperation>(
+            WorkspaceTenantDestroyOperation.TryCreate(
+                Guid.NewGuid(),
+                TenantId,
+                Digest,
+                Guid.NewGuid(),
+                selectedFenceVersion: 4,
+                WorkspaceTenantDestroyOperation.MaximumBatchSize,
+                Now));
+        for (int stage = 1; stage <= 20; stage++)
+        {
+            Assert.Equal(stage, (int)operation.Stage);
+            Assert.True(operation.AdvanceEmptyStage(
+                Now.AddMinutes(stage)));
+        }
+
+        Assert.Equal(
+            WorkspaceTenantDestroyStage.SweepCheckpoints,
+            operation.Stage);
+        Assert.True(operation.AdvanceEmptyStage(Now.AddMinutes(21)));
+        Assert.Equal(
+            WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts,
+            operation.Stage);
+        Assert.True(operation.AdvanceEmptyStage(Now.AddMinutes(22)));
+        Assert.Equal(WorkspaceTenantDestroyStage.Completed, operation.Stage);
+        Assert.False(operation.AdvanceEmptyStage(Now.AddMinutes(23)));
+
+        using WorkspacesDbContext context = CreateContext();
+        IEntityType entity = context.GetService<IDesignTimeModel>().Model
+            .FindEntityType(
+                typeof(WorkspaceTenantDestroyOperation))!;
+        ICheckConstraint constraint =
+            Assert.Single(
+                entity.GetCheckConstraints(),
+                candidate => candidate.Name ==
+                    "CK_workspaces_tenant_destroy_operation_progress");
+        Assert.Contains(
+            "\"Stage\" BETWEEN 1 AND 23",
+            constraint.Sql,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 2)]
+    [InlineData(501, 3)]
+    public async Task Destroy_removes_historical_receipts_in_bounded_batches_and_preserves_the_sentinel(
+        int receiptCount,
+        int expectedCompletedBatchCount)
+    {
+        const string sentinelTenantId =
+            "10000000-0000-0000-0000-000000000099";
+        string databaseName = Guid.NewGuid().ToString("N");
+        InMemoryDatabaseRoot databaseRoot = new();
+        await using WorkspacesDbContext tenant = CreateContext(
+            databaseName,
+            TenantId,
+            databaseRoot);
+        await using WorkspacesDbContext sentinel = CreateContext(
+            databaseName,
+            sentinelTenantId,
+            databaseRoot);
+
+        tenant.StaffHistoricalNoProvisionReceipts.AddRange(
+            Enumerable.Range(1, receiptCount)
+                .Select(index => CreateHistoricalReceipt(
+                    index,
+                    TenantId)));
+        sentinel.StaffHistoricalNoProvisionReceipts.Add(
+            CreateHistoricalReceipt(10_001, sentinelTenantId));
+        await tenant.SaveChangesAsync();
+        await sentinel.SaveChangesAsync();
+        tenant.ChangeTracker.Clear();
+        sentinel.ChangeTracker.Clear();
+
+        SeedFence(tenant);
+        await tenant.SaveChangesAsync();
+        tenant.ChangeTracker.Clear();
+        WorkspaceTenantDestructionOwner owner = new(
+            tenant,
+            new TestScopeContext(),
+            new TestClock());
+
+        TenantTerminationContributionResult result =
+            await CompleteDestroyAsync(owner, DestroyRequest());
+
+        Assert.Equal(
+            TenantTerminationContributionStatus.Completed,
+            result.Status);
+        Assert.Equal(receiptCount + 1, result.AffectedCount);
+        Assert.Empty(await tenant.StaffHistoricalNoProvisionReceipts
+            .IgnoreQueryFilters()
+            .Where(receipt => receipt.ScopeId == TenantId)
+            .ToListAsync());
+        sentinel.ChangeTracker.Clear();
+        Assert.Equal(
+            10_001,
+            Assert.Single(await sentinel
+                .StaffHistoricalNoProvisionReceipts
+                .IgnoreQueryFilters()
+                .ToListAsync()).OrganizationsSourceVersion);
+        WorkspaceTenantDestroyReceipt receipt =
+            await tenant.TenantDestroyReceipts.SingleAsync();
+        Assert.Equal(receiptCount + 1, receipt.RemovedRecordCount);
+        Assert.Equal(
+            expectedCompletedBatchCount,
+            receipt.CompletedBatchCount);
+        Assert.True(receipt.BatchSize <=
+            WorkspaceTenantDestroyOperation.MaximumBatchSize);
+    }
+
+    [Fact]
+    public async Task Destroy_removes_an_active_sweep_checkpoint_and_preserves_the_sentinel_tenant()
+    {
+        const string sentinelTenantId =
+            "10000000-0000-0000-0000-000000000099";
+        string databaseName = Guid.NewGuid().ToString("N");
+        InMemoryDatabaseRoot databaseRoot = new();
+        await using WorkspacesDbContext tenant = CreateContext(
+            databaseName,
+            TenantId,
+            databaseRoot);
+        await using WorkspacesDbContext sentinel = CreateContext(
+            databaseName,
+            sentinelTenantId,
+            databaseRoot);
+        Guid checkpointId =
+            Guid.Parse("17000000-0000-0000-0000-000000000001");
+        Guid sentinelCheckpointId =
+            Guid.Parse("17000000-0000-0000-0000-000000000099");
+        WorkspaceStaffIdentityAnchorSweepCheckpoint active =
+            WorkspaceStaffIdentityAnchorSweepCheckpoint.Create(
+                checkpointId,
+                TenantId,
+                FrozenAtUtc.AddHours(-3)).Value;
+        Assert.True(active.BeginCycle(
+            Guid.Parse("18000000-0000-0000-0000-000000000001"),
+            upperOrdinal: 7,
+            Guid.Parse("19000000-0000-0000-0000-000000000001"),
+            FrozenAtUtc.AddHours(-2)).IsSuccess);
+        tenant.StaffIdentityAnchorSweepCheckpoints.Add(active);
+        await tenant.SaveChangesAsync();
+        tenant.ChangeTracker.Clear();
+
+        WorkspaceStaffIdentityAnchorSweepCheckpoint preserved =
+            WorkspaceStaffIdentityAnchorSweepCheckpoint.Create(
+                sentinelCheckpointId,
+                sentinelTenantId,
+                FrozenAtUtc.AddHours(-3)).Value;
+        sentinel.StaffIdentityAnchorSweepCheckpoints.Add(preserved);
+        await sentinel.SaveChangesAsync();
+        sentinel.ChangeTracker.Clear();
+
+        SeedFence(tenant);
+        await tenant.SaveChangesAsync();
+        tenant.ChangeTracker.Clear();
+        WorkspaceTenantDestructionOwner owner = new(
+            tenant,
+            new TestScopeContext(),
+            new TestClock());
+
+        TenantTerminationContributionResult result =
+            await CompleteDestroyAsync(owner, DestroyRequest());
+
+        Assert.Equal(
+            TenantTerminationContributionStatus.Completed,
+            result.Status);
+        Assert.Equal(2, result.AffectedCount);
+        Assert.Empty(await tenant.StaffIdentityAnchorSweepCheckpoints
+            .ToListAsync());
+        sentinel.ChangeTracker.Clear();
+        Assert.Equal(
+            sentinelCheckpointId,
+            (await sentinel.StaffIdentityAnchorSweepCheckpoints
+                .SingleAsync()).Id);
+        WorkspaceTenantDestroyReceipt receipt =
+            await tenant.TenantDestroyReceipts.SingleAsync();
+        Assert.Equal(2, receipt.RemovedRecordCount);
+    }
+
     private static async Task<TenantTerminationContributionResult>
         CompleteDestroyAsync(
             WorkspaceTenantDestructionOwner owner,
@@ -164,6 +369,8 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         await context.StaffAccessProcesses.IgnoreQueryFilters().AnyAsync() ||
         await context.StaffOnboardingApplications
             .IgnoreQueryFilters().AnyAsync() ||
+        await context.StaffDeferredClaimWithdrawals
+            .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffRetentionCorrelationReceipts
             .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffOnboardingRetentionExecutions
@@ -173,5 +380,9 @@ public sealed partial class WorkspacesTenantTerminationExportContributorTests
         await context.StaffCorrelationAnonymisationTombstones
             .IgnoreQueryFilters().AnyAsync() ||
         await context.StaffCorrelationAnonymisationReceipts
+            .IgnoreQueryFilters().AnyAsync() ||
+        await context.StaffIdentityAnchorSweepCheckpoints
+            .IgnoreQueryFilters().AnyAsync() ||
+        await context.StaffHistoricalNoProvisionReceipts
             .IgnoreQueryFilters().AnyAsync();
 }

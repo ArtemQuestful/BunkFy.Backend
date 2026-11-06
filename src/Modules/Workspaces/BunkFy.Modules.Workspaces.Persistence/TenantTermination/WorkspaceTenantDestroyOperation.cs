@@ -147,13 +147,23 @@ internal sealed class WorkspaceTenantDestroyOperation : IScopedEntity
         WorkspaceTenantDestroyStage stage)
     {
         if (stage is < WorkspaceTenantDestroyStage.OutboxMessages or
-            >= WorkspaceTenantDestroyStage.Completed)
+            > WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts or
+            WorkspaceTenantDestroyStage.Completed)
         {
             throw new InvalidOperationException(
                 "The Workspaces tenant destruction stage is invalid.");
         }
 
-        return (WorkspaceTenantDestroyStage)((int)stage + 1);
+        return stage switch
+        {
+            WorkspaceTenantDestroyStage.StaffOnboardingRetentionExecutions =>
+                WorkspaceTenantDestroyStage.SweepCheckpoints,
+            WorkspaceTenantDestroyStage.SweepCheckpoints =>
+                WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts,
+            WorkspaceTenantDestroyStage.HistoricalNoProvisionReceipts =>
+                WorkspaceTenantDestroyStage.Completed,
+            _ => (WorkspaceTenantDestroyStage)((int)stage + 1)
+        };
     }
 }
 
@@ -180,5 +190,7 @@ internal enum WorkspaceTenantDestroyStage
     TerminationFenceReceipts = 18,
     HistoricalTerminationFences = 19,
     StaffOnboardingRetentionExecutions = 20,
-    Completed = 21
+    Completed = 21,
+    SweepCheckpoints = 22,
+    HistoricalNoProvisionReceipts = 23
 }

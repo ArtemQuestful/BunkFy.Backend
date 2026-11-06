@@ -15,6 +15,7 @@ using BunkFy.Modules.Reservations.Domain.Models;
 using BunkFy.Modules.Reservations.Domain.Retention;
 using BunkFy.Modules.Reservations.Domain.StayAmendments;
 using BunkFy.Modules.Reservations.Persistence;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using BunkFy.Modules.Workspaces.Persistence;
@@ -1263,6 +1264,8 @@ public sealed class ReservationsTenantTerminationIntegrationTests
             clock ?? new TestClock(ExportNowUtc));
         builder.Services.AddSingleton<IIdGenerator, TestIdGenerator>();
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddReservationsPersistence();
         return builder.Services.BuildServiceProvider();
     }

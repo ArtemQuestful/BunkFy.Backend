@@ -15,12 +15,19 @@ internal sealed class StaffDataRightsExportContributor(
     public const int MaximumHoldRecords =
         StaffDataHold.MaximumRecordsPerStaffMember;
     public const int MaximumMemberMutationOperationRecords = 10_000;
+    public const int MaximumIdentityProvisioningAnchorRecords = 10_000;
+    public const int MaximumIdentityProvisioningAnchorResolutionRecords =
+        10_000;
     public const string AssignmentRecordType = "staff-property-assignment";
     public const string EmploymentGovernanceRecordType =
         "staff-employment-governance";
     public const string DataHoldRecordType = "staff-data-hold";
     public const string MemberMutationOperationRecordType =
         "staff-member-mutation-operation";
+    public const string IdentityProvisioningAnchorRecordType =
+        "staff-identity-provisioning-anchor";
+    public const string IdentityProvisioningAnchorResolutionRecordType =
+        "staff-identity-provisioning-anchor-resolution";
 
     public string OwnerKey => StaffDataRightsDiscoveryContributor.Owner;
 
@@ -208,10 +215,83 @@ internal sealed class StaffDataRightsExportContributor(
             return DataRightsSubjectExportResult.ScopeUnavailable();
         }
 
+        StaffIdentityProvisioningAnchorDataRightsExport[]
+            identityProvisioningAnchors = await dbContext
+                .IdentityProvisioningAnchors
+                .AsNoTracking()
+                .Where(anchor =>
+                    anchor.StaffMemberId == coordinate.RecordId)
+                .OrderBy(anchor => anchor.SourceKind)
+                .ThenBy(anchor => anchor.SourceId)
+                .Take(MaximumIdentityProvisioningAnchorRecords + 1)
+                .Select(anchor =>
+                    new StaffIdentityProvisioningAnchorDataRightsExport(
+                        anchor.StaffMemberId,
+                        anchor.SourceKind,
+                        anchor.SourceId,
+                        anchor.ResolutionEventId,
+                        anchor.AnchoredAtUtc))
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (identityProvisioningAnchors.Length >
+            MaximumIdentityProvisioningAnchorRecords)
+        {
+            return DataRightsSubjectExportResult.ScopeUnavailable();
+        }
+
+        StaffIdentityProvisioningAnchorResolutionDataRightsExport[]
+            identityProvisioningAnchorResolutions = await dbContext
+                .IdentityProvisioningAnchorResolutions
+                .AsNoTracking()
+                .Where(resolution =>
+                    resolution.StaffMemberId == coordinate.RecordId)
+                .OrderBy(resolution => resolution.SourceKind)
+                .ThenBy(resolution => resolution.SourceId)
+                .Take(MaximumIdentityProvisioningAnchorResolutionRecords + 1)
+                .Select(resolution =>
+                    new
+                        StaffIdentityProvisioningAnchorResolutionDataRightsExport(
+                            resolution.StaffMemberId,
+                            resolution.SourceKind,
+                            resolution.SourceId,
+                            resolution.WorkspaceApplicationVersion,
+                            resolution.Disposition,
+                            resolution.ResolutionEventId,
+                            resolution.ResolvedAtUtc))
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (identityProvisioningAnchorResolutions.Length >
+            MaximumIdentityProvisioningAnchorResolutionRecords)
+        {
+            return DataRightsSubjectExportResult.ScopeUnavailable();
+        }
+
         await sink.WriteAsync(
             StaffDataRightsExportSchema.CreateProfileRecord(snapshot.Profile),
             cancellationToken).ConfigureAwait(false);
         int recordCount = 1;
+
+        foreach (StaffIdentityProvisioningAnchorDataRightsExport anchor in
+                 identityProvisioningAnchors)
+        {
+            await sink.WriteAsync(
+                StaffDataRightsExportSchema
+                    .CreateIdentityProvisioningAnchorRecord(anchor),
+                cancellationToken).ConfigureAwait(false);
+            recordCount = checked(recordCount + 1);
+        }
+
+        foreach (
+            StaffIdentityProvisioningAnchorResolutionDataRightsExport
+                resolution in identityProvisioningAnchorResolutions)
+        {
+            await sink.WriteAsync(
+                StaffDataRightsExportSchema
+                    .CreateIdentityProvisioningAnchorResolutionRecord(
+                        resolution),
+                cancellationToken).ConfigureAwait(false);
+            recordCount = checked(recordCount + 1);
+        }
 
         foreach (StaffMemberMutationOperationDataRightsExport operation in
                  memberMutationOperations)

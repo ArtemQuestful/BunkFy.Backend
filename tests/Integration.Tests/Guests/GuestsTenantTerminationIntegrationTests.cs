@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.DataRights.Contracts;
 using BunkFy.Modules.Guests.Application.Ports;
 using BunkFy.Modules.Guests.Contracts;
@@ -952,6 +953,9 @@ public sealed class GuestsTenantTerminationIntegrationTests
             clock ?? new TestClock(ExportNowUtc));
         builder.Services.AddSingleton<IIdGenerator, TestIdGenerator>();
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<
+            IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddGuestsPersistence();
         return builder.Services.BuildServiceProvider();
     }

@@ -18,6 +18,11 @@ public sealed class WorkspaceStaffAccessProcess : ScopedAggregateRoot<Guid>
     public Guid StaffMemberId { get; private set; }
     public string SubjectId { get; private set; } = string.Empty;
     public WorkspaceStaffAccessTargetState TargetState { get; private set; }
+    public WorkspaceStaffAccessRestorationDisposition RestorationDisposition
+    {
+        get;
+        private set;
+    }
     public long TargetStaffVersion { get; private set; }
     public DateOnly EffectiveOn { get; private set; }
     public string RequestedBy { get; private set; } = string.Empty;
@@ -40,6 +45,32 @@ public sealed class WorkspaceStaffAccessProcess : ScopedAggregateRoot<Guid>
         DateOnly effectiveOn,
         string requestedBy,
         IReadOnlyCollection<WorkspaceStaffAccessProfileTarget> profileTargets,
+        DateTimeOffset nowUtc) => Create(
+            id,
+            scopeId,
+            staffMemberId,
+            subjectId,
+            targetState,
+            targetState == WorkspaceStaffAccessTargetState.Active
+                ? WorkspaceStaffAccessRestorationDisposition.RestoreSnapshot
+                : WorkspaceStaffAccessRestorationDisposition.NotApplicable,
+            targetStaffVersion,
+            effectiveOn,
+            requestedBy,
+            profileTargets,
+            nowUtc);
+
+    public static Result<WorkspaceStaffAccessProcess> Create(
+        Guid id,
+        string scopeId,
+        Guid staffMemberId,
+        string subjectId,
+        WorkspaceStaffAccessTargetState targetState,
+        WorkspaceStaffAccessRestorationDisposition restorationDisposition,
+        long targetStaffVersion,
+        DateOnly effectiveOn,
+        string requestedBy,
+        IReadOnlyCollection<WorkspaceStaffAccessProfileTarget> profileTargets,
         DateTimeOffset nowUtc)
     {
         string normalizedSubject = subjectId?.Trim() ?? string.Empty;
@@ -49,6 +80,10 @@ public sealed class WorkspaceStaffAccessProcess : ScopedAggregateRoot<Guid>
             normalizedSubject.Length is 0 or > SubjectIdMaxLength ||
             normalizedActor.Length is 0 or > ActorIdMaxLength ||
             targetState == WorkspaceStaffAccessTargetState.Unknown || !Enum.IsDefined(targetState) ||
+            !IsRestorationDispositionCoherent(
+                targetState,
+                restorationDisposition,
+                profileTargets) ||
             targetStaffVersion < 2 || effectiveOn == default || profileTargets is null ||
             profileTargets.Any(target =>
                 target is null ||
@@ -65,6 +100,7 @@ public sealed class WorkspaceStaffAccessProcess : ScopedAggregateRoot<Guid>
             StaffMemberId = staffMemberId,
             SubjectId = normalizedSubject,
             TargetState = targetState,
+            RestorationDisposition = restorationDisposition,
             TargetStaffVersion = targetStaffVersion,
             EffectiveOn = effectiveOn,
             RequestedBy = normalizedActor,
@@ -117,6 +153,12 @@ public sealed class WorkspaceStaffAccessProcess : ScopedAggregateRoot<Guid>
 
         if (this.TargetState == WorkspaceStaffAccessTargetState.Active)
         {
+            if (this.RestorationDisposition ==
+                WorkspaceStaffAccessRestorationDisposition.Suppressed)
+            {
+                return this.Complete(nowUtc);
+            }
+
             this.State = WorkspaceStaffAccessProcessState.RestorationPending;
             this.Advance(nowUtc);
             return Result.Success();
@@ -172,4 +214,23 @@ public sealed class WorkspaceStaffAccessProcess : ScopedAggregateRoot<Guid>
         this.Version++;
         this.LastChangedAtUtc = nowUtc;
     }
+
+    private static bool IsRestorationDispositionCoherent(
+        WorkspaceStaffAccessTargetState targetState,
+        WorkspaceStaffAccessRestorationDisposition restorationDisposition,
+        IReadOnlyCollection<WorkspaceStaffAccessProfileTarget>? profileTargets) =>
+        targetState switch
+        {
+            WorkspaceStaffAccessTargetState.Active =>
+                restorationDisposition ==
+                    WorkspaceStaffAccessRestorationDisposition.RestoreSnapshot ||
+                (restorationDisposition ==
+                    WorkspaceStaffAccessRestorationDisposition.Suppressed &&
+                    profileTargets is { Count: 0 }),
+            WorkspaceStaffAccessTargetState.Suspended or
+                WorkspaceStaffAccessTargetState.Departed =>
+                restorationDisposition ==
+                    WorkspaceStaffAccessRestorationDisposition.NotApplicable,
+            _ => false
+        };
 }

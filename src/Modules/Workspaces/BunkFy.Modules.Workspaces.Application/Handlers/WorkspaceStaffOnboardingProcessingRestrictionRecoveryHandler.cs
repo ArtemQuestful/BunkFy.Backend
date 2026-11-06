@@ -5,6 +5,7 @@ using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Messaging;
 using Gma.Framework.Results;
+using Gma.Framework.Runtime.Time;
 using Microsoft.Extensions.Logging;
 
 [IntegrationEventHandler(
@@ -12,7 +13,10 @@ using Microsoft.Extensions.Logging;
 internal sealed class
     WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler(
         IWorkspaceStaffOnboardingRepository applications,
+        IWorkspaceStaffAccessPlanRepository plans,
+        IWorkspaceStaffDeferredClaimWithdrawalRepository deferredWithdrawals,
         WorkspaceStaffOnboardingProcessor processor,
+        ISystemClock clock,
         ILogger<
             WorkspaceStaffOnboardingProcessingRestrictionRecoveryHandler>
             logger)
@@ -35,18 +39,41 @@ internal sealed class
         WorkspaceStaffOnboarding? application = await applications.GetAsync(
             integrationEvent.ApplicationId,
             cancellationToken).ConfigureAwait(false);
-        if (application is null ||
-            application.Status != WorkspaceStaffOnboardingState.Provisioning ||
-            application.StaffMemberId.HasValue)
+        if (application is null)
         {
             return;
         }
 
-        Result recovered = await processor.ProcessAsync(
+        bool provisioningWithoutAnchor =
+            application.Status == WorkspaceStaffOnboardingState.Provisioning &&
+            !application.StaffMemberId.HasValue;
+        bool anchoredContinuation =
+            application.StaffMemberId.HasValue &&
+            !application.IdentityAnchorResolutionEventId.HasValue;
+        if (!provisioningWithoutAnchor && !anchoredContinuation)
+        {
+            return;
+        }
+
+        Result recovered = await processor.ProcessForSourceFinalizationAsync(
             application,
             cancellationToken).ConfigureAwait(false);
         if (recovered.IsSuccess)
         {
+            if (application.Status == WorkspaceStaffOnboardingState.Completed &&
+                application.SourceKind ==
+                WorkspaceStaffOnboardingSource.EnrollmentLink)
+            {
+                await OrganizationEnrollmentClaimExpiredStaffOnboardingHandler
+                    .ExpirePlanWhenUnusedUnderSourceLockAsync(
+                        applications,
+                        plans,
+                        deferredWithdrawals,
+                        application.SourceId,
+                        clock.UtcNow,
+                        cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 

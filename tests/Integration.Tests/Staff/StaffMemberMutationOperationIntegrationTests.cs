@@ -1,5 +1,6 @@
 namespace Integration.Tests;
 
+using System.Data.Common;
 using BunkFy.Modules.Staff.Application;
 using BunkFy.Modules.Staff.Application.Commands;
 using BunkFy.Modules.Staff.Application.Ports;
@@ -16,6 +17,7 @@ using Gma.Framework.Results;
 using Gma.Framework.Scoping;
 using Integration.Tests.Support;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +32,297 @@ public sealed class StaffMemberMutationOperationIntegrationTests
         "a9000000-0000-0000-0000-000000000001";
     private const string OtherTenantId =
         "a9000000-0000-0000-0000-000000000002";
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Lifecycle_writes_mutation_receipt_before_member()
+    {
+        await using PostgreSqlContainer postgreSql =
+            new PostgreSqlBuilder("postgres:16-alpine")
+                .WithDatabase("bunkfy_staff_lifecycle_write_order_tests")
+                .Build();
+        await postgreSql.StartAsync().ConfigureAwait(false);
+
+        StaffCommandOrderInterceptor interceptor = new();
+        MutableScopeContext scopeContext = new(TenantId);
+        await using ServiceProvider services = CreateProvider(
+            postgreSql.GetConnectionString(),
+            scopeContext,
+            interceptor);
+        await MigrateAsync(services).ConfigureAwait(false);
+
+        Guid staffMemberId = Guid.NewGuid();
+        Result<StaffDirectoryMemberDto> created = await SendAsync(
+            services,
+            new CreateStaffMemberCommand(
+                staffMemberId,
+                "Lifecycle Order",
+                null,
+                "lifecycle-order@example.test",
+                null,
+                null,
+                null,
+                null,
+                "integration:test")).ConfigureAwait(false);
+        Assert.True(created.IsSuccess, created.Error.Code);
+
+        interceptor.Clear();
+        Result<StaffMemberMutationReceiptDto> suspended = await SendAsync(
+            services,
+            new SuspendStaffMemberCommand(
+                Guid.NewGuid(),
+                staffMemberId,
+                "Write order proof",
+                created.Value.Version,
+                "integration:test")).ConfigureAwait(false);
+        Assert.True(suspended.IsSuccess, suspended.Error.Code);
+        interceptor.AssertReceiptBeforeMember();
+
+        interceptor.Clear();
+        Result<StaffMemberMutationReceiptDto> resumed = await SendAsync(
+            services,
+            new ResumeStaffMemberCommand(
+                Guid.NewGuid(),
+                staffMemberId,
+                "Write order proof",
+                suspended.Value.Version,
+                "integration:test")).ConfigureAwait(false);
+        Assert.True(resumed.IsSuccess, resumed.Error.Code);
+        interceptor.AssertReceiptBeforeMember();
+    }
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Provisioning_reloads_subject_owner_after_member_lock()
+    {
+        await using PostgreSqlContainer postgreSql =
+            new PostgreSqlBuilder("postgres:16-alpine")
+                .WithDatabase("bunkfy_staff_provisioning_reload_tests")
+                .Build();
+        await postgreSql.StartAsync().ConfigureAwait(false);
+
+        string connectionString = postgreSql.GetConnectionString();
+        MutableScopeContext scopeContext = new(TenantId);
+        await using ServiceProvider services = CreateProvider(
+            connectionString,
+            scopeContext);
+        await MigrateAsync(services).ConfigureAwait(false);
+
+        Guid onboardingMemberId = Guid.NewGuid();
+        const string onboardingSubject = "account-onboarding-race";
+        await SeedMemberAsync(
+            services,
+            onboardingMemberId,
+            onboardingSubject,
+            "Race Applicant",
+            "race-applicant@example.test").ConfigureAwait(false);
+
+        Guid applicationId = Guid.NewGuid();
+        await using (NpgsqlConnection blocker = new(connectionString))
+        {
+            await blocker.OpenAsync().ConfigureAwait(false);
+            await using NpgsqlTransaction transaction =
+                await blocker.BeginTransactionAsync().ConfigureAwait(false);
+            await LockMemberOperationRowAsync(
+                blocker,
+                transaction,
+                onboardingMemberId).ConfigureAwait(false);
+
+            Task<Result<StaffMemberDto>> provisioning = SendAsync(
+                services,
+                new ProvisionStaffOnboardingCommand(
+                    applicationId,
+                    onboardingSubject,
+                    "Race Applicant",
+                    null,
+                    "race-applicant@example.test",
+                    null,
+                    null,
+                    null,
+                    null,
+                    "integration:workspaces"));
+            await WaitForMemberOperationLockAsync(connectionString)
+                .ConfigureAwait(false);
+
+            await ExecuteSqlAsync(
+                connectionString,
+                $$"""
+                UPDATE staff.staff_members
+                SET "AuthSubjectId" = 'account-retargeted',
+                    "Version" = "Version" + 1
+                WHERE "ScopeId" = '{{TenantId}}'
+                  AND "Id" = '{{onboardingMemberId:D}}';
+                """).ConfigureAwait(false);
+            await transaction.CommitAsync().ConfigureAwait(false);
+
+            Result<StaffMemberDto> result =
+                await provisioning.ConfigureAwait(false);
+            Assert.Equal(
+                StaffApplicationErrors.StaffMemberNotFound,
+                result.Error);
+        }
+
+        await AssertNoWorkspaceAnchorSideEffectsAsync(
+            services,
+            applicationId).ConfigureAwait(false);
+        using (IServiceScope verificationScope = services.CreateScope())
+        {
+            StaffMember persisted = await verificationScope.ServiceProvider
+                .GetRequiredService<StaffDbContext>()
+                .StaffMembers.AsNoTracking()
+                .SingleAsync(member => member.Id == onboardingMemberId)
+                .ConfigureAwait(false);
+            Assert.Equal("account-retargeted", persisted.AuthSubjectId);
+            Assert.Equal(
+                "race-applicant@example.test",
+                persisted.WorkEmail);
+            Assert.Equal(2, persisted.Version);
+        }
+
+        Guid ownerMemberId = Guid.NewGuid();
+        const string ownerSubject = "account-owner-race";
+        await SeedMemberAsync(
+            services,
+            ownerMemberId,
+            ownerSubject,
+            "Race Owner",
+            "race-owner@example.test").ConfigureAwait(false);
+        Guid ownerSourceId = Guid.NewGuid();
+        await using (NpgsqlConnection blocker = new(connectionString))
+        {
+            await blocker.OpenAsync().ConfigureAwait(false);
+            await using NpgsqlTransaction transaction =
+                await blocker.BeginTransactionAsync().ConfigureAwait(false);
+            await LockMemberOperationRowAsync(
+                blocker,
+                transaction,
+                ownerMemberId).ConfigureAwait(false);
+
+            Task<Result<Unit>> bootstrap = SendAsync(
+                services,
+                new BootstrapStaffIdentityCommand(
+                    Guid.NewGuid(),
+                    ownerSourceId,
+                    ownerSubject,
+                    "Race Owner",
+                    "race-owner@example.test",
+                    "integration:organizations"));
+            await WaitForMemberOperationLockAsync(connectionString)
+                .ConfigureAwait(false);
+
+            await ExecuteSqlAsync(
+                connectionString,
+                $$"""
+                UPDATE staff.staff_members
+                SET "AuthSubjectId" = NULL,
+                    "Status" = 2,
+                    "SuspendedAtUtc" = GREATEST(
+                        "CreatedAtUtc", "LastChangedAtUtc", statement_timestamp()),
+                    "LastChangedAtUtc" = GREATEST(
+                        "CreatedAtUtc", "LastChangedAtUtc", statement_timestamp()),
+                    "Version" = "Version" + 1
+                WHERE "ScopeId" = '{{TenantId}}'
+                  AND "Id" = '{{ownerMemberId:D}}';
+                """).ConfigureAwait(false);
+            await transaction.CommitAsync().ConfigureAwait(false);
+
+            Result<Unit> result = await bootstrap.ConfigureAwait(false);
+            Assert.Equal(
+                StaffApplicationErrors.CreationOperationConflict,
+                result.Error);
+        }
+
+        using IServiceScope ownerVerificationScope = services.CreateScope();
+        StaffDbContext verification = ownerVerificationScope.ServiceProvider
+            .GetRequiredService<StaffDbContext>();
+        Assert.False(await verification.IdentityProvisioningAnchors
+            .AsNoTracking()
+            .AnyAsync(anchor =>
+                anchor.SourceKind ==
+                    StaffIdentityProvisioningSourceKind
+                        .OrganizationMembership &&
+                anchor.SourceId == ownerSourceId)
+            .ConfigureAwait(false));
+    }
+
+    [DockerFact]
+    [Trait("Category", "Docker")]
+    [Trait("Category", "Integration")]
+    public async Task Onboarding_writer_atomically_commits_exact_anchor_receipt_and_event_once()
+    {
+        await using PostgreSqlContainer postgreSql =
+            new PostgreSqlBuilder("postgres:16-alpine")
+                .WithDatabase("bunkfy_staff_onboarding_anchor_writer_tests")
+                .Build();
+        await postgreSql.StartAsync().ConfigureAwait(false);
+
+        MutableScopeContext scopeContext = new(TenantId);
+        await using ServiceProvider services = CreateProvider(
+            postgreSql.GetConnectionString(),
+            scopeContext);
+        await MigrateAsync(services).ConfigureAwait(false);
+
+        Guid applicationId = Guid.NewGuid();
+        ProvisionStaffOnboardingCommand command = new(
+            applicationId,
+            "account-anchor-writer",
+            "Anchor Writer",
+            null,
+            "anchor-writer@example.test",
+            null,
+            null,
+            null,
+            null,
+            "integration:workspaces");
+        Result<StaffMemberDto> first = await SendAsync(
+            services,
+            command).ConfigureAwait(false);
+        Result<StaffMemberDto> replay = await SendAsync(
+            services,
+            command).ConfigureAwait(false);
+        Assert.True(first.IsSuccess, first.Error.Code);
+        Assert.True(replay.IsSuccess, replay.Error.Code);
+        Assert.Equal(first.Value.StaffMemberId, replay.Value.StaffMemberId);
+
+        using IServiceScope verificationScope = services.CreateScope();
+        StaffDbContext dbContext = verificationScope.ServiceProvider
+            .GetRequiredService<StaffDbContext>();
+        StaffIdentityProvisioningAnchor anchor = Assert.Single(
+            await dbContext.IdentityProvisioningAnchors
+                .AsNoTracking()
+                .Where(candidate => candidate.SourceKind ==
+                        StaffIdentityProvisioningSourceKind
+                            .WorkspaceOnboarding &&
+                    candidate.SourceId == applicationId)
+                .ToArrayAsync()
+                .ConfigureAwait(false));
+        StaffMemberMutationOperation receipt = Assert.Single(
+            await dbContext.MemberMutationOperations
+                .AsNoTracking()
+                .Where(candidate => candidate.Kind ==
+                        StaffMemberMutationKind.OnboardingProvision &&
+                    candidate.Id == applicationId)
+                .ToArrayAsync()
+                .ConfigureAwait(false));
+        OutboxMessage anchorCreated = Assert.Single(
+            await dbContext.OutboxMessages
+                .AsNoTracking()
+                .Where(message => message.EventType.Contains(
+                        nameof(
+                            StaffIdentityProvisioningAnchorCreatedIntegrationEvent)) &&
+                    message.Payload.Contains(applicationId.ToString("D")))
+                .ToArrayAsync()
+                .ConfigureAwait(false));
+        Assert.Equal(first.Value.StaffMemberId, anchor.StaffMemberId);
+        Assert.Equal(anchor.StaffMemberId, receipt.StaffMemberId);
+        Assert.Equal(receipt.CompletedAtUtc, anchor.AnchoredAtUtc);
+        Assert.Contains(
+            anchor.StaffMemberId.ToString("D"),
+            anchorCreated.Payload,
+            StringComparison.Ordinal);
+    }
 
     [DockerFact]
     [Trait("Category", "Docker")]
@@ -49,9 +342,11 @@ public sealed class StaffMemberMutationOperationIntegrationTests
         await MigrateAsync(services).ConfigureAwait(false);
 
         Guid replayOperationId = Guid.NewGuid();
+        Guid replayMembershipId = Guid.NewGuid();
         const string replaySubjectId = "account-owner-replay";
         BootstrapStaffIdentityCommand replay = new(
             replayOperationId,
+            replayMembershipId,
             replaySubjectId,
             "Workspace Owner",
             "owner-replay@example.test",
@@ -66,12 +361,14 @@ public sealed class StaffMemberMutationOperationIntegrationTests
 
         Guid competingOperationIdA = Guid.NewGuid();
         Guid competingOperationIdB = Guid.NewGuid();
+        Guid competingMembershipId = Guid.NewGuid();
         const string competingSubjectId = "account-owner-competing";
         Result<Unit>[] competingResults = await Task.WhenAll(
             SendAsync(
                 services,
                 new BootstrapStaffIdentityCommand(
                     competingOperationIdA,
+                    competingMembershipId,
                     competingSubjectId,
                     "Competing Owner A",
                     "owner-competing@example.test",
@@ -80,6 +377,7 @@ public sealed class StaffMemberMutationOperationIntegrationTests
                 services,
                 new BootstrapStaffIdentityCommand(
                     competingOperationIdB,
+                    competingMembershipId,
                     competingSubjectId,
                     "Competing Owner B",
                     "owner-competing@example.test",
@@ -1128,6 +1426,122 @@ public sealed class StaffMemberMutationOperationIntegrationTests
         await dbContext.SaveChangesAsync().ConfigureAwait(false);
     }
 
+    private static async Task SeedMemberAsync(
+        ServiceProvider services,
+        Guid staffMemberId,
+        string authSubjectId,
+        string displayName,
+        string workEmail)
+    {
+        using IServiceScope scope = services.CreateScope();
+        StaffDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<StaffDbContext>();
+        StaffMember member = StaffMember.Create(
+            staffMemberId,
+            TenantId,
+            displayName,
+            legalName: null,
+            workEmail,
+            workPhone: null,
+            employeeNumber: null,
+            jobTitle: null,
+            department: null,
+            authSubjectId,
+            "system:integration-test",
+            Guid.NewGuid(),
+            new DateTimeOffset(2026, 8, 11, 12, 0, 0, TimeSpan.Zero))
+            .Value;
+        await scope.ServiceProvider.GetRequiredService<
+                IStaffMemberRepository>()
+            .AddAsync(member, CancellationToken.None)
+            .ConfigureAwait(false);
+        await dbContext.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    private static async Task LockMemberOperationRowAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid staffMemberId)
+    {
+        await using NpgsqlCommand command = new(
+            """
+            UPDATE staff.staff_operation_locks
+            SET "Revision" = "Revision"
+            WHERE "ScopeId" = @scopeId
+              AND "StaffMemberId" = @staffMemberId;
+            """,
+            connection,
+            transaction);
+        command.Parameters.AddWithValue("scopeId", TenantId);
+        command.Parameters.AddWithValue("staffMemberId", staffMemberId);
+        Assert.Equal(
+            1,
+            await command.ExecuteNonQueryAsync().ConfigureAwait(false));
+    }
+
+    private static async Task WaitForMemberOperationLockAsync(
+        string connectionString)
+    {
+        await using NpgsqlConnection observer = new(connectionString);
+        await observer.OpenAsync().ConfigureAwait(false);
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            await using NpgsqlCommand command = new(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                      AND state = 'active'
+                      AND wait_event_type = 'Lock'
+                      AND query ILIKE '%operation_locks%');
+                """,
+                observer);
+            if ((bool)(await command.ExecuteScalarAsync()
+                    .ConfigureAwait(false))!)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25))
+                .ConfigureAwait(false);
+        }
+
+        throw new TimeoutException(
+            "The Staff handler did not wait for the member operation lock.");
+    }
+
+    private static async Task AssertNoWorkspaceAnchorSideEffectsAsync(
+        ServiceProvider services,
+        Guid applicationId)
+    {
+        using IServiceScope scope = services.CreateScope();
+        StaffDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<StaffDbContext>();
+        Assert.False(await dbContext.IdentityProvisioningAnchors
+            .AsNoTracking()
+            .AnyAsync(anchor =>
+                anchor.SourceKind ==
+                    StaffIdentityProvisioningSourceKind
+                        .WorkspaceOnboarding &&
+                anchor.SourceId == applicationId)
+            .ConfigureAwait(false));
+        Assert.False(await dbContext.MemberMutationOperations
+            .AsNoTracking()
+            .AnyAsync(operation =>
+                operation.Kind ==
+                    StaffMemberMutationKind.OnboardingProvision &&
+                operation.Id == applicationId)
+            .ConfigureAwait(false));
+        Assert.False(await dbContext.OutboxMessages
+            .AsNoTracking()
+            .AnyAsync(message => message.Payload.Contains(
+                applicationId.ToString("D")))
+            .ConfigureAwait(false));
+    }
+
     private static async Task<Result<TResponse>> SendAsync<TResponse>(
         ServiceProvider services,
         ICommand<TResponse> command)
@@ -1163,7 +1577,8 @@ public sealed class StaffMemberMutationOperationIntegrationTests
 
     private static ServiceProvider CreateProvider(
         string connectionString,
-        MutableScopeContext scopeContext)
+        MutableScopeContext scopeContext,
+        DbCommandInterceptor? commandInterceptor = null)
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
         builder.Configuration["Persistence:Provider"] = "PostgreSql";
@@ -1177,8 +1592,97 @@ public sealed class StaffMemberMutationOperationIntegrationTests
         builder.AddMessagingInfrastructure();
         builder.Services.AddStaffApplication();
         builder.AddStaffPersistence();
+        if (commandInterceptor is not null)
+        {
+            builder.Services.AddDbContext<StaffDbContext>(options =>
+                options.AddInterceptors(commandInterceptor));
+        }
+
         return builder.Services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateScopes = true });
+    }
+
+    private sealed class StaffCommandOrderInterceptor : DbCommandInterceptor
+    {
+        private readonly Lock sync = new();
+        private readonly List<string> commands = [];
+
+        public override ValueTask<InterceptionResult<DbDataReader>>
+            ReaderExecutingAsync(
+                DbCommand command,
+                CommandEventData eventData,
+                InterceptionResult<DbDataReader> result,
+                CancellationToken cancellationToken = default)
+        {
+            this.Capture(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<int>>
+            NonQueryExecutingAsync(
+                DbCommand command,
+                CommandEventData eventData,
+                InterceptionResult<int> result,
+                CancellationToken cancellationToken = default)
+        {
+            this.Capture(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<object>>
+            ScalarExecutingAsync(
+                DbCommand command,
+                CommandEventData eventData,
+                InterceptionResult<object> result,
+                CancellationToken cancellationToken = default)
+        {
+            this.Capture(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public void Clear()
+        {
+            lock (this.sync)
+            {
+                this.commands.Clear();
+            }
+        }
+
+        public void AssertReceiptBeforeMember()
+        {
+            string commandText;
+            lock (this.sync)
+            {
+                commandText = string.Join(
+                    "\n-- intercepted-command --\n",
+                    this.commands);
+            }
+
+            int memberUpdate = commandText.IndexOf(
+                "UPDATE staff.staff_members",
+                StringComparison.OrdinalIgnoreCase);
+            int operationInsert = commandText.IndexOf(
+                "INSERT INTO staff.member_mutation_operations",
+                StringComparison.OrdinalIgnoreCase);
+
+            Assert.True(
+                memberUpdate >= 0,
+                $"Staff member UPDATE was not captured. SQL:\n{commandText}");
+            Assert.True(
+                operationInsert >= 0,
+                $"Mutation receipt INSERT was not captured. SQL:\n{commandText}");
+            Assert.True(
+                operationInsert < memberUpdate,
+                $"Expected mutation receipt INSERT before Staff member UPDATE. SQL:\n{commandText}");
+        }
+
+        private void Capture(DbCommand command)
+        {
+            lock (this.sync)
+            {
+                this.commands.Add(command.CommandText);
+            }
+        }
     }
 
     private sealed class MutableScopeContext(string scopeId) : IScopeContext

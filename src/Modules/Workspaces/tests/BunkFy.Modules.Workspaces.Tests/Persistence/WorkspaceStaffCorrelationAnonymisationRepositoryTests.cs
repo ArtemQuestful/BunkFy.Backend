@@ -431,6 +431,8 @@ public sealed class
             Now.AddMinutes(1)).IsSuccess);
         Assert.True(onboarding.MarkStaffReady(
             StaffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
             Now.AddMinutes(2)).IsSuccess);
         Assert.True(onboarding.Complete(
             Now.AddMinutes(3)).IsSuccess);

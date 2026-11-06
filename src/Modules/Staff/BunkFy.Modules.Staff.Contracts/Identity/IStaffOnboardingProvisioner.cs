@@ -22,4 +22,5 @@ public sealed record StaffOnboardingProvisioningRequest(
 public sealed record StaffOnboardingProvisioningResult(
     bool IsSuccess,
     Guid? StaffMemberId,
-    string? ErrorCode);
+    string? ErrorCode,
+    Guid? ResolutionEventId = null);

@@ -13,6 +13,8 @@ using Gma.Framework.Scoping;
 internal sealed class
     ScrubWorkspaceStaffRetentionCorrelationCommandHandler(
     IWorkspaceStaffRetentionCorrelationRepository repository,
+    IWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence
+        identityAnchors,
     IWorkspaceCrossGraphMutationLock crossGraphLock,
     WorkspaceStaffAccessMutationCoordinator mutations,
     IWorkspaceStaffRetentionAccessClosure accessClosure,
@@ -69,6 +71,17 @@ internal sealed class
                         WorkspaceStaffAccessClosureStatus.Blocked
                         ? "The workspace Staff retention prerequisite is blocked."
                         : "The workspace Staff retention prerequisite is temporarily unavailable."));
+        }
+
+        if (!await identityAnchors.CanMutateAsync(
+                tenantId,
+                closure.SubjectId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<
+                WorkspaceStaffRetentionCorrelationReceipt>(
+                    WorkspaceStaffRetentionErrors
+                        .IdentityAnchorUnavailable);
         }
 
         return await repository.ScrubAsync(

@@ -17,17 +17,36 @@ using Xunit;
 public sealed class WorkspaceAccessCompositionTests
 {
     [Fact]
-    public void Workspace_extension_registers_one_scope_aware_membership_subscription_and_access_guards()
+    public void Workspace_extension_registers_exact_scope_aware_subscriptions_and_access_guards()
     {
         ServiceCollection services = new();
 
         services.AddBunkFyWorkspaces();
 
-        IntegrationEventSubscription subscription = Assert.Single(services
+        IntegrationEventSubscription[] subscriptions = services
             .Where(descriptor => descriptor.ServiceType == typeof(IntegrationEventSubscription))
             .Select(descriptor => descriptor.ImplementationInstance)
-            .OfType<IntegrationEventSubscription>());
-        Assert.True(subscription.IsTenantScoped());
+            .OfType<IntegrationEventSubscription>()
+            .ToArray();
+        Assert.Equal(2, subscriptions.Length);
+        IntegrationEventSubscription membership = Assert.Single(
+            subscriptions,
+            item => item.EventType ==
+                typeof(OrganizationMembershipChangedIntegrationEvent));
+        Assert.Equal(StaffModuleMetadata.Name, membership.ConsumerModule);
+        Assert.Equal(OrganizationsModuleMetadata.Name, membership.ProducerModule);
+        Assert.Equal(typeof(OrganizationOwnerStaffBootstrapHandler), membership.HandlerType);
+        Assert.Equal(OrganizationOwnerStaffBootstrapHandler.HandlerName, membership.HandlerName);
+        IntegrationEventSubscription resolution = Assert.Single(
+            subscriptions,
+            item => item.EventType ==
+                typeof(WorkspaceStaffOnboardingIdentityAnchorResolvedIntegrationEvent));
+        Assert.Equal(StaffModuleMetadata.Name, resolution.ConsumerModule);
+        Assert.Equal(WorkspacesModuleMetadata.Name, resolution.ProducerModule);
+        Assert.Equal(typeof(WorkspaceStaffOnboardingIdentityAnchorResolutionHandler), resolution.HandlerType);
+        Assert.Equal(WorkspaceStaffOnboardingIdentityAnchorResolutionHandler.HandlerName, resolution.HandlerName);
+        Assert.All(subscriptions, subscription =>
+            Assert.True(subscription.IsTenantScoped()));
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(IAccessProfileAssignmentPolicy) &&
             descriptor.ImplementationType == typeof(WorkspaceAccessProfileAssignmentPolicy));

@@ -100,9 +100,59 @@ public sealed class StaffTenantTerminationContributorTests
                 Field(record, "staff.member-mutation-operation")
                     .GetProperty("requestFingerprint")
                     .GetString() == Digest);
+        DataRightsExportRecord[] anchorRecords = first.Records
+            .Where(record => record.RecordType ==
+                StaffTenantTerminationMetadata
+                    .IdentityProvisioningAnchorRecordType)
+            .ToArray();
+        Assert.Equal(2, anchorRecords.Length);
+        DataRightsExportRecord anchorRecord = Assert.Single(
+            anchorRecords,
+            record => Field(
+                    record,
+                    "staff.identity-provisioning-anchor")
+                .GetProperty("sourceId")
+                .GetGuid() ==
+                Guid.Parse("80000000-0000-0000-0000-000000000002"));
+        Assert.Equal(
+            [
+                "staff.identity-provisioning-anchor",
+                "staff.scope-id",
+                "staff.staff-member-id"
+            ],
+            anchorRecord.Fields
+                .Select(field => field.FieldId)
+                .OrderBy(field => field, StringComparer.Ordinal)
+                .ToArray());
+        JsonElement anchorState = Field(
+            anchorRecord,
+            "staff.identity-provisioning-anchor");
+        Assert.Equal(4, anchorState.EnumerateObject().Count());
+        Assert.Equal(
+            "workspace-onboarding",
+            anchorState.GetProperty("sourceKind").GetString());
+        Assert.Equal(
+            Guid.Parse("80000000-0000-0000-0000-000000000002"),
+            anchorState.GetProperty("sourceId").GetGuid());
+        Assert.Equal(
+            Guid.Parse("81000000-0000-0000-0000-000000000002"),
+            anchorState.GetProperty("resolutionEventId").GetGuid());
+        Assert.Equal(
+            Now.AddMinutes(3),
+            anchorState.GetProperty("anchoredAtUtc")
+                .GetDateTimeOffset());
         Assert.Equal(
             StaffTenantTerminationMetadata.ExportSchemaId,
             contributor.ExportDescriptor.ExportSchemaId);
+        Assert.Equal(
+            StaffTenantTerminationMetadata.ExportSchemaVersion,
+            contributor.ExportDescriptor.ExportSchemaVersion);
+        Assert.All(
+            first.Records,
+            record => Assert.InRange(
+                record.Fields.Count,
+                1,
+                DataRightsExportLimits.MaxFieldsPerRecord));
         Assert.Equal(
             StaffTenantTerminationMetadata.ExportFieldIds
                 .OrderBy(field => field, StringComparer.Ordinal),
@@ -574,6 +624,44 @@ public sealed class StaffTenantTerminationContributorTests
                     StaffStatus.Active,
                     member.Version,
                     Now.AddMinutes(3))));
+        context.IdentityProvisioningAnchors.AddRange(
+            new StaffIdentityProvisioningAnchor(
+                new StaffIdentityProvisioningAnchorRecord(
+                    member.ScopeId,
+                    StaffIdentityProvisioningSourceKind
+                        .WorkspaceOnboarding,
+                    Guid.Parse(
+                        "80000000-0000-0000-0000-000000000001"),
+                    member.Id,
+                    Now.AddMinutes(3),
+                    Guid.Parse(
+                        "81000000-0000-0000-0000-000000000001"))),
+            new StaffIdentityProvisioningAnchor(
+                new StaffIdentityProvisioningAnchorRecord(
+                    member.ScopeId,
+                    StaffIdentityProvisioningSourceKind
+                        .WorkspaceOnboarding,
+                    Guid.Parse(
+                        "80000000-0000-0000-0000-000000000002"),
+                    member.Id,
+                    Now.AddMinutes(3),
+                    Guid.Parse(
+                        "81000000-0000-0000-0000-000000000002"))));
+        context.IdentityProvisioningAnchorResolutions.Add(
+            new StaffIdentityProvisioningAnchorResolution(
+                new StaffIdentityProvisioningAnchorResolutionRecord(
+                    member.ScopeId,
+                    StaffIdentityProvisioningSourceKind
+                        .WorkspaceOnboarding,
+                    Guid.Parse(
+                        "80000000-0000-0000-0000-000000000001"),
+                    member.Id,
+                    WorkspaceApplicationVersion: 4,
+                    StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                        .CompletedRedacted,
+                    Guid.Parse(
+                        "81000000-0000-0000-0000-000000000001"),
+                    Now.AddMinutes(4))));
 
         context.DataRightsCorrectionReceipts.Add(
             StaffDataRightsCorrectionReceipt.Create(
@@ -865,6 +953,8 @@ public sealed class StaffTenantTerminationContributorTests
     private static async Task<bool> HasOwnerRecordsAsync(
         StaffDbContext context) =>
         await context.StaffMembers.AnyAsync() ||
+        await context.IdentityProvisioningAnchors.AnyAsync() ||
+        await context.IdentityProvisioningAnchorResolutions.AnyAsync() ||
         await context.MemberMutationOperations.AnyAsync() ||
         await context.DataRightsCorrectionReceipts.AnyAsync() ||
         await context.ProcessingRestrictions.AnyAsync() ||

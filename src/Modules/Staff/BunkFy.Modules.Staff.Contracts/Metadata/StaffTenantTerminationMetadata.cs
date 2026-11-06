@@ -7,17 +7,21 @@ public static class StaffTenantTerminationMetadata
 {
     public const string OwnerKey = StaffModuleMetadata.Name;
     public const string DependencyOwnerKey = "guests";
-    public const int CatalogVersion = 4;
-    public const int PersonalDataCatalogVersion = 20;
+    public const int CatalogVersion = 6;
+    public const int PersonalDataCatalogVersion = 21;
     public const string ExportCatalogId = "staff.tenant-portability";
     public const int ExportCatalogSchemaVersion = 1;
     public const string ExportSchemaId = "staff.tenant-termination-export";
-    public const int ExportSchemaVersion = 3;
+    public const int ExportSchemaVersion = 6;
 
     public const string StaffMemberRecordType = "staff-member";
     public const string PropertyAssignmentRecordType = "property-assignment";
     public const string MemberMutationOperationRecordType =
         "member-mutation-operation";
+    public const string IdentityProvisioningAnchorRecordType =
+        "identity-provisioning-anchor";
+    public const string IdentityProvisioningAnchorResolutionRecordType =
+        "identity-provisioning-anchor-resolution";
     public const string DataRightsCorrectionReceiptRecordType =
         "data-rights-correction-receipt";
     public const string ProcessingRestrictionRecordType =
@@ -45,6 +49,8 @@ public static class StaffTenantTerminationMetadata
         Array.AsReadOnly(
         [
             StaffMemberRecordType,
+            IdentityProvisioningAnchorRecordType,
+            IdentityProvisioningAnchorResolutionRecordType,
             PropertyAssignmentRecordType,
             MemberMutationOperationRecordType,
             DataRightsCorrectionReceiptRecordType,
@@ -72,6 +78,8 @@ public static class StaffTenantTerminationMetadata
             "staff.staff-attribution",
             "staff.assignment-record",
             "staff.member-mutation-operation",
+            "staff.identity-provisioning-anchor",
+            "staff.identity-provisioning-anchor-resolution",
             "staff.data-rights-proof",
             "staff.processing-restriction",
             "staff.employment-governance",

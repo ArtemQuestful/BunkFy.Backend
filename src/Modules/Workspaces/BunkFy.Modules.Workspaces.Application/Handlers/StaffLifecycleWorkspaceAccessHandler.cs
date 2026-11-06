@@ -6,6 +6,8 @@ using BunkFy.Modules.Workspaces.Contracts;
 using BunkFy.Modules.Workspaces.Domain;
 using Gma.Framework.Messaging;
 using Gma.Framework.Runtime.Time;
+using DomainRestorationDisposition =
+    BunkFy.Modules.Workspaces.Domain.WorkspaceStaffAccessRestorationDisposition;
 
 [IntegrationEventHandler(HandlerName, RequiresExplicitProducerBinding = true)]
 internal sealed class StaffLifecycleWorkspaceAccessHandler(
@@ -39,9 +41,19 @@ internal sealed class StaffLifecycleWorkspaceAccessHandler(
             throw new InvalidOperationException("The Staff lifecycle process could not observe the Staff commit.");
         }
 
-        if (process.TargetState == WorkspaceStaffAccessTargetState.Active)
+        if (process.TargetState == WorkspaceStaffAccessTargetState.Active &&
+            process.RestorationDisposition ==
+                DomainRestorationDisposition.RestoreSnapshot)
         {
             await restorer.RestoreAsync(process, cancellationToken).ConfigureAwait(false);
+        }
+        else if (process.TargetState == WorkspaceStaffAccessTargetState.Active &&
+            (process.RestorationDisposition !=
+                DomainRestorationDisposition.Suppressed ||
+             process.State != WorkspaceStaffAccessProcessState.Completed))
+        {
+            throw new InvalidOperationException(
+                "The Staff lifecycle event has an invalid access-restoration disposition.");
         }
     }
 

@@ -45,6 +45,9 @@ public sealed class WorkspaceStaffRetentionCorrelationHandlerTests
         ScrubWorkspaceStaffRetentionCorrelationCommandHandler handler =
             new(
                 repository,
+                new
+                    RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence(
+                        calls: calls),
                 crossGraphLock,
                 WorkspaceStaffAccessMutationTestSupport.Create(
                     calls: calls),
@@ -69,6 +72,7 @@ public sealed class WorkspaceStaffRetentionCorrelationHandlerTests
                 "tenant-exclusive",
                 "staff-coordinate",
                 "access-closure",
+                "identity-anchor-fence",
                 "repository"
             ],
             calls);
@@ -80,6 +84,51 @@ public sealed class WorkspaceStaffRetentionCorrelationHandlerTests
     }
 
     [Fact]
+    public async Task Unresolved_identity_anchor_blocks_before_scrub()
+    {
+        List<string> calls = [];
+        FakeRepository repository = new(calls);
+        RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence
+            fence = new(allowed: false, calls: calls);
+        ScrubWorkspaceStaffRetentionCorrelationCommandHandler handler = new(
+            repository,
+            fence,
+            new RecordingWorkspaceCrossGraphMutationLock(calls),
+            WorkspaceStaffAccessMutationTestSupport.Create(calls: calls),
+            new RecordingAccessClosure(
+                calls,
+                WorkspaceStaffAccessClosureResult.Complete("subject-a")),
+            new TestClock(DateTimeOffset.UtcNow),
+            new TestIdGenerator(ReceiptId),
+            new TestScopeContext(TenantId));
+
+        Result<WorkspaceStaffRetentionCorrelationReceipt> result =
+            await handler.HandleAsync(
+                new(
+                    ExecutionId,
+                    TenantId,
+                    StaffMemberId,
+                    SelectedStaffVersion: 7),
+                CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffRetentionErrors.IdentityAnchorUnavailable,
+            result.Error);
+        Assert.Equal(1, fence.CallCount);
+        Assert.Equal(TenantId, fence.TenantId);
+        Assert.Equal("subject-a", fence.SubjectId);
+        Assert.Equal(
+            [
+                "tenant-exclusive",
+                "staff-coordinate",
+                "access-closure",
+                "identity-anchor-fence"
+            ],
+            calls);
+        Assert.Null(repository.Request);
+    }
+
+    [Fact]
     public async Task Cross_scope_request_fails_before_persistence()
     {
         FakeRepository repository = new();
@@ -88,6 +137,8 @@ public sealed class WorkspaceStaffRetentionCorrelationHandlerTests
         ScrubWorkspaceStaffRetentionCorrelationCommandHandler handler =
             new(
                 repository,
+                new
+                    RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence(),
                 crossGraphLock,
                 WorkspaceStaffAccessMutationTestSupport.Create(),
                 new RecordingAccessClosure(
@@ -125,6 +176,8 @@ public sealed class WorkspaceStaffRetentionCorrelationHandlerTests
         ScrubWorkspaceStaffRetentionCorrelationCommandHandler handler =
             new(
                 repository,
+                new
+                    RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence(),
                 crossGraphLock,
                 WorkspaceStaffAccessMutationTestSupport.Create(),
                 new RecordingAccessClosure(

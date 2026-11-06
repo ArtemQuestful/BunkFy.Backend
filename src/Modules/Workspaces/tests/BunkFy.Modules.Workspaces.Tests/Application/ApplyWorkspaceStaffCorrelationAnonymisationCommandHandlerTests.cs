@@ -57,6 +57,9 @@ public sealed class
         ApplyWorkspaceStaffCorrelationAnonymisationCommandHandler
             handler = new(
                 repository,
+                new
+                    RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence(
+                        calls: calls),
                 crossGraphLock,
                 WorkspaceStaffAccessMutationTestSupport.Create(
                     calls: calls),
@@ -100,7 +103,12 @@ public sealed class
         Assert.Equal(1, crossGraphLock.AcquireCount);
         Assert.Equal(1, operationLock.AcquireCount);
         Assert.Equal(
-            ["tenant-exclusive", "staff-coordinate", "correlation-row"],
+            [
+                "tenant-exclusive",
+                "staff-coordinate",
+                "correlation-row",
+                "identity-anchor-fence"
+            ],
             calls);
         Assert.All(
             context.StaffAccessProcesses,
@@ -109,6 +117,69 @@ public sealed class
                 Assert.NotEqual(SubjectId, process.SubjectId);
                 Assert.NotEqual(SubjectId, process.RequestedBy);
             });
+    }
+
+    [Fact]
+    public async Task Unresolved_identity_anchor_blocks_before_scrub()
+    {
+        await using WorkspacesDbContext context = CreateContext();
+        WorkspaceStaffAccessProcess anchor = SeedEligibleState(context);
+        await context.SaveChangesAsync();
+        WorkspaceStaffCorrelationAnonymisationRepository repository =
+            new(context);
+        WorkspaceStaffCorrelationAnonymisationSnapshot snapshot =
+            await repository.ReadAsync(
+                TenantId,
+                anchor.Id,
+                anchor.Version,
+                CancellationToken.None);
+        DataRightsApprovalEvidence evidence =
+            CreateApprovalEvidence(snapshot);
+        List<string> calls = [];
+        RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence
+            fence = new(allowed: false, calls: calls);
+        ApplyWorkspaceStaffCorrelationAnonymisationCommandHandler handler =
+            new(
+                repository,
+                fence,
+                new RecordingWorkspaceCrossGraphMutationLock(calls),
+                WorkspaceStaffAccessMutationTestSupport.Create(calls: calls),
+                new RecordingOperationLock(calls),
+                new RecordingApprovalGate(evidence),
+                new TestScopeContext(),
+                new TestClock(),
+                new FixedIdGenerator());
+
+        Result<WorkspaceStaffCorrelationAnonymisationReceiptDto> result =
+            await handler.HandleAsync(
+                new(
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    ApprovalRevision: 4,
+                    OperationRevision: 5,
+                    anchor.Id,
+                    anchor.Version,
+                    evidence,
+                    "user:privacy-executor"),
+                CancellationToken.None);
+
+        Assert.Equal(
+            WorkspaceStaffCorrelationAnonymisationApplicationErrors
+                .IdentityAnchorUnavailable,
+            result.Error);
+        Assert.Equal(1, fence.CallCount);
+        Assert.Equal(TenantId, fence.TenantId);
+        Assert.Equal(SubjectId, fence.SubjectId);
+        Assert.Equal(
+            [
+                "tenant-exclusive",
+                "staff-coordinate",
+                "correlation-row",
+                "identity-anchor-fence"
+            ],
+            calls);
+        Assert.Equal(SubjectId, anchor.SubjectId);
+        Assert.Empty(context.StaffCorrelationAnonymisationReceipts);
     }
 
     [Fact]
@@ -147,6 +218,8 @@ public sealed class
         ApplyWorkspaceStaffCorrelationAnonymisationCommandHandler
             handler = new(
                 repository,
+                new
+                    RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence(),
                 new RecordingWorkspaceCrossGraphMutationLock(),
                 WorkspaceStaffAccessMutationTestSupport.Create(),
                 new RecordingOperationLock(),
@@ -211,6 +284,8 @@ public sealed class
             handler = new(
                 new WorkspaceStaffCorrelationAnonymisationRepository(
                     context),
+                new
+                    RecordingWorkspaceStaffOnboardingIdentityAnchorSubjectMutationFence(),
                 crossGraphLock,
                 WorkspaceStaffAccessMutationTestSupport.Create(),
                 operationLock,
@@ -265,6 +340,8 @@ public sealed class
             Now.AddDays(-30).AddMinutes(1)).IsSuccess);
         Assert.True(onboarding.MarkStaffReady(
             StaffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
             Now.AddDays(-30).AddMinutes(2)).IsSuccess);
         Assert.True(onboarding.Complete(
             Now.AddDays(-30).AddMinutes(3)).IsSuccess);

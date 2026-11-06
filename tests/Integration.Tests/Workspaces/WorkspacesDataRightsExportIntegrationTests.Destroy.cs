@@ -68,9 +68,10 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             TenantB);
         Guid tenantBOnboardingId;
         Guid tenantBProjectionId;
+        Guid tenantBDeferredClaimId;
         using (IServiceScope tenantBSeedScope = tenantBProvider.CreateScope())
         {
-            (tenantBOnboardingId, tenantBProjectionId) =
+            (tenantBOnboardingId, tenantBProjectionId, tenantBDeferredClaimId) =
                 await SeedOtherTenantGraphAsync(
                         tenantBSeedScope.ServiceProvider)
                     .ConfigureAwait(false);
@@ -179,7 +180,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
         Assert.Equal(
             "workspace.termination.destroyed",
             completed.ResultCode);
-        Assert.Equal(523, completed.AffectedCount);
+        Assert.Equal(1025, completed.AffectedCount);
         Assert.Equal(1, completed.SelectedProofRevision);
         Assert.Equal(3, completed.ResultingProofRevision);
         Assert.Contains(3, progressCounts);
@@ -223,7 +224,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             await ReadDestroyReceiptCountAsync(ownerContext, TenantA)
                 .ConfigureAwait(false));
         Assert.Equal(
-            523,
+            1025,
             await ReadDestroyReceiptRemovedCountAsync(ownerContext, TenantA)
                 .ConfigureAwait(false));
         Assert.Equal(
@@ -293,7 +294,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
             WorkspacesDbContext tenantB = tenantBVerificationScope
                 .ServiceProvider.GetRequiredService<WorkspacesDbContext>();
             Assert.Equal(
-                7,
+                8,
                 await ReadDestructibleOwnerRecordCountAsync(
                         tenantB,
                         TenantB,
@@ -307,6 +308,10 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                 tenantBProjectionId,
                 (await tenantB.PropertyProjections.SingleAsync()
                     .ConfigureAwait(false)).Id);
+            Assert.Equal(
+                tenantBDeferredClaimId,
+                (await tenantB.StaffDeferredClaimWithdrawals.SingleAsync()
+                    .ConfigureAwait(false)).Id);
         }
     }
 
@@ -317,7 +322,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
         using IServiceScope scope = services.CreateScope();
         WorkspacesDbContext context = scope.ServiceProvider
             .GetRequiredService<WorkspacesDbContext>();
-        _ = SeedGraph(context, TenantA, SubjectId);
+        _ = await SeedGraphAsync(context, TenantA, SubjectId);
         WorkspaceStaffOnboarding onboarding =
             context.StaffOnboardingApplications.Local.Single();
 
@@ -456,6 +461,15 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                     $"Dense property {index + 1}",
                     PropertyStatus.Active,
                     version: 1));
+            context.StaffDeferredClaimWithdrawals.Add(
+                WorkspaceStaffDeferredClaimWithdrawal.Create(
+                    TenantA,
+                    Guid.Parse(TenantA),
+                    Guid.Parse("d1100000-0000-0000-0000-000000000001"),
+                    DenseGuid(index, 0xd2),
+                    claimVersion: index + 1,
+                    DenseGuid(index, 0xd3),
+                    clock.UtcNow.AddTicks(index)).Value);
         }
 
         OutboxMessage outbox = new(
@@ -532,7 +546,10 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
         await context.SaveChangesAsync().ConfigureAwait(false);
     }
 
-    private static async Task<(Guid OnboardingId, Guid ProjectionId)>
+    private static async Task<(
+        Guid OnboardingId,
+        Guid ProjectionId,
+        Guid DeferredClaimId)>
         SeedOtherTenantGraphAsync(IServiceProvider services)
     {
         WorkspacesDbContext context = services
@@ -600,11 +617,23 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                 Now).Value;
         Guid projectionId =
             Guid.Parse("eb000000-0000-0000-0000-000000000001");
+        Guid deferredClaimId =
+            Guid.Parse("ec000000-0000-0000-0000-000000000001");
+        WorkspaceStaffDeferredClaimWithdrawal deferred =
+            WorkspaceStaffDeferredClaimWithdrawal.Create(
+                TenantB,
+                Guid.Parse(TenantB),
+                Guid.Parse("ed000000-0000-0000-0000-000000000001"),
+                deferredClaimId,
+                claimVersion: 2,
+                Guid.Parse("ee000000-0000-0000-0000-000000000001"),
+                Now).Value;
         context.AddRange(
             onboarding,
             process,
             plan,
             retention,
+            deferred,
             new WorkspacePropertyProjection(
                 TenantB,
                 projectionId,
@@ -612,7 +641,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                 PropertyStatus.Active,
                 version: 1));
         await context.SaveChangesAsync().ConfigureAwait(false);
-        return (onboardingId, projectionId);
+        return (onboardingId, projectionId, deferredClaimId);
     }
 
     private static async Task AssertHistoricalReceiptIsAppendOnlyAsync(
@@ -739,6 +768,7 @@ public sealed partial class WorkspacesDataRightsExportIntegrationTests
                     WHERE process."ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM workspaces.staff_access_processes WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM workspaces.staff_onboarding_applications WHERE "ScopeId" = {tenantId}) +
+                (SELECT COUNT(*) FROM workspaces.staff_deferred_claim_withdrawals WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM workspaces.staff_retention_correlation_receipts WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM workspaces.staff_correlation_anonymisation_restore_receipts WHERE "ScopeId" = {tenantId}) +
                 (SELECT COUNT(*) FROM workspaces.staff_correlation_anonymisation_tombstones WHERE "ScopeId" = {tenantId}) +

@@ -10,6 +10,7 @@ using Gma.Framework.Runtime.Time;
 
 internal sealed class StaffLifecycleChangeCoordinator(
     IStaffMemberMutationOperationRepository operations,
+    IStaffIdentityProvisioningAnchorResolutionRepository resolutions,
     StaffLifecyclePolicyEvaluator policies,
     ISystemClock clock,
     IIdGenerator ids)
@@ -123,6 +124,15 @@ internal sealed class StaffLifecycleChangeCoordinator(
                 ? Result.Success(existing.ToReceipt())
                 : Result.Failure<StaffMemberMutationReceiptDto>(
                     StaffApplicationErrors.LifecycleOperationConflict);
+        }
+
+        if (targetStatus == StaffStatus.Active &&
+            await resolutions.HasUnresolvedWorkspaceOnboardingAsync(
+                member.Id,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<StaffMemberMutationReceiptDto>(
+                StaffApplicationErrors.IdentityAnchorResolutionRequired);
         }
 
         DateTimeOffset nowUtc = StaffMutationTime.Normalize(clock.UtcNow);

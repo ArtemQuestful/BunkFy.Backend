@@ -1242,6 +1242,7 @@ public sealed class HostCompositionGuardTests
             "tenant-termination-workers",
             "Tasks__Worker__WorkerGroups__8",
             "guest-record-link-workers",
+            "workspaces-maintenance-workers",
             "AppHost:AdminApi:Enabled",
             "AppHost:Worker:Enabled",
             "AppHost:Redis:Enabled"
@@ -1272,6 +1273,7 @@ public sealed class HostCompositionGuardTests
             workerGroups,
             StringComparer.Ordinal);
         Assert.Equal(1, workerGroups.Count(group => group == "guest-record-link-workers"));
+        Assert.Equal(1, workerGroups.Count(group => group == "workspaces-maintenance-workers"));
         Assert.Equal(workerGroups.Length, workerGroups.Distinct(StringComparer.Ordinal).Count());
     }
 

@@ -270,7 +270,22 @@ public sealed class
         await using WorkspacesDbContext dbContext =
             CreateDbContext(connectionString, TenantA);
         await dbContext.Database.MigrateAsync();
-        SeedOriginalState(dbContext);
+        WorkspaceStaffOnboarding onboarding = SeedOriginalState(dbContext);
+        await dbContext.SaveChangesAsync();
+
+        Assert.True(onboarding.ObserveInvitationAccepted(
+            Now.AddMinutes(1)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+
+        Assert.True(onboarding.MarkStaffReady(
+            StaffMemberId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Now.AddMinutes(2)).IsSuccess);
+        await dbContext.SaveChangesAsync();
+
+        Assert.True(onboarding.Complete(
+            Now.AddMinutes(3)).IsSuccess);
         await dbContext.SaveChangesAsync();
     }
 
@@ -286,7 +301,7 @@ public sealed class
         await SeedOriginalStateAsync(connectionString);
     }
 
-    private static void SeedOriginalState(
+    private static WorkspaceStaffOnboarding SeedOriginalState(
         WorkspacesDbContext dbContext)
     {
         WorkspaceStaffOnboarding onboarding =
@@ -305,14 +320,6 @@ public sealed class
                 jobTitle: null,
                 department: null,
                 Now).Value;
-        Assert.True(onboarding.ObserveInvitationAccepted(
-            Now.AddMinutes(1)).IsSuccess);
-        Assert.True(onboarding.MarkStaffReady(
-            StaffMemberId,
-            Now.AddMinutes(2)).IsSuccess);
-        Assert.True(onboarding.Complete(
-            Now.AddMinutes(3)).IsSuccess);
-
         WorkspaceStaffAccessProcess anchor =
             WorkspaceStaffAccessProcess.Create(
                 AnchorProcessId,
@@ -344,6 +351,7 @@ public sealed class
             Now.AddMinutes(1)).IsSuccess);
 
         dbContext.AddRange(onboarding, anchor, plan);
+        return onboarding;
     }
 
     private static async Task AssertOriginalStateAsync(

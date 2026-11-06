@@ -37,6 +37,10 @@ public static class
         "Workspaces.StaffCorrelationAnonymisationBlocked.NotEligible",
         "The workspace Staff correlation is not eligible for anonymisation.");
 
+    public static readonly Error IdentityAnchorUnavailable = new(
+        "Workspaces.StaffCorrelationAnonymisationBlocked.IdentityAnchorUnavailable",
+        "Workspace Staff identity-anchor resolution must be exact and observed before correlation anonymisation.");
+
     public static readonly Error RestoreRequestInvalid = new(
         "Workspaces.StaffCorrelationAnonymisationRestoreRequestInvalid",
         "The workspace Staff correlation anonymisation restore request is invalid.");

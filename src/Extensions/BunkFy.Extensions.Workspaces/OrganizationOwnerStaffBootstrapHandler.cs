@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 internal sealed class OrganizationOwnerStaffBootstrapHandler(
     IStaffIdentityBootstrapper staff,
     IAuthMemberContactReader contacts,
-    IOrganizationAccessDecisionReader organizationAccess,
+    IOrganizationMembershipInspector memberships,
     IWorkspaceOperationalAdmissionPolicy operationalAdmission,
     IOptions<BunkFyWorkspacesOptions> options)
     : IIntegrationEventHandler<OrganizationMembershipChangedIntegrationEvent>
@@ -29,6 +29,61 @@ internal sealed class OrganizationOwnerStaffBootstrapHandler(
             return;
         }
 
+        string canonicalOrganizationId =
+            integrationEvent.OrganizationId.ToString("D");
+        if (integrationEvent.OrganizationId == Guid.Empty ||
+            integrationEvent.MembershipId == Guid.Empty ||
+            integrationEvent.MembershipVersion <= 0 ||
+            string.IsNullOrWhiteSpace(integrationEvent.SubjectId) ||
+            !string.Equals(
+                integrationEvent.ScopeId,
+                canonicalOrganizationId,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Organizations owner Staff bootstrap coordinates are invalid.");
+        }
+
+        OrganizationMembershipSnapshot? snapshot = await memberships.FindAsync(
+            integrationEvent.OrganizationId,
+            integrationEvent.MembershipId,
+            integrationEvent.SubjectId,
+            cancellationToken).ConfigureAwait(false);
+        if (snapshot is null ||
+            snapshot.OrganizationId != integrationEvent.OrganizationId ||
+            snapshot.MembershipId != integrationEvent.MembershipId ||
+            snapshot.MembershipVersion < integrationEvent.MembershipVersion ||
+            snapshot.ScopeRevision < 0 ||
+            snapshot.OrganizationStatus == OrganizationStatus.Unknown ||
+            snapshot.ScopeStatus is OrganizationScopeStatus.Unknown or
+                OrganizationScopeStatus.Invalid or
+                OrganizationScopeStatus.Missing ||
+            snapshot.Role == OrganizationMembershipRole.Unknown ||
+            snapshot.MembershipStatus == OrganizationMembershipStatus.Unknown)
+        {
+            throw new InvalidOperationException(
+                "Organizations membership snapshot is unavailable for owner Staff bootstrap.");
+        }
+
+        if (snapshot.ScopeStatus == OrganizationScopeStatus.Closed ||
+            snapshot.OrganizationStatus is OrganizationStatus.Suspended or
+                OrganizationStatus.Archived ||
+            snapshot.Role == OrganizationMembershipRole.Member ||
+            snapshot.MembershipStatus is OrganizationMembershipStatus.Suspended or
+                OrganizationMembershipStatus.Removed)
+        {
+            return;
+        }
+
+        if (snapshot.ScopeStatus != OrganizationScopeStatus.Open ||
+            snapshot.OrganizationStatus != OrganizationStatus.Active ||
+            snapshot.Role != OrganizationMembershipRole.Owner ||
+            snapshot.MembershipStatus != OrganizationMembershipStatus.Active)
+        {
+            throw new InvalidOperationException(
+                "Organizations membership snapshot is invalid for owner Staff bootstrap.");
+        }
+
         WorkspaceOperationalAdmissionDecision admission =
             await operationalAdmission.EvaluateAsync(
                 integrationEvent.ScopeId,
@@ -39,24 +94,6 @@ internal sealed class OrganizationOwnerStaffBootstrapHandler(
                 "Workspace operational admission did not allow owner Staff bootstrap.");
         }
 
-        OrganizationAccessDecision access = await organizationAccess.ReadAsync(
-            integrationEvent.OrganizationId,
-            integrationEvent.SubjectId,
-            cancellationToken).ConfigureAwait(false);
-        if (access is OrganizationAccessDecision.OrganizationNotFound or
-            OrganizationAccessDecision.OrganizationInactive or
-            OrganizationAccessDecision.MembershipNotFound or
-            OrganizationAccessDecision.MembershipInactive)
-        {
-            return;
-        }
-
-        if (access != OrganizationAccessDecision.Allowed)
-        {
-            throw new InvalidOperationException(
-                "Organizations access is unavailable for owner Staff bootstrap.");
-        }
-
         string? verifiedEmail = await this.GetVerifiedEmailAsync(
             integrationEvent.SubjectId,
             cancellationToken).ConfigureAwait(false);
@@ -64,6 +101,7 @@ internal sealed class OrganizationOwnerStaffBootstrapHandler(
         StaffIdentityBootstrapResult result = await staff.BootstrapAsync(
             new StaffIdentityBootstrapRequest(
                 integrationEvent.EventId,
+                integrationEvent.MembershipId,
                 integrationEvent.SubjectId,
                 displayName,
                 verifiedEmail,

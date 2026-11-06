@@ -5,6 +5,7 @@ using Gma.Framework.Cqrs;
 
 public sealed record BootstrapStaffIdentityCommand(
     Guid OperationId,
+    Guid SourceId,
     string AuthSubjectId,
     string DisplayName,
     string? WorkEmail,

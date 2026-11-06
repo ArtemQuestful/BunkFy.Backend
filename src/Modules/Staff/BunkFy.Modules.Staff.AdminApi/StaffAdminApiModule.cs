@@ -189,6 +189,8 @@ public sealed class StaffAdminApiModule : IAdminApiModule
         new(StaffApplicationErrors.CreationOperationConflict.Code, StatusCodes.Status409Conflict),
         new(StaffApplicationErrors.ProfileUpdateOperationConflict.Code, StatusCodes.Status409Conflict),
         new(StaffApplicationErrors.AuthSubjectOperationConflict.Code, StatusCodes.Status409Conflict),
+        new(StaffApplicationErrors.IdentityAnchorResolutionRequired.Code, StatusCodes.Status409Conflict),
+        new(StaffApplicationErrors.IdentityAnchorAccessClosureRequired.Code, StatusCodes.Status409Conflict),
         new(StaffApplicationErrors.LifecycleOperationConflict.Code, StatusCodes.Status409Conflict),
         new(StaffApplicationErrors.AssignmentOperationConflict.Code, StatusCodes.Status409Conflict),
         new(StaffApplicationErrors.AssignmentAlreadyExists.Code, StatusCodes.Status409Conflict),

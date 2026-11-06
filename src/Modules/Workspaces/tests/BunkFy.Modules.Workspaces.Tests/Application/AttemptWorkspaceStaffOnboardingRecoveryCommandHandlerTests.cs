@@ -557,6 +557,8 @@ public sealed class AttemptWorkspaceStaffOnboardingRecoveryCommandHandlerTests
             Now.AddMinutes(1)).IsSuccess);
         Assert.True(application.MarkStaffReady(
             Guid.Parse("99999999-9999-9999-9999-999999999999"),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
             Now.AddMinutes(2)).IsSuccess);
         Assert.True(application.BindAcceptedMembership(
             MembershipId,
@@ -712,10 +714,10 @@ public sealed class AttemptWorkspaceStaffOnboardingRecoveryCommandHandlerTests
                             ? [application]
                             : []);
 
-        public Task<WorkspaceStaffOnboardingListResponse> ListActionableAsync(
+        public Task<WorkspaceStaffOnboardingSummaryListResponse> ListActionableAsync(
             PageRequest page,
             CancellationToken cancellationToken) => Task.FromResult(
-                new WorkspaceStaffOnboardingListResponse(
+                new WorkspaceStaffOnboardingSummaryListResponse(
                     [], page.Page, page.PageSize, HasMore: false));
 
         public Task ReloadAsync(

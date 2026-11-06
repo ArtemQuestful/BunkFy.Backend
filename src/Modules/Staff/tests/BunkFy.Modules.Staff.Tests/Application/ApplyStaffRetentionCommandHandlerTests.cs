@@ -150,8 +150,38 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
         Assert.Equal(StaffMemberState.Departed, fixture.Member.Status);
     }
 
+    [Fact]
+    public async Task Unresolved_workspace_anchor_blocks_retention_anonymisation()
+    {
+        Fixture fixture = CreateFixture(
+            new RecordingPrerequisite(
+                StaffRetentionAnonymisationPrerequisiteResult.Completed()),
+            hasUnresolvedAnchor: true);
+
+        Result<StaffRetentionMutationResult> result =
+            await fixture.Handler.HandleAsync(
+                new(
+                    fixture.Execution.Id,
+                    Attempt: 1,
+                    fixture.Member.Id,
+                    fixture.Member.Version),
+                CancellationToken.None);
+
+        Assert.Equal(
+            StaffRetentionMutationStatus.Failed,
+            result.Value.Status);
+        Assert.Equal(
+            StaffRetentionMutationFailure.IdentityAnchorResolutionRequired,
+            result.Value.Failure);
+        Assert.Equal(StaffMemberState.Departed, fixture.Member.Status);
+        Assert.Equal(0, fixture.Executions.AddProofCount);
+        Assert.Equal(0, fixture.MemberMutationOperations.DeleteCount);
+        Assert.Equal(1, fixture.Lock.AcquireCount);
+    }
+
     private static Fixture CreateFixture(
-        RecordingPrerequisite? prerequisite)
+        RecordingPrerequisite? prerequisite,
+        bool hasUnresolvedAnchor = false)
     {
         StaffRetentionPolicyFixture policy =
             StaffRetentionTestData.CreatePolicy();
@@ -211,6 +241,8 @@ public sealed class ApplyStaffRetentionCommandHandlerTests
             new StubStaffMemberRepository(member),
             operationLock,
             memberMutationOperations,
+            new StubStaffIdentityProvisioningAnchorResolutionRepository(
+                hasUnresolvedAnchor),
             new StaffRetentionEligibilityEvaluator(policy.Registry),
             prerequisites,
             new TestScopeContext(member.ScopeId),

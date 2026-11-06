@@ -198,6 +198,7 @@ internal sealed partial class WorkspaceTenantDestructionOwner(
                 await dbContext.SaveTenantDestructionChangesAsync(
                         tenantId,
                         request.IdempotencyKey,
+                        attemptedStage: null,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -238,6 +239,7 @@ internal sealed partial class WorkspaceTenantDestructionOwner(
 
             while (!operation.IsComplete)
             {
+                WorkspaceTenantDestroyStage attemptedStage = operation.Stage;
                 bool removed = await this.RemoveCurrentStageAsync(
                         operation,
                         tenantId,
@@ -251,6 +253,7 @@ internal sealed partial class WorkspaceTenantDestructionOwner(
                 await dbContext.SaveTenantDestructionChangesAsync(
                         tenantId,
                         request.IdempotencyKey,
+                        attemptedStage,
                         cancellationToken)
                     .ConfigureAwait(false);
                 return await FinishAsync(
@@ -319,6 +322,7 @@ internal sealed partial class WorkspaceTenantDestructionOwner(
             await dbContext.SaveTenantDestructionChangesAsync(
                     tenantId,
                     request.IdempotencyKey,
+                    attemptedStage: null,
                     cancellationToken)
                 .ConfigureAwait(false);
             return await FinishAsync(

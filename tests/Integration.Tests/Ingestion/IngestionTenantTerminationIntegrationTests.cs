@@ -17,6 +17,7 @@ using BunkFy.Modules.Ingestion.Domain.Retention;
 using BunkFy.Modules.Ingestion.Domain.Runs;
 using BunkFy.Modules.Ingestion.Persistence;
 using BunkFy.Modules.Properties.Contracts;
+using BunkFy.Modules.Staff.Contracts;
 using BunkFy.Modules.Workspaces.Domain.Termination;
 using BunkFy.Modules.Workspaces.Persistence;
 using Gma.Framework.Runtime.Identity;
@@ -817,6 +818,8 @@ public sealed partial class IngestionTenantTerminationIntegrationTests
         builder.Services.AddSingleton<IRawPayloadStore>(services =>
             services.GetRequiredService<TestRawPayloadStore>());
         builder.AddWorkspacesPersistence();
+        builder.Services.AddSingleton<IStaffWorkspaceOnboardingIdentityAnchorOutcomeReader,
+            UnusedStaffOnboardingOutcomeReader>();
         builder.AddIngestionPersistence();
         return builder.Services.BuildServiceProvider();
     }

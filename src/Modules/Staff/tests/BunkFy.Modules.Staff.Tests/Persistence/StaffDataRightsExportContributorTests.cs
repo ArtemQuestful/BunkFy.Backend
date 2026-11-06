@@ -80,6 +80,18 @@ public sealed class StaffDataRightsExportContributorTests
                     StaffStatus.Active,
                     member.Version,
                     Now.AddMinutes(7))));
+        Guid anchorSourceId = Guid.NewGuid();
+        Guid anchorResolutionEventId = Guid.NewGuid();
+        dbContext.IdentityProvisioningAnchors.Add(
+            new StaffIdentityProvisioningAnchor(
+                new StaffIdentityProvisioningAnchorRecord(
+                    member.ScopeId,
+                    StaffIdentityProvisioningSourceKind
+                        .WorkspaceOnboarding,
+                    anchorSourceId,
+                    member.Id,
+                    Now.AddMinutes(8),
+                    anchorResolutionEventId)));
         dbContext.EmploymentGovernance.Add(governance);
         dbContext.DataHolds.AddRange(activeHold, releasedHold);
         await dbContext.SaveChangesAsync();
@@ -93,7 +105,7 @@ public sealed class StaffDataRightsExportContributorTests
             CancellationToken.None);
 
         Assert.Equal(DataRightsSubjectExportStatus.Succeeded, result.Status);
-        Assert.Equal(6, result.RecordCount);
+        Assert.Equal(7, result.RecordCount);
         Assert.Equal("staff.personal-data", contributor.Descriptor.CatalogId);
         Assert.Equal(
             StaffTenantTerminationMetadata.PersonalDataCatalogVersion,
@@ -101,6 +113,7 @@ public sealed class StaffDataRightsExportContributorTests
         Assert.Equal(
             StaffDataRightsExportSchema.ExportSchemaId,
             contributor.Descriptor.ExportSchemaId);
+        Assert.Equal(5, contributor.Descriptor.ExportSchemaVersion);
         Assert.DoesNotContain("staff.scope-id", contributor.Descriptor.FieldIds);
         Assert.DoesNotContain("staff.audit-actor-id", contributor.Descriptor.FieldIds);
         Assert.DoesNotContain("staff.change-reason", contributor.Descriptor.FieldIds);
@@ -109,6 +122,12 @@ public sealed class StaffDataRightsExportContributorTests
             contributor.Descriptor.FieldIds);
         Assert.DoesNotContain(
             "staff.data-hold.actor-id",
+            contributor.Descriptor.FieldIds);
+        Assert.Contains(
+            "staff.identity-provisioning-anchor.source-kind",
+            contributor.Descriptor.FieldIds);
+        Assert.Contains(
+            "staff.identity-provisioning-anchor.resolution-event-id",
             contributor.Descriptor.FieldIds);
 
         DataRightsExportRecord profileRecord = Assert.Single(
@@ -187,6 +206,116 @@ public sealed class StaffDataRightsExportContributorTests
         Assert.Equal(
             member.Version,
             updateOperationRecord.RecordVersion);
+
+        DataRightsExportRecord anchorRecord = Assert.Single(
+            sink.Records,
+            record => record.RecordType ==
+                StaffDataRightsExportContributor
+                    .IdentityProvisioningAnchorRecordType);
+        Assert.Equal(1, anchorRecord.RecordVersion);
+        Assert.Equal(5, anchorRecord.Fields.Count);
+        Assert.InRange(
+            anchorRecord.Fields.Count,
+            1,
+            DataRightsExportLimits.MaxFieldsPerRecord);
+        Assert.Equal(
+            member.Id,
+            Field(
+                anchorRecord,
+                "staff.identity-provisioning-anchor.staff-member-id")
+                .GetGuid());
+        Assert.Equal(
+            "workspace-onboarding",
+            Field(
+                anchorRecord,
+                "staff.identity-provisioning-anchor.source-kind")
+                .GetString());
+        Assert.Equal(
+            anchorSourceId,
+            Field(
+                anchorRecord,
+                "staff.identity-provisioning-anchor.source-id")
+                .GetGuid());
+        Assert.Equal(
+            anchorResolutionEventId,
+            Field(
+                anchorRecord,
+                "staff.identity-provisioning-anchor.resolution-event-id")
+                .GetGuid());
+        Assert.Equal(
+            Now.AddMinutes(8),
+            Field(
+                anchorRecord,
+                "staff.identity-provisioning-anchor.anchored-at-utc")
+                .GetDateTimeOffset());
+
+        CollectingSink replay = new();
+        DataRightsSubjectExportResult replayResult =
+            await contributor.ExportAsync(
+                Request("tenant-a", member.Id, member.Version),
+                replay,
+                CancellationToken.None);
+
+        Assert.Equal(DataRightsSubjectExportStatus.Succeeded, replayResult.Status);
+        Assert.Equal(result.RecordCount, replayResult.RecordCount);
+        Assert.Equal(
+            sink.Records.Select(RecordIdentity),
+            replay.Records.Select(RecordIdentity));
+    }
+
+    [Fact]
+    public async Task Export_keeps_anchor_after_profile_anonymisation_when_mutation_journal_is_absent()
+    {
+        await using StaffDbContext dbContext = CreateDbContext("tenant-a");
+        StaffMember member = CreateMember("tenant-a");
+        Assert.True(member.Depart(
+            new DateOnly(2026, 7, 26),
+            member.Version,
+            "user:manager",
+            "Employment ended.",
+            Guid.NewGuid(),
+            [],
+            Now.AddMinutes(1)).IsSuccess);
+        Assert.True(member.Anonymise(
+            member.Version,
+            "user:privacy",
+            Guid.NewGuid(),
+            Now.AddMinutes(2)).IsSuccess);
+        Guid sourceId = Guid.NewGuid();
+        dbContext.StaffMembers.Add(member);
+        dbContext.IdentityProvisioningAnchors.Add(
+            new StaffIdentityProvisioningAnchor(
+                new StaffIdentityProvisioningAnchorRecord(
+                    member.ScopeId,
+                    StaffIdentityProvisioningSourceKind
+                        .OrganizationMembership,
+                    sourceId,
+                    member.Id,
+                    Now.AddMinutes(-1))));
+        await dbContext.SaveChangesAsync();
+        StaffDataRightsExportContributor contributor =
+            new(dbContext, new TestScopeContext("tenant-a"));
+        CollectingSink sink = new();
+
+        DataRightsSubjectExportResult result = await contributor.ExportAsync(
+            Request("tenant-a", member.Id, member.Version),
+            sink,
+            CancellationToken.None);
+
+        Assert.Equal(DataRightsSubjectExportStatus.Succeeded, result.Status);
+        Assert.Equal(2, result.RecordCount);
+        Assert.Empty(await dbContext.MemberMutationOperations.ToListAsync());
+        DataRightsExportRecord anchorRecord = Assert.Single(
+            sink.Records,
+            record => record.RecordType ==
+                StaffDataRightsExportContributor
+                    .IdentityProvisioningAnchorRecordType);
+        Assert.Equal(
+            sourceId,
+            Field(
+                anchorRecord,
+                "staff.identity-provisioning-anchor.source-id")
+                .GetGuid());
     }
 
     [Fact]
@@ -381,6 +510,17 @@ public sealed class StaffDataRightsExportContributorTests
 
     private static JsonElement Field(DataRightsExportRecord record, string fieldId) =>
         Assert.Single(record.Fields, field => field.FieldId == fieldId).Value;
+
+    private static string RecordIdentity(DataRightsExportRecord record) =>
+        string.Join(
+            '|',
+            record.RecordType,
+            record.RecordId,
+            record.RecordVersion,
+            string.Join(
+                ';',
+                record.Fields.Select(field =>
+                    $"{field.FieldId}={field.Value.GetRawText()}")));
 
     private static StaffDbContext CreateDbContext(string tenantId)
     {

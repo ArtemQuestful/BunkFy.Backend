@@ -50,9 +50,30 @@ public sealed partial class WorkspaceStaffOnboarding
             return Result.Failure(WorkspaceStaffOnboardingErrors.StateConflict);
         }
 
+        bool hasBoundAnchor = this.IdentityAnchorExpectedResolutionEventId.HasValue;
+        if (hasBoundAnchor != this.IdentityAnchorContinuationEventId.HasValue ||
+            this.IdentityAnchorResolutionEventId.HasValue ||
+            (hasBoundAnchor && !AreAnchorCoordinatesValid(
+                this.Id,
+                this.StaffMemberId.Value,
+                this.IdentityAnchorExpectedResolutionEventId!.Value,
+                this.IdentityAnchorContinuationEventId!.Value)))
+        {
+            return Result.Failure(WorkspaceStaffOnboardingErrors.StateConflict);
+        }
+
         this.Status = WorkspaceStaffOnboardingState.Completed;
         this.FailureCode = null;
         this.RedactApplicantData();
+        if (hasBoundAnchor)
+        {
+            return this.RecordResolutionIntent(
+                this.StaffMemberId.Value,
+                WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                    .CompletedRedacted,
+                nowUtc);
+        }
+
         this.Advance(nowUtc);
         return Result.Success();
     }

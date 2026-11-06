@@ -627,6 +627,7 @@ public sealed partial class RetentionControlPlaneIntegrationTests
             DateTimeOffset nowUtc)
     {
         Guid organizationId = Guid.Parse(tenantId);
+        DateTimeOffset onboardingAtUtc = nowUtc.AddDays(-500).AddMinutes(1);
         const string actorId = "system:retention-integration";
         OrganizationsDbContext organizations =
             services.GetRequiredService<OrganizationsDbContext>();
@@ -637,7 +638,7 @@ public sealed partial class RetentionControlPlaneIntegrationTests
                 $"retention-{organizationId:N}",
                 actorId,
                 Guid.NewGuid(),
-                nowUtc).Value);
+                onboardingAtUtc.AddSeconds(-1)).Value);
         organizations.Memberships.Add(
             OrganizationMembership.Create(
                 Guid.NewGuid(),
@@ -646,7 +647,7 @@ public sealed partial class RetentionControlPlaneIntegrationTests
                 OrganizationMembershipDomainRole.Owner,
                 actorId,
                 Guid.NewGuid(),
-                nowUtc).Value);
+                onboardingAtUtc.AddSeconds(-1)).Value);
         organizations.Memberships.Add(
             OrganizationMembership.Create(
                 Guid.NewGuid(),
@@ -655,7 +656,7 @@ public sealed partial class RetentionControlPlaneIntegrationTests
                 OrganizationMembershipDomainRole.Member,
                 actorId,
                 Guid.NewGuid(),
-                nowUtc).Value);
+                onboardingAtUtc.AddSeconds(-1)).Value);
         await organizations.SaveChangesAsync().ConfigureAwait(false);
 
         Guid sourceId = Guid.NewGuid();
@@ -674,17 +675,75 @@ public sealed partial class RetentionControlPlaneIntegrationTests
                 "RETENTION-STAFF",
                 "Operations manager",
                 "Operations",
-                nowUtc).Value;
-        Assert.True(
-            onboarding.ObserveInvitationAccepted(
-                nowUtc.AddSeconds(1)).IsSuccess);
-        Assert.True(
-            onboarding.MarkStaffReady(
+                onboardingAtUtc).Value;
+        WorkspacesDbContext workspaces =
+            services.GetRequiredService<WorkspacesDbContext>();
+        workspaces.StaffOnboardingApplications.Add(onboarding);
+        await workspaces.SaveChangesAsync().ConfigureAwait(false);
+
+        // Model the committed provisioning history before the Staff departure.
+        // The journal and anchor belong to the application, not the invitation.
+        Guid resolutionEventId = Guid.NewGuid();
+        StaffDbContext staff = services.GetRequiredService<StaffDbContext>();
+        await services.GetRequiredService<
+                IStaffOnboardingProvisioningOperationRepository>()
+            .AddAsync(new StaffMemberMutationOperationRecord(
+                onboarding.Id,
+                tenantId,
                 member.Id,
-                nowUtc.AddSeconds(2)).IsSuccess);
-        Assert.True(
-            onboarding.Complete(
-                nowUtc.AddSeconds(3)).IsSuccess);
+                StaffMemberMutationKind.OnboardingProvision,
+                ExpectedVersion: 1,
+                RequestFingerprint: new string('a', 64),
+                StaffStatus.Active,
+                ResultVersion: 1,
+                onboardingAtUtc.AddSeconds(1)), CancellationToken.None)
+            .ConfigureAwait(false);
+        await services.GetRequiredService<
+                IStaffIdentityProvisioningAnchorRepository>()
+            .AddAsync(new StaffIdentityProvisioningAnchorRecord(
+                tenantId,
+                StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+                onboarding.Id,
+                member.Id,
+                onboardingAtUtc.AddSeconds(1),
+                resolutionEventId), CancellationToken.None)
+            .ConfigureAwait(false);
+        await staff.SaveChangesAsync().ConfigureAwait(false);
+
+        Assert.True(onboarding.ObserveInvitationAccepted(
+            onboardingAtUtc.AddSeconds(1)).IsSuccess);
+        Assert.True(onboarding.MarkStaffReady(
+            member.Id,
+            resolutionEventId,
+            Guid.NewGuid(),
+            onboardingAtUtc.AddSeconds(2)).IsSuccess);
+        await workspaces.SaveChangesAsync().ConfigureAwait(false);
+        Assert.True(onboarding.Complete(
+            onboardingAtUtc.AddSeconds(3)).IsSuccess);
+        await workspaces.SaveChangesAsync().ConfigureAwait(false);
+
+        await services.GetRequiredService<
+                IStaffIdentityProvisioningAnchorResolutionRepository>()
+            .AddAsync(new StaffIdentityProvisioningAnchorResolutionRecord(
+                tenantId,
+                StaffIdentityProvisioningSourceKind.WorkspaceOnboarding,
+                onboarding.Id,
+                member.Id,
+                onboarding.Version,
+                StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition
+                    .CompletedRedacted,
+                resolutionEventId,
+                onboardingAtUtc.AddSeconds(4)), CancellationToken.None)
+            .ConfigureAwait(false);
+        await staff.SaveChangesAsync().ConfigureAwait(false);
+        Assert.True(onboarding.ObserveResolution(
+            resolutionEventId,
+            member.Id,
+            onboarding.Version,
+            WorkspaceStaffOnboardingIdentityAnchorResolutionDisposition
+                .CompletedRedacted,
+            onboardingAtUtc.AddSeconds(5)).IsSuccess);
+        await workspaces.SaveChangesAsync().ConfigureAwait(false);
 
         WorkspaceStaffAccessPlan plan =
             WorkspaceStaffAccessPlan.Create(
@@ -719,9 +778,6 @@ public sealed partial class RetentionControlPlaneIntegrationTests
             process.ObserveStaffCommit(
                 nowUtc.AddSeconds(2)).IsSuccess);
 
-        WorkspacesDbContext workspaces =
-            services.GetRequiredService<WorkspacesDbContext>();
-        workspaces.StaffOnboardingApplications.Add(onboarding);
         workspaces.StaffAccessPlans.Add(plan);
         workspaces.StaffAccessProcesses.Add(process);
         await workspaces.SaveChangesAsync().ConfigureAwait(false);
@@ -1381,7 +1437,8 @@ public sealed partial class RetentionControlPlaneIntegrationTests
                     item.Id == candidate.StaffOnboardingId)
                 .ConfigureAwait(false);
         Assert.Equal(pseudonym, onboarding.SubjectId);
-        Assert.Equal(5, onboarding.Version);
+        // The durable resolution observation precedes the retention scrub.
+        Assert.Equal(6, onboarding.Version);
         Assert.Equal(
             correlationReceipt.CompletedAtUtc,
             onboarding.LastChangedAtUtc);

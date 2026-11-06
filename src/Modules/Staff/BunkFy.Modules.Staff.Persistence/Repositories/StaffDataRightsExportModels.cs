@@ -78,3 +78,19 @@ internal sealed record StaffMemberMutationOperationDataRightsExport(
     StaffStatus ResultStatus,
     long ResultVersion,
     DateTimeOffset CompletedAtUtc);
+
+internal sealed record StaffIdentityProvisioningAnchorDataRightsExport(
+    Guid StaffMemberId,
+    StaffIdentityProvisioningSourceKind SourceKind,
+    Guid SourceId,
+    Guid? ResolutionEventId,
+    DateTimeOffset AnchoredAtUtc);
+
+internal sealed record StaffIdentityProvisioningAnchorResolutionDataRightsExport(
+    Guid StaffMemberId,
+    StaffIdentityProvisioningSourceKind SourceKind,
+    Guid SourceId,
+    long WorkspaceApplicationVersion,
+    StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition Disposition,
+    Guid ResolutionEventId,
+    DateTimeOffset ResolvedAtUtc);

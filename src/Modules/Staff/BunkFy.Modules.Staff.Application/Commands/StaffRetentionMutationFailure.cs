@@ -7,5 +7,6 @@ internal enum StaffRetentionMutationFailure
     PolicyUnavailable = 2,
     PrerequisiteBlocked = 3,
     PrerequisiteUnavailable = 4,
-    MutationFailed = 5
+    MutationFailed = 5,
+    IdentityAnchorResolutionRequired = 6
 }

@@ -21,6 +21,7 @@ internal sealed class ApplyStaffRetentionCommandHandler(
     IStaffMemberRepository members,
     IStaffOperationLock operationLock,
     IStaffMemberMutationOperationRepository memberMutationOperations,
+    IStaffIdentityProvisioningAnchorResolutionRepository resolutions,
     StaffRetentionEligibilityEvaluator eligibility,
     StaffRetentionPrerequisiteEvaluator prerequisites,
     IScopeContext scopeContext,
@@ -115,6 +116,15 @@ internal sealed class ApplyStaffRetentionCommandHandler(
             return Result.Success(Failed(
                 StaffRetentionMutationFailure
                     .ProjectionUnavailable));
+        }
+
+        if (await resolutions.HasUnresolvedWorkspaceOnboardingAsync(
+                command.StaffMemberId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Success(Failed(
+                StaffRetentionMutationFailure
+                    .IdentityAnchorResolutionRequired));
         }
 
         StaffRetentionCandidateSnapshot? snapshot =

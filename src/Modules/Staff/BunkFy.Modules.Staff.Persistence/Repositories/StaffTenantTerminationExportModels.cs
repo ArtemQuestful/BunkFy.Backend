@@ -5,6 +5,7 @@ using BunkFy.Modules.Staff.Domain.Aggregates;
 using BunkFy.Modules.Staff.Domain.Models;
 using BunkFy.Modules.Staff.Domain.Retention;
 using StaffContractStatus = BunkFy.Modules.Staff.Contracts.StaffStatus;
+using StaffAnchorResolutionDisposition = BunkFy.Modules.Staff.Contracts.StaffWorkspaceOnboardingIdentityAnchorResolutionDisposition;
 
 [AttributeUsage(AttributeTargets.Property)]
 internal sealed class StaffTenantExportFieldAttribute(string fieldId)
@@ -62,6 +63,39 @@ internal sealed record StaffMemberMutationOperationStateTenantExport(
     StaffContractStatus ResultStatus,
     long ResultVersion,
     DateTimeOffset CompletedAtUtc);
+
+internal sealed record StaffIdentityProvisioningAnchorTenantExport(
+    [property: StaffTenantExportField("staff.scope-id")]
+    string ScopeId,
+    [property: StaffTenantExportField("staff.staff-member-id")]
+    Guid StaffMemberId,
+    [property: StaffTenantExportField("staff.identity-provisioning-anchor")]
+    StaffIdentityProvisioningAnchorStateTenantExport
+        IdentityProvisioningAnchor);
+
+internal sealed record StaffIdentityProvisioningAnchorStateTenantExport(
+    StaffIdentityProvisioningSourceKind SourceKind,
+    Guid SourceId,
+    Guid? ResolutionEventId,
+    DateTimeOffset AnchoredAtUtc);
+
+internal sealed record StaffIdentityProvisioningAnchorResolutionTenantExport(
+    [property: StaffTenantExportField("staff.scope-id")]
+    string ScopeId,
+    [property: StaffTenantExportField("staff.staff-member-id")]
+    Guid StaffMemberId,
+    [property: StaffTenantExportField(
+        "staff.identity-provisioning-anchor-resolution")]
+    StaffIdentityProvisioningAnchorResolutionStateTenantExport
+        IdentityProvisioningAnchorResolution);
+
+internal sealed record StaffIdentityProvisioningAnchorResolutionStateTenantExport(
+    StaffIdentityProvisioningSourceKind SourceKind,
+    Guid SourceId,
+    long WorkspaceApplicationVersion,
+    StaffAnchorResolutionDisposition Disposition,
+    Guid ResolutionEventId,
+    DateTimeOffset ResolvedAtUtc);
 
 internal sealed record StaffPropertyAssignmentTenantExport(
     [property: StaffTenantExportField("staff.scope-id")]

@@ -14,6 +14,11 @@ internal sealed class BootstrapStaffIdentityCommandValidator
             yield return "OperationId is required.";
         }
 
+        if (command.SourceId == Guid.Empty)
+        {
+            yield return "SourceId is required.";
+        }
+
         string authSubjectId = command.AuthSubjectId?.Trim() ?? string.Empty;
         if (authSubjectId.Length is 0 or > StaffContractLimits.AuthSubjectIdMaxLength)
         {
