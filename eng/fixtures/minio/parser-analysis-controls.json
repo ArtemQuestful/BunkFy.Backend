@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "compiler": "go1.27.3",
+  "compilerArchiveSha256": "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40",
+  "xNetModule": "golang.org/x/net@v0.61.0",
+  "linkerSourceSha256": "6562c101bb8555579af885b2ea016007d76db7fccf00de993ac0398e25cb0e99",
+  "runtimeSourceSha256": "50ce6d14b3885a8847086281a221ace995603c2b942e06c46935a15c0d66e17d",
+  "primarySource": "https://github.com/golang/go/blob/go1.27.3/src/cmd/link/internal/ld/pcln.go",
+  "samples": [
+    {
+      "name": "positive",
+      "goSource": "package main\nimport (\"fmt\"; \"golang.org/x/net/html\")\nfunc main() { fmt.Printf(\"%T %T %T %T\", html.Parse, html.ParseFragment, html.ParseFragmentWithOptions, html.ParseWithOptions) }\n",
+      "buildCommand": [
+        "go1.27.3",
+        "build",
+        "-trimpath",
+        "-ldflags=-s -w",
+        "-gcflags=-m=2",
+        "-o",
+        "positive",
+        "."
+      ],
+      "targetExecuted": false,
+      "binarySha256": "6137e3e605b82ad849cf1ec30a1f34b69331fed924ba5f0921c3022e2fdfb68b",
+      "physicalFunctions": 1989,
+      "allNameEntries": 3045,
+      "inlineOnlyNames": 1056,
+      "htmlNamespaceEntries": 143,
+      "targetSymbols": {
+        "Parse": [
+          "golang.org/x/net/html.Parse"
+        ],
+        "ParseFragment": [
+          "golang.org/x/net/html.ParseFragment"
+        ],
+        "ParseFragmentWithOptions": [
+          "golang.org/x/net/html.ParseFragmentWithOptions"
+        ],
+        "ParseWithOptions": [
+          "golang.org/x/net/html.ParseWithOptions"
+        ]
+      }
+    },
+    {
+      "name": "negative",
+      "goSource": "package main\nimport (\"fmt\"; \"bytes\"; \"golang.org/x/net/http2/hpack\")\nfunc main() { var b bytes.Buffer; fmt.Printf(\"%T\", hpack.NewEncoder(&b)) }\n",
+      "buildCommand": [
+        "go1.27.3",
+        "build",
+        "-trimpath",
+        "-ldflags=-s -w",
+        "-gcflags=-m=2",
+        "-o",
+        "negative",
+        "."
+      ],
+      "targetExecuted": false,
+      "binarySha256": "637d63572ef979d87fab4c3f168f1946bb6452c5dbf429d33476e28b5b81961f",
+      "physicalFunctions": 1824,
+      "allNameEntries": 2789,
+      "inlineOnlyNames": 965,
+      "htmlNamespaceEntries": 0,
+      "targetSymbols": {
+        "Parse": [],
+        "ParseFragment": [],
+        "ParseFragmentWithOptions": [],
+        "ParseWithOptions": []
+      }
+    },
+    {
+      "name": "inline",
+      "goSource": "package main\nimport \"os\"\nfunc inlineFrameIndex(values []int, index int) int { return values[index] }\nfunc main() { println(inlineFrameIndex([]int{len(os.Args)}, len(os.Args)-1)) }\n",
+      "buildCommand": [
+        "go1.27.3",
+        "build",
+        "-trimpath",
+        "-ldflags=-s -w",
+        "-gcflags=-m=2",
+        "-o",
+        "inline",
+        "."
+      ],
+      "targetExecuted": false,
+      "binarySha256": "735ad3da36f19e087588c762297fe02483a52a40103573ba0532a034640e9a83",
+      "physicalFunctions": 1603,
+      "allNameEntries": 2423,
+      "inlineOnlyNames": 820,
+      "htmlNamespaceEntries": 0,
+      "targetSymbols": {
+        "Parse": [],
+        "ParseFragment": [],
+        "ParseFragmentWithOptions": [],
+        "ParseWithOptions": []
+      },
+      "specificInlineControl": {
+        "name": "main.inlineFrameIndex",
+        "presentInCompleteNameTable": true,
+        "presentInPhysicalTable": false
+      },
+      "compilerConfirmedInlining": true
+    }
+  ],
+  "scope": "Independently compiled, stripped ELF physical/inline table controls. They do not qualify current container/provider/runtime or production behavior. Source profile and exact binaries must pass the current actual hosted gate."
+}

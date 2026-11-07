@@ -5,10 +5,16 @@ import argparse
 from collections import Counter
 import datetime
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
 import urllib.request
+
+
+_parser_spec = importlib.util.spec_from_file_location('preview_storage_parser', Path(__file__).with_name('inspect-preview-storage-parser.py'))
+parser_audit = importlib.util.module_from_spec(_parser_spec)
+_parser_spec.loader.exec_module(parser_audit)
 
 
 def require(condition, message):
@@ -38,7 +44,7 @@ def derived_subject(policy, identity):
     return identity['image'], identity['imageId']
 
 
-def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivation=None):
+def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivation=None, binary_evidence=None):
     now = now or datetime.datetime.now(datetime.timezone.utc)
     issued = datetime.datetime.fromisoformat(policy['reviewedAt'])
     expiry = datetime.datetime.fromisoformat(policy['reviewExpiresAt'])
@@ -95,7 +101,7 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
     require(set(targets) == set(expected_targets) and len(scan['Results']) == len(targets), 'Scanner targets disappeared or duplicated.')
     for name, minimum in expected_targets.items():
         require(len(targets[name].get('Packages', [])) >= minimum, 'Scanner package inventory is missing or reduced: ' + name)
-    findings = []
+    findings, parser_findings, finding_keys = [], [], set()
     for result in scan['Results']:
         require(not any(result.get(key) for key in ('Secrets', 'Misconfigurations', 'CustomResources')),
                 'Unreviewed secret or configuration findings remain.')
@@ -106,10 +112,22 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
                      and finding['PkgName'] == 'github.com/minio/minio'
                      and finding['InstalledVersion'] == policy['packagePurl'].rsplit('@', 1)[1]
                      and finding['Severity'] == 'HIGH')
-            require(match, 'A vulnerability outside the exact reviewed image/module/fix remains unresolved.')
-            findings.append(finding)
-    require(len(findings) <= 1, 'The reviewed finding duplicated across the scanner report.')
-    require(scan_exit_code == (1 if findings else 0), 'Scanner exit status is missing or inconsistent with its raw report.')
+            key = (result['Target'], finding['VulnerabilityID'])
+            require(key not in finding_keys, 'A raw vulnerability duplicated across a scanner target.')
+            finding_keys.add(key)
+            parser_match = (result['Target'] in parser_audit.SUBJECTS
+                            and finding['VulnerabilityID'] == parser_audit.CVE
+                            and finding.get('PkgIdentifier', {}).get('PURL') == parser_audit.PURL
+                            and finding['PkgName'] == 'golang.org/x/net'
+                            and finding['InstalledVersion'] == 'v0.61.0' and finding['Severity'] == 'HIGH')
+            require(match or parser_match, 'A vulnerability outside the exact reviewed image/module/fix remains unresolved.')
+            if parser_match:
+                parser_audit.validate(binary_evidence, config_digest)
+                parser_findings.append(finding)
+            else:
+                findings.append(finding)
+    require(len(findings) <= 1 and len(parser_findings) <= 2, 'The reviewed findings duplicated across the scanner report.')
+    require(scan_exit_code == (1 if findings or parser_findings else 0), 'Scanner exit status is missing or inconsistent with its raw report.')
     require(runtime['image'] == image
             and runtime['expectedSourceRevision'] == policy['sourceCommit']
             and runtime['actualSourceRevision'] == policy['sourceCommit']
@@ -148,8 +166,8 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
                     'A reviewed record-limit regression failed.')
     summary = {'schemaVersion': 1, 'result': 'passed', 'image': image,
                'imageConfigDigest': config_digest, 'platform': policy['platform'],
-               'sourceCommit': policy['sourceCommit'], 'rawHighFindings': len(findings),
-               'fixedInReviewedFork': len(findings), 'unresolvedSecurityFindings': 0,
+               'sourceCommit': policy['sourceCommit'], 'rawHighFindings': len(findings) + len(parser_findings),
+               'fixedInReviewedFork': len(findings), 'parserCodeNotPresent': len(parser_findings), 'unresolvedSecurityFindings': 0,
                'runtimeObservations': len(runtime['observations']), 'reviewExpiresAt': policy['reviewExpiresAt'],
                'qualification': 'Exact engineering fixture only. Raw finding retained; no global ignore or production approval.'}
     vex = {'@context': 'https://openvex.dev/ns/v0.2.0',
@@ -173,6 +191,19 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
             + policy['fixtureRecipeSha256'] + ' only creates/chowns /data and selects UID/GID10001. '
             'Fresh raw scan, SBOM and all38 runtime controls bind the actual local Docker configuration '
             + config_digest + '. This is not a registry-manifest attestation or production approval.')
+    if parser_findings:
+        summary['binaryParserAssessment'] = binary_evidence
+        vex['statements'].append({
+            'vulnerability': {'name': parser_audit.CVE}, 'status': 'not_affected',
+            'justification': 'vulnerable_code_not_present',
+            'products': [{'@id': product_id, 'hashes': {'sha-256': product_hash.removeprefix('sha256:')},
+                          'subcomponents': [{'@id': parser_audit.PURL}]}],
+            'status_notes': ('Only the exact two reviewed binary SHA256s and this image configuration qualify. '
+                             'The complete Go1.27.3 physical and inline function-name tables contain no '
+                             'golang.org/x/net/html package code. x/net remains present for other packages. '
+                             'All physical references and compiler positive/negative/inline controls were checked. '
+                             'Raw findings are retained; no generic exception or reachability claim. '
+                             + parser_audit.PRIMARY_ADVISORY + ' Linker contract: ' + parser_audit.LINKER_CONTRACT)})
     return summary, vex
 
 
@@ -206,10 +237,18 @@ if __name__ == '__main__':
         recipe = root / 'eng/fixtures/minio/Silo.TestFixture.Dockerfile'
         require(hashlib.sha256(recipe.read_bytes()).hexdigest() == policy['fixtureRecipeSha256'],
                 'The checked-out fixture recipe differs from the reviewed recipe.')
-    summary, vex = verify(policy, load('silo-security.json'), load('silo-runtime.json'),
-                          load('silo-sbom.cdx.json'), load('tool-identity.json'), args.scanner_exit_code,
-                          derivation=derivation)
+    scan = load('silo-security.json')
+    binary_evidence = None
+    if any(finding.get('VulnerabilityID') == parser_audit.CVE
+           for result in scan.get('Results', []) for finding in result.get('Vulnerabilities', [])):
+        image_id = policy['imageConfigDigest'] if derivation is None else derived_subject(policy, derivation)[1]
+        binary_evidence = parser_audit.collect(image_id)
+        (args.directory / 'silo-parser-applicability.json').write_text(json.dumps(binary_evidence, indent=2) + '\n')
+    summary, vex = verify(policy, scan, load('silo-runtime.json'), load('silo-sbom.cdx.json'),
+                          load('tool-identity.json'), args.scanner_exit_code,
+                          derivation=derivation, binary_evidence=binary_evidence)
     summary['reviewedSourceChecks'] = source_checks(policy)
     (args.directory / 'silo-security-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     (args.directory / 'silo-fixed-fork.vex.json').write_text(json.dumps(vex, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
+

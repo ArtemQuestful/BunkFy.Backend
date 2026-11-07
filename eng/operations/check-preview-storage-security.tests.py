@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 sys.dont_write_bytecode = True
@@ -175,5 +176,140 @@ class DerivedStorageSecurityBoundaries(unittest.TestCase):
                     gate.verify(*values, 1, now=NOW, derivation=identity)
 
 
+class HtmlParserApplicabilityBoundaries(unittest.TestCase):
+    def values(self):
+        values, identity = DerivedStorageSecurityBoundaries().values()
+        for target in ('usr/bin/silo', 'usr/bin/mcli'):
+            row = next(item for item in values[1]['Results'] if item['Target'] == target)
+            row.setdefault('Vulnerabilities', []).append({
+                'VulnerabilityID': gate.parser_audit.CVE, 'Severity': 'HIGH',
+                'PkgName': 'golang.org/x/net', 'InstalledVersion': 'v0.61.0',
+                'PkgIdentifier': {'PURL': gate.parser_audit.PURL}})
+        proof = {'schemaVersion': 1, 'imageId': identity['imageId'], 'goVersion': 'go1.27.3',
+                 'containerNeverStarted': True, 'inspectionContainerRemoved': True, 'binaries': {}}
+        for path, subject in gate.parser_audit.SUBJECTS.items():
+            proof['binaries'][path] = {**subject, 'pclnMagic': '0xfffffff1',
+                'goBuildInfoPresent': True, 'elfSymtabPresent': False,
+                'allXNetHtmlNames': [], 'controls': ['main.main', 'runtime.goexit', 'runtime.main'],
+                'targetSymbols': {name: [] for name in ('Parse', 'ParseFragment', 'ParseFragmentWithOptions', 'ParseWithOptions')}}
+        return values, identity, proof
+
+    def test_only_exact_two_binary_namespace_absences_classify_the_raw_findings(self):
+        values, identity, proof = self.values()
+        summary, vex = gate.verify(*values, 1, now=NOW, derivation=identity, binary_evidence=proof)
+        self.assertEqual((3, 1, 2, 0), (summary['rawHighFindings'], summary['fixedInReviewedFork'],
+                                      summary['parserCodeNotPresent'], summary['unresolvedSecurityFindings']))
+        self.assertEqual(['fixed', 'not_affected'], [s['status'] for s in vex['statements']])
+        self.assertEqual('vulnerable_code_not_present', vex['statements'][1]['justification'])
+        self.assertEqual(3, sum(len(r.get('Vulnerabilities', [])) for r in values[1]['Results']))
+
+    def test_missing_binary_inspection_remains_a_failure(self):
+        values, identity, proof = self.values()
+        for invalid in (None, {}, dict(proof, binaries={})):
+            with self.subTest(proof=invalid):
+                with self.assertRaises((ValueError, KeyError, TypeError)):
+                    gate.verify(*values, 1, now=NOW, derivation=identity, binary_evidence=invalid)
+
+    def test_changed_subject_format_or_incomplete_inline_inventory_remain_blocking(self):
+        mutations = [
+            lambda p: p.update(imageId='sha256:'+'0'*64),
+            lambda p: p.update(goVersion='go1.28.0'),
+            lambda p: p.update(containerNeverStarted=1),
+            lambda p: p.update(inspectionContainerRemoved=False),
+            lambda p: p['binaries'].pop('usr/bin/mcli'),
+            lambda p: p['binaries']['usr/bin/silo'].update(sha256='0'*64),
+            lambda p: p['binaries']['usr/bin/mcli'].update(physicalFunctionsValidated=1),
+            lambda p: p['binaries']['usr/bin/silo'].update(completeFunctionNameTableSha256='0'*64),
+            lambda p: p['binaries']['usr/bin/silo'].update(allXNetHtmlNames=['golang.org/x/net/html.Parse']),
+            lambda p: p['binaries']['usr/bin/mcli']['targetSymbols'].update(Parse=['golang.org/x/net/html.Parse']),
+            lambda p: p['binaries']['usr/bin/silo'].update(pclnMagic='0x0'),
+            lambda p: p['binaries']['usr/bin/mcli'].update(controls=[]),
+        ]
+        for mutation in mutations:
+            values, identity, proof = self.values();mutation(proof)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises((ValueError, KeyError, TypeError)):
+                    gate.verify(*values, 1, now=NOW, derivation=identity, binary_evidence=proof)
+
+    def test_other_advisories_modules_or_targets_do_not_inherit_the_assessment(self):
+        mutations = [
+            lambda f: f.update(VulnerabilityID='CVE-2099-9999'),
+            lambda f: f.update(PkgName='other/module'),
+            lambda f: f.update(InstalledVersion='v0.62.0'),
+            lambda f: f.update(Severity='CRITICAL'),
+            lambda f: f['PkgIdentifier'].update(PURL='pkg:golang/golang.org/x/net@v0.60.0'),
+        ]
+        for mutation in mutations:
+            values, identity, proof = self.values()
+            row = next(r for r in values[1]['Results'] if r['Target']=='usr/bin/silo')
+            mutation(row['Vulnerabilities'][-1])
+            with self.assertRaises((ValueError, KeyError, TypeError)):
+                gate.verify(*values, 1, now=NOW, derivation=identity, binary_evidence=proof)
+
+    def test_duplicate_raw_finding_or_wrong_scanner_exit_still_fail(self):
+        values, identity, proof = self.values()
+        row = next(r for r in values[1]['Results'] if r['Target']=='usr/bin/silo')
+        row['Vulnerabilities'].append(copy.deepcopy(row['Vulnerabilities'][-1]))
+        with self.assertRaises(ValueError):gate.verify(*values, 1, now=NOW, derivation=identity, binary_evidence=proof)
+        values, identity, proof = self.values()
+        for code in (0,2):
+            with self.assertRaises(ValueError):gate.verify(*values, code, now=NOW, derivation=identity, binary_evidence=proof)
+
+
+class ParserInspectionContainerOwnership(unittest.TestCase):
+    def exercise(self, fail_copy=False, wrong_image=False):
+        values, identity, proof = HtmlParserApplicabilityBoundaries().values()
+        image=identity['imageId']; container='e'*64; commands=[]; removed=False
+        def process(arguments, **kwargs):
+            nonlocal removed
+            commands.append(arguments)
+            self.assertEqual('docker', arguments[0])
+            operation=arguments[1]
+            if operation=='create':
+                self.assertEqual(image,arguments[-1])
+                for required in ('none','--read-only','type=tmpfs,destination=/data'):self.assertIn(required,arguments)
+                return type('Result',(),dict(returncode=0,stdout=(container+'\n').encode(),stderr=b''))()
+            if operation=='container' and arguments[2]=='inspect':
+                self.assertEqual(container,arguments[-1])
+                if removed:return type('Result',(),dict(returncode=1,stdout=b'',stderr=('Error: No such container: '+container).encode()))()
+                row={'Id':container,'Image':'sha256:'+'0'*64 if wrong_image else image,
+                     'State':{'Status':'created','Running':False}}
+                return type('Result',(),dict(returncode=0,stdout=json.dumps([row]).encode(),stderr=b''))()
+            if operation=='cp':
+                self.assertTrue(arguments[2].startswith(container+':/usr/bin/'))
+                if fail_copy:return type('Result',(),dict(returncode=1,stdout=b'',stderr=b'copy failed'))()
+                Path(arguments[-1]).write_bytes(b'known-test-binary')
+                return type('Result',(),dict(returncode=0,stdout=b'',stderr=b''))()
+            if operation=='rm':
+                self.assertEqual(['docker','rm','--volumes',container],arguments);removed=True
+                return type('Result',(),dict(returncode=0,stdout=container.encode(),stderr=b''))()
+            self.fail('Target execution or unowned Docker operation: '+repr(arguments))
+        def inspect(path):return dict(proof['binaries']['usr/bin/'+path.name],path=str(path))
+        def file_digest(stream,algorithm):
+            digest_value=gate.parser_audit.SUBJECTS['usr/bin/'+Path(stream.name).name]['sha256']
+            return type('Digest',(),{'hexdigest':lambda self:digest_value})()
+        with mock.patch.object(gate.parser_audit.subprocess,'run',side_effect=process), \
+             mock.patch.object(gate.parser_audit,'inspect',side_effect=inspect), \
+             mock.patch.object(gate.parser_audit.hashlib,'file_digest',side_effect=file_digest):
+            if fail_copy or wrong_image:
+                with self.assertRaises(ValueError):gate.parser_audit.collect(image)
+            else:
+                actual=gate.parser_audit.collect(image)
+                self.assertTrue(actual['containerNeverStarted']);self.assertTrue(actual['inspectionContainerRemoved'])
+        self.assertTrue(removed)
+        self.assertFalse(any(c[1] in ('run','start','exec') for c in commands))
+        return commands
+
+    def test_same_image_binaries_are_copied_without_running_the_container(self):
+        commands=self.exercise();self.assertEqual(2,sum(c[1]=='cp' for c in commands))
+
+    def test_copy_failure_still_removes_only_the_exact_owned_container(self):
+        self.exercise(fail_copy=True)
+
+    def test_a_foreign_image_is_rejected_before_copy_and_owned_container_removed(self):
+        commands=self.exercise(wrong_image=True);self.assertFalse(any(c[1]=='cp' for c in commands))
+
+
 if __name__ == '__main__':
     unittest.main()
+
