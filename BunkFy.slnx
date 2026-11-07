@@ -323,6 +323,7 @@
     <File Path="eng/verify.ps1" />
   </Folder>
   <Folder Name="/eng/fixtures/minio/">
+    <File Path="eng/fixtures/minio/HTML-parser-assessment.md" />
     <File Path="eng/fixtures/minio/README.md" />
   </Folder>
   <Folder Name="/gma/extensions/src/">
@@ -1020,3 +1021,4 @@
     <Project Path="tests/Integration.Tests/Integration.Tests.csproj" />
   </Folder>
 </Solution>
+
