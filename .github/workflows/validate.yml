@@ -52,6 +52,18 @@ jobs:
         shell: pwsh
         run: ./eng/gma-bootstrap.ps1 -Force
 
+      - name: Check isolated timing report acceptance
+        run: python3 eng/check-worker-timing-results.tests.py
+
       - name: Verify
         shell: pwsh
         run: ./eng/verify.ps1
+
+      - name: Retain isolated worker timing results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: worker-timing-${{ matrix.os }}-${{ github.run_attempt }}
+          path: artifacts/test-results/worker-timing
+          if-no-files-found: ignore
+          retention-days: 7

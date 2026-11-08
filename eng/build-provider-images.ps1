@@ -17,9 +17,11 @@ if (-not $baseExisting) {
     & docker pull --platform linux/amd64 $fixtureBase
     if ($LASTEXITCODE -ne 0) { throw 'The pinned provider base image pull failed.' }
 }
+$baseConfigDigest = & python3 (Join-Path $PSScriptRoot 'operations/image-config-digest.py') $fixtureBase
+if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the provider base configuration digest.' }
 $baseIdentity = @((& docker image inspect $fixtureBase) | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0 -or $baseIdentity.Count -ne 1 -or
-    $baseIdentity[0].Id -cne $fixturePolicy.imageConfigDigest -or
+    $baseConfigDigest -cne $fixturePolicy.imageConfigDigest -or
     $baseIdentity[0].Os -cne 'linux' -or $baseIdentity[0].Architecture -cne 'amd64' -or
     ($baseIdentity[0].RootFS.Layers -join ',') -cne ($fixturePolicy.baseLayers -join ',')) {
     throw 'The immutable provider base configuration, platform or filesystem identity changed.'
@@ -37,6 +39,11 @@ if (-not $fixtureLabels -or $fixtureLabels['io.bunkfy.fixture.recipe-sha256'] -n
         --label "io.bunkfy.fixture.recipe-sha256=$fixtureRecipeHash" $fixtureDirectory
     if ($LASTEXITCODE -ne 0) { throw 'The pinned non-root provider fixture build failed.' }
 }
+$fixtureEvidence = Join-GmaPath 'artifacts/provider-images'
+[System.IO.Directory]::CreateDirectory($fixtureEvidence) | Out-Null
+$descriptorProof = Join-Path $fixtureEvidence 'silo-image-descriptors.json'
+$fixtureConfigDigest = & python3 (Join-Path $PSScriptRoot 'operations/image-config-digest.py') $fixtureImage $descriptorProof
+if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the built provider configuration digest.' }
 $fixtureIdentity = @((& docker image inspect $fixtureImage) | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the built provider fixture.' }
 if ($fixtureIdentity.Count -ne 1 -or $fixtureIdentity[0].Config.User -cne '10001:10001' -or
@@ -54,11 +61,12 @@ $fixtureEvidence = Join-GmaPath 'artifacts/provider-images'
 @{
     schemaVersion = 1
     image = $fixtureImage
-    imageId = $fixtureIdentity[0].Id
+    imageId = $fixtureConfigDigest
+    imageDescriptors = Get-Content -LiteralPath $descriptorProof -Raw | ConvertFrom-Json -AsHashtable
     sourceRevision = $fixtureSource
     recipeSha256 = $fixtureRecipeHash
     baseImage = $fixtureBase
-    baseImageId = $baseIdentity[0].Id
+    baseImageId = $baseConfigDigest
     baseLayers = @($baseIdentity[0].RootFS.Layers)
     imageLayers = @($fixtureIdentity[0].RootFS.Layers)
     user = $fixtureIdentity[0].Config.User

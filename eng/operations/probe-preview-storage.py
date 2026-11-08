@@ -24,6 +24,11 @@ import xml.etree.ElementTree as ET
 import zlib
 
 
+_identity_spec = importlib.util.spec_from_file_location('image_config', Path(__file__).with_name('image-config-digest.py'))
+image_identity = importlib.util.module_from_spec(_identity_spec)
+_identity_spec.loader.exec_module(image_identity)
+
+
 IMAGE = 'pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7'
 SOURCE = 'c3ad836aed0d8a7d23c2e44a5eaa3009d08525e3'
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -123,8 +128,8 @@ def main():
         if labels.get('org.opencontainers.image.revision') != SOURCE:
             raise RuntimeError('Provider image does not bind the reviewed source revision.')
         receipt['actualSourceRevision'] = labels['org.opencontainers.image.revision']
-        receipt['imageConfigDigest'] = identity['Id']
-        if derivation is not None and (identity['Id'] != expected_config or identity['Config']['User'] != '10001:10001'):
+        receipt['imageConfigDigest'] = image_identity.image_config_digest(image)
+        if derivation is not None and (receipt['imageConfigDigest'] != expected_config or identity['Config']['User'] != '10001:10001'):
             raise RuntimeError('The actual fixture image does not match the non-root derived subject.')
         with tempfile.TemporaryDirectory(prefix='bunk-storage-private-') as temporary:
             environment = Path(temporary) / 'storage.env'

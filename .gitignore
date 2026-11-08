@@ -14,3 +14,7 @@ Gma.SourceRoots.props
 !gma/.gitkeep
 !gma/modules/
 !gma/modules/.gitkeep
+
+# Generated Python verifier caches
+__pycache__/
+*.py[cod]

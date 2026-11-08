@@ -77,6 +77,7 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
     private readonly byte[] stationKey;
     private readonly byte[] ordinaryKey;
     private readonly StationK0ControllableFeatureState? controllableFeatureState;
+    private readonly StationK0RequestCompletion requestCompletion;
 
     private StationK0TestApplication(
         WebApplication app,
@@ -88,6 +89,7 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
         StationK0EvidenceProbe evidenceProbe,
         StationK0LogCollector logs,
         StationK0ControllableFeatureState? controllableFeatureState,
+        StationK0RequestCompletion requestCompletion,
         StationEndpointInventory? inventory,
         Uri? baseAddress,
         StationK0TestMode mode,
@@ -102,6 +104,7 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
         this.EvidenceProbe = evidenceProbe;
         this.Logs = logs;
         this.controllableFeatureState = controllableFeatureState;
+        this.requestCompletion = requestCompletion;
         this.Inventory = inventory;
         this.baseAddress = baseAddress;
         this.Mode = mode;
@@ -146,6 +149,7 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
         StationK0AuthenticationObserver observer = new();
         StationK0AuthorizationObserver authorizationObserver = new();
         StationK0EvidenceProbe evidenceProbe = new();
+        StationK0RequestCompletion requestCompletion = new();
         StationK0LogCollector logs = new();
         StationK0ControllableFeatureState? controllableFeatureState = useControllableFeatureState
             ? new(new StationFeatureSnapshot(true, 1))
@@ -207,9 +211,17 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
         WebApplication app = builder.Build();
         app.Use(async (context, next) =>
         {
-            evidenceProbe.ObserveRequest(context);
-            await next(context).ConfigureAwait(false);
-            evidenceProbe.ObserveFinalIdentities(context);
+            StationK0RequestCompletion.Entry? completion = requestCompletion.Enter(context);
+            try
+            {
+                evidenceProbe.ObserveRequest(context);
+                await next(context).ConfigureAwait(false);
+                evidenceProbe.ObserveFinalIdentities(context);
+            }
+            finally
+            {
+                completion?.Completed.TrySetResult();
+            }
         });
         app.UseAuthentication();
         app.Use(async (context, next) =>
@@ -279,6 +291,7 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
             evidenceProbe,
             logs,
             controllableFeatureState,
+            requestCompletion,
             inventory,
             baseAddress,
             mode,
@@ -287,7 +300,10 @@ internal sealed class StationK0TestApplication : IAsyncDisposable
 
     public HttpClient CreateClient() => this.baseAddress is null
         ? this.app.GetTestClient()
-        : new HttpClient { BaseAddress = this.baseAddress };
+        : new HttpClient(this.requestCompletion.CreateHandler(new SocketsHttpHandler()))
+        {
+            BaseAddress = this.baseAddress
+        };
 
     public string CreateOrdinaryToken(bool signWithStationKey = false)
     {

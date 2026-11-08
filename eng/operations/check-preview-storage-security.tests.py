@@ -4,6 +4,7 @@
 import copy
 import datetime
 import gzip
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -256,8 +257,54 @@ class HtmlParserApplicabilityBoundaries(unittest.TestCase):
             with self.assertRaises(ValueError):gate.verify(*values, code, now=NOW, derivation=identity, binary_evidence=proof)
 
 
+class ContainerdScannerIdentity(unittest.TestCase):
+    def values(self):
+        values, identity = DerivedStorageSecurityBoundaries().values()
+        manifest = json.dumps({'schemaVersion': 2, 'config': {'digest': identity['imageId']}})
+        manifest_id = 'sha256:' + hashlib.sha256(manifest.encode()).hexdigest()
+        index = json.dumps({'schemaVersion': 2, 'manifests': [
+            {'digest': manifest_id, 'platform': {'os': 'linux', 'architecture': 'amd64'}}]})
+        index_id = 'sha256:' + hashlib.sha256(index.encode()).hexdigest()
+        identity['imageDescriptors'] = {index_id: index, manifest_id: manifest}
+        values[1]['Metadata'].update(ImageID=index_id,
+            RepoDigests=[identity['image'].split(':')[0] + '@' + index_id])
+        for row in values[3]['metadata']['component']['properties']:
+            if row['name'] == 'aquasecurity:trivy:ImageID': row['value'] = index_id
+        return values, identity
+
+    def test_actual_descriptor_chain_preserves_full_storage_gate(self):
+        values, identity = self.values()
+        summary, _ = gate.verify(*values, 1, now=NOW, derivation=identity)
+        self.assertEqual(identity['imageId'], summary['imageConfigDigest'])
+
+    def test_missing_modified_or_foreign_chain_and_registry_subject_are_rejected(self):
+        mutations = [
+            lambda v, d: d.pop('imageDescriptors'),
+            lambda v, d: d['imageDescriptors'].clear(),
+            lambda v, d: d['imageDescriptors'].update({v[1]['Metadata']['ImageID']: '{}'}),
+            lambda v, d: v[1]['Metadata'].update(RepoDigests=['foreign@' + v[1]['Metadata']['ImageID']]),
+            lambda v, d: v[1]['Metadata'].update(ImageID='sha256:' + '0' * 64),
+            lambda v, d: next(row for row in v[3]['metadata']['component']['properties']
+                              if row['name'] == 'aquasecurity:trivy:ImageID').update(value='sha256:' + '0' * 64),
+        ]
+        for mutate in mutations:
+            values, identity = self.values()
+            mutate(values, identity)
+            with self.subTest(mutation=mutate), self.assertRaises(ValueError):
+                gate.verify(*values, 1, now=NOW, derivation=identity)
+
+    def test_a_validly_hashed_manifest_cannot_substitute_another_configuration(self):
+        values, identity = self.values()
+        raw = json.dumps({'schemaVersion': 2, 'config': {'digest': 'sha256:' + '0' * 64}})
+        subject = 'sha256:' + hashlib.sha256(raw.encode()).hexdigest()
+        identity['imageDescriptors'] = {subject: raw}
+        values[1]['Metadata'].update(ImageID=subject, RepoDigests=[identity['image'].split(':')[0] + '@' + subject])
+        with self.assertRaisesRegex(ValueError, 'different configuration'):
+            gate.verify(*values, 1, now=NOW, derivation=identity)
+
+
 class ParserInspectionContainerOwnership(unittest.TestCase):
-    def exercise(self, fail_copy=False, wrong_image=False):
+    def exercise(self, fail_copy=False, wrong_image=False, containerd=False):
         values, identity, proof = HtmlParserApplicabilityBoundaries().values()
         image=identity['imageId']; container='e'*64; commands=[]; removed=False
         def process(arguments, **kwargs):
@@ -266,13 +313,13 @@ class ParserInspectionContainerOwnership(unittest.TestCase):
             self.assertEqual('docker', arguments[0])
             operation=arguments[1]
             if operation=='create':
-                self.assertEqual(image,arguments[-1])
+                self.assertEqual(identity['image'] if containerd else image,arguments[-1])
                 for required in ('none','--read-only','type=tmpfs,destination=/data'):self.assertIn(required,arguments)
                 return type('Result',(),dict(returncode=0,stdout=(container+'\n').encode(),stderr=b''))()
             if operation=='container' and arguments[2]=='inspect':
                 self.assertEqual(container,arguments[-1])
                 if removed:return type('Result',(),dict(returncode=1,stdout=b'',stderr=('Error: No such container: '+container).encode()))()
-                row={'Id':container,'Image':'sha256:'+'0'*64 if wrong_image else image,
+                row={'Id':container,'Image':('sha256:'+'f'*64 if containerd else ('sha256:'+'0'*64 if wrong_image else image)),
                      'State':{'Status':'created','Running':False}}
                 return type('Result',(),dict(returncode=0,stdout=json.dumps([row]).encode(),stderr=b''))()
             if operation=='cp':
@@ -290,11 +337,13 @@ class ParserInspectionContainerOwnership(unittest.TestCase):
             return type('Digest',(),{'hexdigest':lambda self:digest_value})()
         with mock.patch.object(gate.parser_audit.subprocess,'run',side_effect=process), \
              mock.patch.object(gate.parser_audit,'inspect',side_effect=inspect), \
-             mock.patch.object(gate.parser_audit.hashlib,'file_digest',side_effect=file_digest):
+             mock.patch.object(gate.parser_audit.hashlib,'file_digest',side_effect=file_digest), \
+             mock.patch.object(gate.parser_audit.image_identity,'image_config_digest',return_value=('sha256:'+'0'*64 if wrong_image else image)):
+            reference = identity['image'] if containerd else None
             if fail_copy or wrong_image:
-                with self.assertRaises(ValueError):gate.parser_audit.collect(image)
+                with self.assertRaises(ValueError):gate.parser_audit.collect(image, image_reference=reference)
             else:
-                actual=gate.parser_audit.collect(image)
+                actual=gate.parser_audit.collect(image, image_reference=reference)
                 self.assertTrue(actual['containerNeverStarted']);self.assertTrue(actual['inspectionContainerRemoved'])
         self.assertTrue(removed)
         self.assertFalse(any(c[1] in ('run','start','exec') for c in commands))
@@ -302,6 +351,13 @@ class ParserInspectionContainerOwnership(unittest.TestCase):
 
     def test_same_image_binaries_are_copied_without_running_the_container(self):
         commands=self.exercise();self.assertEqual(2,sum(c[1]=='cp' for c in commands))
+
+    def test_containerd_manifest_id_resolves_to_the_exact_reviewed_configuration(self):
+        self.exercise(containerd=True)
+
+    def test_containerd_foreign_configuration_is_rejected_before_copy(self):
+        commands=self.exercise(containerd=True, wrong_image=True)
+        self.assertFalse(any(c[1]=='cp' for c in commands))
 
     def test_copy_failure_still_removes_only_the_exact_owned_container(self):
         self.exercise(fail_copy=True)

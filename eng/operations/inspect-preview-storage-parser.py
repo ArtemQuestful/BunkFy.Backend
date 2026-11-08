@@ -9,6 +9,7 @@ module inventory for other packages. This is not govulncheck's stripped-binary
 fallback and never treats an unrecognized binary or new finding as reviewed.
 """
 import stat
+import importlib.util
 import subprocess
 import tempfile
 import uuid
@@ -17,6 +18,10 @@ import json
 from pathlib import Path
 import struct
 
+
+_identity_spec = importlib.util.spec_from_file_location('image_config', Path(__file__).with_name('image-config-digest.py'))
+image_identity = importlib.util.module_from_spec(_identity_spec)
+_identity_spec.loader.exec_module(image_identity)
 
 def inspect(path):
     with path.open('rb') as stream:
@@ -154,7 +159,7 @@ def validate(proof, image_id):
     return proof
 
 
-def collect(image_id):
+def collect(image_id, image_reference=None):
     # Creating and copying from this disposable container does not run its entry
     # point or target binaries. Override /data so no anonymous data volume exists.
     import re
@@ -165,15 +170,18 @@ def collect(image_id):
             raise ValueError('Owned binary-inspection Docker operation failed: ' + args[0])
         return result.stdout
     container = docker('create', '--name', 'bunkfy-parser-inspect-' + uuid.uuid4().hex,
-                       '--network', 'none', '--read-only', '--mount', 'type=tmpfs,destination=/data', image_id).decode().strip()
+                       '--network', 'none', '--read-only', '--mount', 'type=tmpfs,destination=/data', image_reference or image_id).decode().strip()
     require(re.fullmatch(r'[0-9a-f]{64}', container) is not None, 'Invalid owned inspection container identity.')
     proof = {'schemaVersion': 1, 'imageId': image_id, 'goVersion': 'go1.27.3',
              'containerNeverStarted': False, 'inspectionContainerRemoved': False, 'binaries': {}}
     try:
         identity = json.loads(docker('container', 'inspect', container))
-        require(len(identity) == 1 and identity[0]['Id'] == container and identity[0]['Image'] == image_id
+        require(len(identity) == 1 and identity[0]['Id'] == container
                 and identity[0]['State']['Status'] == 'created' and identity[0]['State']['Running'] is False,
                 'The owned inspection container must never have started.')
+        actual_config = (identity[0]['Image'] if image_reference is None else
+                         image_identity.image_config_digest(identity[0]['Image']))
+        require(actual_config == image_id, 'The actual inspection container configuration differs from the reviewed image.')
         proof['containerNeverStarted'] = True
         with tempfile.TemporaryDirectory(prefix='bunkfy-parser-binaries-') as directory:
             for path in SUBJECTS:

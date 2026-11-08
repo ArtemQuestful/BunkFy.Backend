@@ -22,6 +22,37 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def bind_scanner_configuration(metadata, config_digest, derivation):
+    """Docker's containerd ID is an OCI index; retain and hash its real descriptor chain."""
+    subject = metadata['ImageID']
+    if subject == config_digest:
+        return False
+    require(derivation is not None, 'Image configuration digest changed.')
+    descriptors = derivation.get('imageDescriptors', {})
+    require(isinstance(descriptors, dict) and 0 < len(descriptors) <= 4,
+            'Actual OCI descriptor bytes are required for a containerd scanner identity.')
+    seen = set()
+    while subject != config_digest:
+        require(subject not in seen and subject in descriptors and len(seen) < 4,
+                'Missing or cyclic OCI image identity chain.')
+        seen.add(subject)
+        raw = descriptors[subject]
+        require(isinstance(raw, str) and len(raw.encode()) <= 64 * 1024
+                and 'sha256:' + hashlib.sha256(raw.encode()).hexdigest() == subject,
+                'OCI descriptor content does not match the scanner subject.')
+        document = json.loads(raw)
+        require(document['schemaVersion'] == 2, 'Unsupported OCI descriptor schema.')
+        if 'config' in document:
+            subject = document['config']['digest']
+            require(subject == config_digest, 'OCI manifest references a different configuration.')
+        else:
+            matches = [row for row in document['manifests'] if
+                       row.get('platform') == {'os': 'linux', 'architecture': 'amd64'}]
+            require(len(matches) == 1, 'Exactly one qualified amd64 manifest is required.')
+            subject = matches[0]['digest']
+    return True
+
+
 def derived_subject(policy, identity):
     require(identity['schemaVersion'] == 1 and identity['fixtureOnly'] is True
             and identity['image'] == policy['fixtureImage'] == 'bunkfy-provider-silo:c3ad836aed0d-nonroot-v1'
@@ -60,7 +91,7 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
     created = datetime.datetime.fromisoformat(scan['CreatedAt'].replace('Z', '+00:00'))
     require(datetime.timedelta(0) <= now - created <= datetime.timedelta(hours=2), 'A fresh raw image scan is required.')
     metadata = scan['Metadata']
-    require(metadata['ImageID'] == config_digest, 'Image configuration digest changed.')
+    containerd = bind_scanner_configuration(metadata, config_digest, derivation)
     config = metadata['ImageConfig']
     require(config['architecture'] == 'amd64' and config['os'] == 'linux'
             and config['config']['Labels']['org.opencontainers.image.revision'] == policy['sourceCommit'],
@@ -69,7 +100,8 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
     if derivation is None:
         require(metadata['RepoDigests'] == ['pgsty/silo@' + image_digest], 'Registry image subject changed.')
     else:
-        require(not metadata.get('RepoDigests')
+        expected_repos = ([image.split(':')[0] + '@' + metadata['ImageID']] if containerd else [])
+        require(metadata.get('RepoDigests', []) == expected_repos
                 and config['rootfs']['diff_ids'] == derivation['imageLayers']
                 and config['config']['User'] == derivation['user']
                 and config['config']['Entrypoint'] == derivation['entrypoint']
@@ -87,7 +119,7 @@ def verify(policy, scan, runtime, sbom, tool, scan_exit_code, now=None, derivati
     require(root_component['name'] == image and root_component['type'] == 'container', 'SBOM subject changed.')
     image_property = [value['value'] for value in root_component['properties']
                       if value['name'] == 'aquasecurity:trivy:ImageID']
-    require(image_property == [config_digest], 'SBOM image configuration digest changed.')
+    require(image_property == [metadata['ImageID']], 'SBOM image identity differs from the cryptographically bound scanner subject.')
     expected_purl = ('pkg:oci/silo@' + image_digest
                      + '?arch=amd64&repository_url=index.docker.io%2Fpgsty%2Fsilo')
     if derivation is None:
@@ -241,8 +273,9 @@ if __name__ == '__main__':
     binary_evidence = None
     if any(finding.get('VulnerabilityID') == parser_audit.CVE
            for result in scan.get('Results', []) for finding in result.get('Vulnerabilities', [])):
-        image_id = policy['imageConfigDigest'] if derivation is None else derived_subject(policy, derivation)[1]
-        binary_evidence = parser_audit.collect(image_id)
+        image, image_id = ((policy['image'], policy['imageConfigDigest']) if derivation is None
+                           else derived_subject(policy, derivation))
+        binary_evidence = parser_audit.collect(image_id, image_reference=image)
         (args.directory / 'silo-parser-applicability.json').write_text(json.dumps(binary_evidence, indent=2) + '\n')
     summary, vex = verify(policy, scan, load('silo-runtime.json'), load('silo-sbom.cdx.json'),
                           load('tool-identity.json'), args.scanner_exit_code,

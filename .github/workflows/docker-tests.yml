@@ -50,13 +50,16 @@ jobs:
         shell: pwsh
         env:
           CONTROL_REF: ${{ github.base_ref || github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $controlRef = "refs/heads/$env:CONTROL_REF"
           & git check-ref-format $controlRef
           if ($LASTEXITCODE -ne 0) { throw 'Invalid control branch.' }
-          $controlMatches = @(& git ls-remote --exit-code origin $controlRef)
+          $branch = [Uri]::EscapeDataString($env:CONTROL_REF)
+          $controlMatches = @(& gh api "repos/$env:GH_REPO/git/ref/heads/$branch" --jq '.object.sha')
           if ($LASTEXITCODE -ne 0 -or $controlMatches.Count -ne 1) { throw 'Cannot resolve the live control branch.' }
-          $controlSha = ($controlMatches[0] -split '\s+')[0]
+          $controlSha = $controlMatches[0]
           if ($controlSha -notmatch '^[a-f0-9]{40}$') { throw 'Invalid control source identity.' }
           "sha=$controlSha" >> $env:GITHUB_OUTPUT
 
@@ -75,6 +78,8 @@ jobs:
           persist-credentials: false
       - name: Check authentic security boundaries without containers
         run: python3 eng/operations/check-preview-storage-security.tests.py
+      - name: Check image configuration identity across Docker stores
+        run: python3 eng/operations/image-config-digest.tests.py
       - name: Prepare the pinned non-root fixture
         shell: pwsh
         run: ./eng/build-provider-images.ps1
@@ -104,7 +109,7 @@ jobs:
       - name: Preserve the exact qualified image for the native suite
         id: archive
         run: |
-          fixture_id=$(docker image inspect --format '{{.Id}}' bunkfy-provider-silo:c3ad836aed0d-nonroot-v1)
+          fixture_id=$(python3 eng/operations/image-config-digest.py bunkfy-provider-silo:c3ad836aed0d-nonroot-v1)
           [[ "$fixture_id" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
           echo "image-id=$fixture_id" >> "$GITHUB_OUTPUT"
           docker image save --output artifacts/provider-images/storage-fixture.tar bunkfy-provider-silo:c3ad836aed0d-nonroot-v1
@@ -184,7 +189,7 @@ jobs:
           [[ "$EXPECTED_FIXTURE_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
           (cd artifacts/provider-images && sha256sum --check storage-fixture.tar.sha256)
           docker image load --input artifacts/provider-images/storage-fixture.tar
-          actual_id=$(docker image inspect --format '{{.Id}}' bunkfy-provider-silo:c3ad836aed0d-nonroot-v1)
+          actual_id=$(python3 eng/operations/image-config-digest.py bunkfy-provider-silo:c3ad836aed0d-nonroot-v1)
           test "$actual_id" = "$EXPECTED_FIXTURE_ID"
           rm artifacts/provider-images/storage-fixture.tar artifacts/provider-images/storage-fixture.tar.sha256
       - name: Record runner resource baseline
