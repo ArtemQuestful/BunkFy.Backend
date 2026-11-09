@@ -159,4 +159,4 @@ deleting a Guest Record.
 - Automatic operator notifications for a process that reaches review state.
 - Guest merge/split and entity-resolution behavior.
 - Generalizing this process-manager pattern into GMA. Reconsider only after a
-  materially different BunkFy or StayQuest workflow validates common semantics.
+  materially different BunkFy workflow validates common semantics.
